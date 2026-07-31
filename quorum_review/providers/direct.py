@@ -142,7 +142,12 @@ class DirectProvider:
         return response.text or ""
 
     async def respond(
-        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
+        self,
+        model: str,
+        system: str,
+        user: str,
+        max_tokens: int = PROSE_MAX_TOKENS,
+        toolbox: Any | None = None,
     ) -> str:
         return await self._complete(
             model=model,

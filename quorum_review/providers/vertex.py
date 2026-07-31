@@ -140,8 +140,9 @@ class _GeminiEngine:
         contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=user)])]
         if toolbox is not None:
             await self._explore(contents, system, max_tokens, toolbox)
+            closing = prompts.FINALISE if schema else prompts.FINALISE_PROSE
             contents.append(
-                types.Content(role="user", parts=[types.Part(text=prompts.FINALISE)])
+                types.Content(role="user", parts=[types.Part(text=closing)])
             )
 
         response = await self._generate(
@@ -262,7 +263,8 @@ class _ClaudeEngine:
         messages: list[Any] = [{"role": "user", "content": user}]
         if toolbox is not None:
             await self._explore(messages, system, effort, max_tokens, toolbox)
-            messages.append({"role": "user", "content": prompts.FINALISE})
+            closing = prompts.FINALISE if schema else prompts.FINALISE_PROSE
+            messages.append({"role": "user", "content": closing})
 
         output_config: dict[str, Any] = {"effort": effort}
         if schema:
@@ -442,7 +444,12 @@ class VertexProvider:
         return findings_from_payload(parse_json_object(raw), model)
 
     async def respond(
-        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
+        self,
+        model: str,
+        system: str,
+        user: str,
+        max_tokens: int = PROSE_MAX_TOKENS,
+        toolbox: Workspace | None = None,
     ) -> str:
         return await self._engine(model).complete(
             system=system,
@@ -450,6 +457,7 @@ class VertexProvider:
             schema=None,
             effort=PROSE_EFFORT,
             max_tokens=max_tokens,
+            toolbox=toolbox,
         )
 
     async def verify(

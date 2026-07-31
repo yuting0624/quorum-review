@@ -166,9 +166,7 @@ async def one_run(
     """
     # Fresh budgets every run. Reusing one would let run 3 inherit run 1's
     # spent allowance and quietly measure a weaker reviewer.
-    scan_budgets = review_mod.build_workspaces(
-        ctx, len(scanners), workspace_mod.MAX_CALLS
-    )
+    scan_budgets = workspace_mod.build(len(scanners), workspace_mod.MAX_CALLS)
     scans, failures = await review_mod.scan_all(
         provider, scanners, ctx, skill, scan_budgets
     )
@@ -190,7 +188,7 @@ async def one_run(
 
     ranked = review_mod.by_severity(unresolved)[: review_mod.MAX_VERIFIED_FINDINGS]
     verify_budgets = (
-        review_mod.build_workspaces(ctx, len(ranked), review_mod.VERIFY_TOOL_CALLS)
+        workspace_mod.build(len(ranked), review_mod.VERIFY_TOOL_CALLS)
         if any(w is not None for w in scan_budgets)
         else [None] * len(ranked)
     )

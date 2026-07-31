@@ -16,12 +16,17 @@ import re
 from typing import Any
 
 from . import prompts
+from . import workspace as workspace_mod
 from .github_client import GitHubClient
 from .ledger import Ledger, LedgerEntry
 from .providers.base import ReviewProvider
 from .schema import Discussion, PRContext
 
 MENTION = "@quorum"
+
+#: Tool calls one answer may make. A question is narrow — "does X cover this
+#: case?" — and the person asking is waiting for the reply in the thread.
+QUESTION_TOOL_CALLS = 8
 
 #: Handled elsewhere: a re-review request and a dismissal are not questions.
 _NOT_A_QUESTION = re.compile(r"@quorum\s+(/review|wontfix|false positive|誤検知)", re.I)
@@ -110,11 +115,18 @@ async def handle(
     discussion = build_discussion(entry, thread, comment.get("path") or "")
 
     model = answering_model(entry, list(provider.models))
+    # A question in a thread is the case where reading past the diff matters
+    # most: someone is pushing back, usually with "but X handles that", and the
+    # honest answer requires opening X rather than restating the finding.
+    toolbox = next(iter(workspace_mod.build(1, QUESTION_TOOL_CALLS)), None)
     try:
         answer = await provider.respond(
             model,
-            prompts.discuss_system(getattr(provider, 'language', '')),
+            prompts.discuss_system(
+                getattr(provider, "language", ""), tools=toolbox is not None
+            ),
             prompts.discuss_user(discussion, ctx),
+            toolbox=toolbox,
         )
     except Exception as error:  # noqa: BLE001 - a failed reply must still reply
         await github.reply_to_comment(

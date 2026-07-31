@@ -156,6 +156,44 @@ def workspace_root() -> pathlib.Path | None:
     return root.resolve() if root.is_dir() else None
 
 
+def access_enabled() -> bool:
+    """Whether the models may read files outside the diff.
+
+    On by default, because off is the setting that produces the two failures
+    people actually complain about — a false positive on code that is guarded
+    somewhere the reviewer could not look, and silence on a bug whose evidence
+    is one file away. It costs extra turns, so ``QUORUM_REPO_ACCESS=off``
+    restores the diff-only behaviour.
+    """
+    return os.getenv("QUORUM_REPO_ACCESS", "on").strip().lower() not in {
+        "off",
+        "0",
+        "false",
+        "no",
+    }
+
+
+def build(count: int, max_calls: int = MAX_CALLS) -> list[Workspace | None]:
+    """One independent budget per caller, or ``None`` when there is no checkout.
+
+    Budgets are not shared. Two models exploring the same repository must not be
+    able to starve each other, for the same reason their scans do not see each
+    other: the moment one model's behaviour changes what the other is allowed to
+    do, their agreement stops being evidence.
+    """
+    root = workspace_root()
+    if root is None or not access_enabled():
+        return [None] * count
+
+    # Reading .quorumignore from disk is right here, and only here: the
+    # workspace *is* the repository under review, unlike the action's own
+    # working directory.
+    path_filter = PathFilter.build(
+        exclude_input=os.getenv("QUORUM_EXCLUDE", ""), root=root
+    )
+    return [Workspace(root, path_filter, max_calls=max_calls) for _ in range(count)]
+
+
 def checkout_has_commit(root: pathlib.Path, sha: str) -> bool:
     """Whether the checkout actually contains the commit under review.
 
