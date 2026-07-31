@@ -114,7 +114,7 @@ def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
 
 
 def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
-    """Make a value safe to put between two pipes.
+    r"""Make a value safe to put between two pipes.
 
     A security reviewer's titles contain pipes constantly — `cmd | grep`,
     `a || b`, regex alternation. An unescaped one adds a column, so GitHub
@@ -122,10 +122,18 @@ def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
     argument this table exists to make, shows a fragment of the title instead.
     A newline is worse: it ends the table and dumps the rest as prose.
 
-    Both were live. Neither shows up in a test that only checks the text
-    appears somewhere in the row.
+    Backslashes go first, and the order is the bug this had on its first
+    attempt: escaping only the pipe turns ``a\|b`` into ``a\\|b``, which
+    Markdown reads as a literal backslash followed by an unescaped pipe — the
+    column break the escaping was for. And ``\|`` is not exotic; it is how you
+    write an escaped pipe in a regular expression, which is a thing findings
+    quote.
+
+    Both breakages were live. Neither shows up in a test that only checks the
+    text appears somewhere in the row.
     """
-    return flatten(text, limit).replace("|", r"\|")
+    escaped = flatten(text, limit).replace("\\", "\\\\")
+    return escaped.replace("|", r"\|")
 
 
 def _row(finding: Finding) -> str:

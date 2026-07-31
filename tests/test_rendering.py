@@ -42,8 +42,14 @@ def finding(title="something is wrong", **kwargs) -> Finding:
 
 
 def structural_pipes(row: str) -> int:
-    """Count the pipes that make columns, ignoring escaped ones."""
-    return row.replace(r"\|", "").count("|")
+    r"""Count the pipes that make columns, the way Markdown resolves them.
+
+    Escaped backslashes are collapsed first, then escaped pipes removed. The
+    other order would hide exactly the bug this file exists to prevent:
+    `a\|b` escaped naively becomes `a\\|b`, which Markdown reads as a literal
+    backslash followed by a live pipe.
+    """
+    return row.replace("\\\\", "").replace("\\|", "").count("|")
 
 
 # -- the table stays a table -----------------------------------------------
@@ -53,6 +59,8 @@ def structural_pipes(row: str) -> int:
     "title",
     [
         "Unsafe shell: cmd | grep secret",
+        r"The regex \| is an escaped pipe, not alternation",
+        r"Windows path C:\temp\x | and a pipe",
         "Regex alternation (a|b|c) is unanchored",
         "Short-circuit a || b masks the error",
         "|leading pipe",
@@ -149,3 +157,22 @@ def test_refuted_findings_are_flattened_in_their_list():
     body = render(report)
     assert "**Line one line two**" in body
     assert "- **Line one\n" not in body
+
+
+def test_a_backslash_before_a_pipe_does_not_survive_as_a_column_break():
+    r"""The bug the reviewer found in the first version of this escaping.
+
+    Escaping only the pipe turns `a\|b` into `a\\|b`, which Markdown reads as
+    a literal backslash followed by a live pipe — precisely the break the
+    escaping was added to prevent. Backslashes have to go first.
+
+    And `\|` is not exotic: it is how an escaped pipe is written in a regular
+    expression, which is a thing findings quote.
+    """
+    rendered = cell(r"regex \| alternation")
+    assert rendered == "regex " + "\\\\" + "\\|" + " alternation"
+    assert structural_pipes(f"| {rendered} |") == 2
+
+
+def test_a_lone_backslash_is_escaped():
+    assert cell("\\") == "\\\\"
