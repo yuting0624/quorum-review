@@ -200,6 +200,27 @@ class GitHubClient:
         )
         return ctx, skipped, trimmed
 
+    async def has_write_access(self, username: str) -> bool:
+        """Whether this user may change the repository.
+
+        A workflow `if:` can only inspect ``author_association``, and
+        ``COLLABORATOR`` there means "has been added as a collaborator" — which
+        includes read-only and triage collaborators. Anything that acts on a
+        user's instruction has to ask the API, which reports the actual
+        permission level.
+
+        Denies on error rather than assuming access.
+        """
+        if not username:
+            return False
+        try:
+            response = await self._get(
+                f"/repos/{self.owner}/{self.repo}/collaborators/{username}/permission"
+            )
+        except GitHubError:
+            return False
+        return response.json().get("permission") in ("admin", "write", "maintain")
+
     async def read_file(self, path: str, ref: str) -> str:
         """Read one file from the repository at a given ref, or "" if absent.
 

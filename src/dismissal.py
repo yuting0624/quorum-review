@@ -9,9 +9,13 @@ It is not re-reported afterwards, and the reason is kept — the intent is that 
 later phase feeds accumulated reasons back into the review criteria, so the same
 mistake stops being made rather than merely being silenced.
 
-Authorisation is enforced in the workflow, not here: the `if:` condition
-requires the commenter to be an owner, member, or collaborator. A dismissal
-posted by anyone else never reaches this code.
+Authorisation is checked here, against the API. The workflow's
+``author_association`` condition is a cheap pre-filter that avoids starting a
+run, but it is not the boundary: ``COLLABORATOR`` there covers read-only and
+triage collaborators too, so a user who cannot change the repository could
+otherwise silence its findings.
+
+This gap was found by the reviewer reviewing its own workflow.
 """
 
 from __future__ import annotations
@@ -59,7 +63,16 @@ async def handle(github: GitHubClient, event: dict[str, Any], number: int) -> in
     comment = event["comment"]
     target_id = int(comment["in_reply_to_id"])
     reason = extract_reason(comment.get("body") or "")
-    author = (comment.get("user") or {}).get("login", "someone")
+    author = (comment.get("user") or {}).get("login", "")
+
+    if not await github.has_write_access(author):
+        await github.reply_to_comment(
+            number,
+            target_id,
+            "Only someone with write access to this repository can dismiss a "
+            "finding, so I have left it open.",
+        )
+        return 0
 
     ledger, sticky = await github.load_ledger(number)
     if sticky is None:

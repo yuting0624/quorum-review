@@ -28,6 +28,16 @@ on:
         description: Pull request number to review
         required: true
 
+# One review at a time per pull request. Without this, a reopen or a quick
+# follow-up comment starts an overlapping run, and two runs racing to edit the
+# same summary comment can lose the ledger the other just wrote.
+concurrency:
+  group: >-
+    quorum-review-${{ github.event.pull_request.number
+      || github.event.issue.number
+      || github.event.inputs.pr }}
+  cancel-in-progress: true
+
 # `contents: read` covers reading the diff. `id-token: write` is what lets the
 # workflow mint the OIDC token for federation — without it, auth fails before
 # any model is called.
@@ -41,33 +51,44 @@ permissions:
 
 jobs:
   review:
-    # Run on a new PR, on manual dispatch, when someone with write access
-    # comments `@quorum /review`, or when they reply `@quorum wontfix` to a
-    # finding.
+    # Run on a new pull request, on manual dispatch, when someone comments
+    # `@quorum /review`, or when they reply `@quorum wontfix` to a finding.
     #
-    # The Bot check is not optional: without it, the comments this action posts
-    # re-trigger the workflow, which posts more comments, and so on.
+    # Three conditions here are load-bearing:
     #
-    # The author_association check is the authorisation boundary for dismissing
-    # findings — nothing downstream re-checks it.
+    # - Forks are excluded. They get a read-only token and no access to
+    #   secrets, so the run could only fail — noisily, on every contribution.
+    #   `pull_request_target` would fix that by giving write access to a run
+    #   that reviews untrusted code, which is not a trade worth making.
+    #
+    # - The Bot check prevents a loop: without it the comments this action
+    #   posts re-trigger the workflow, which posts more comments.
+    #
+    # - author_association is a cheap pre-filter, not the authorisation
+    #   boundary. It cannot distinguish a read-only collaborator from one with
+    #   write access, so anything acting on a user's instruction re-checks the
+    #   real permission against the API.
     if: >-
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request_review_comment' &&
-       github.event.comment.user.type != 'Bot' &&
-       contains(github.event.comment.body, '@quorum') &&
-       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
-                github.event.comment.author_association)) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@quorum /review') &&
-       github.event.comment.user.type != 'Bot' &&
-       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
-                github.event.comment.author_association))
+      github.event.pull_request.head.repo.fork != true &&
+      (github.event_name == 'pull_request' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request_review_comment' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@quorum') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)) ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '@quorum /review') &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)))
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
     steps:
+      # Pin third-party actions to a commit rather than a tag when the token
+      # in scope matters to you: a tag can be moved to point at new code.
       - uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
