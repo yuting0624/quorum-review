@@ -191,3 +191,62 @@ def test_a_stray_rename_line_inside_a_hunk_is_not_a_rename():
         "+rename to somewhere.py\n"
     )
     assert diffs.renames(contrived) == {}
+
+
+# -- telling a binary file from a file that talks about them ----------------
+
+
+def test_a_real_binary_patch_is_detected():
+    assert diffs.is_binary(
+        "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 120\n"
+    )
+
+
+def test_the_short_form_is_detected():
+    assert diffs.is_binary(
+        "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n"
+    )
+
+
+def test_source_code_mentioning_the_markers_is_not_binary():
+    """How this bug was found: `diffs.py` was silently dropped from its own
+    review, and the summary reported it as too large to send whole.
+
+    A substring search matched a context line of source — the body of
+    `is_binary` itself. Any file with either marker in a string, a docstring or
+    a test fixture was excluded from review the same way, in any repository.
+    """
+    section = (
+        "diff --git a/quorum_review/diffs.py b/quorum_review/diffs.py\n"
+        "--- a/quorum_review/diffs.py\n"
+        "+++ b/quorum_review/diffs.py\n"
+        "@@ -40,3 +40,4 @@\n"
+        " def is_binary(section: str) -> bool:\n"
+        '     return "GIT binary patch" in section or "Binary files " in section\n'
+        "+    # a change below it\n"
+    )
+    assert not diffs.is_binary(section)
+
+
+def test_an_added_line_mentioning_a_marker_is_not_binary():
+    """Documentation about binary diffs is still documentation."""
+    section = (
+        "diff --git a/docs/diffs.md b/docs/diffs.md\n"
+        "@@ -1 +1,2 @@\n"
+        " intro\n"
+        '+git writes "Binary files a/x and b/x differ" for those.\n'
+    )
+    assert not diffs.is_binary(section)
+
+
+def test_such_a_file_is_reviewed_rather_than_skipped():
+    """The consequence, not just the predicate: it reached the model."""
+    section = (
+        "diff --git a/app/parser.py b/app/parser.py\n"
+        "@@ -1 +1,2 @@\n"
+        ' MARKERS = ("GIT binary patch",)\n'
+        "+bug = True\n"
+    )
+    body, trimmed, _dropped = diffs.truncate(section)
+    assert "app/parser.py" in body
+    assert trimmed == []
