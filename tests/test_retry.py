@@ -107,3 +107,20 @@ def test_a_call_that_works_is_not_repeated():
 
     assert asyncio.run(vertex._with_retry("m", fine)) == "ok"
     assert len(attempts) == 1
+
+
+def test_a_failure_to_reach_the_runners_own_token_endpoint_is_retried():
+    """Seen in Actions, and it took down a whole run.
+
+    Both models authenticate off the same credential, so this fails both at
+    once — the summary then reports every scanning model down over something
+    that clears in seconds.
+    """
+    error = RuntimeError(
+        "('Unable to retrieve Identity Pool subject token', 'upstream connect "
+        "error or disconnect/reset before headers. retried and the latest reset "
+        "reason: remote connection failure, transport failure reason: delayed "
+        "connect error: Connection refused')"
+    )
+    assert vertex._is_retryable(error)
+    assert not isinstance(vertex._as_unavailable("m", error), ProviderUnavailable)

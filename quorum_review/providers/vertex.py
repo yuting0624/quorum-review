@@ -99,7 +99,15 @@ _RETRYABLE_HINTS = (
     "timed out",
     "overloaded",
     "connection reset",
+    "connection refused",
     "connection error",
+    # Seen in Actions: the credential library could not reach the runner's own
+    # OIDC token endpoint. Transient, and not an entitlement problem — the
+    # federation is configured correctly, the request just did not land. Both
+    # models fail together when it happens, so without a retry the run reports
+    # every scanning model down over something that clears in seconds.
+    "upstream connect error",
+    "identity pool subject token",
 )
 
 _AUTH_HINTS = (
