@@ -183,24 +183,36 @@ def access_enabled() -> bool:
     }
 
 
-def build(count: int, max_calls: int = MAX_CALLS) -> list[Workspace | None]:
+def build(
+    count: int,
+    max_calls: int = MAX_CALLS,
+    patterns: list[str] | None = None,
+) -> list[Workspace | None]:
     """One independent budget per caller, or ``None`` when there is no checkout.
 
     Budgets are not shared. Two models exploring the same repository must not be
     able to starve each other, for the same reason their scans do not see each
     other: the moment one model's behaviour changes what the other is allowed to
     do, their agreement stops being evidence.
+
+    ``patterns`` is the exclusion set already resolved for the diff. Passing it
+    in is the point: the checkout *is* the branch under review, so reading
+    ``.quorumignore`` from it here would let a fork's copy govern the tools
+    while the base's copy governs the diff. Two reads of one policy file at two
+    different refs is the shape of bug nobody finds by reading either half.
+    The fallback below only applies when nothing was resolved — a local run.
     """
     root = workspace_root()
     if root is None or not access_enabled():
         return [None] * count
 
-    # Reading .quorumignore from disk is right here, and only here: the
-    # workspace *is* the repository under review, unlike the action's own
-    # working directory.
-    path_filter = PathFilter.build(
-        exclude_input=os.getenv("QUORUM_EXCLUDE", ""), root=root
-    )
+    if patterns is None:
+        path_filter = PathFilter.build(
+            exclude_input=os.getenv("QUORUM_EXCLUDE", ""), root=root
+        )
+    else:
+        path_filter = PathFilter(list(patterns), use_defaults=False)
+
     return [Workspace(root, path_filter, max_calls=max_calls) for _ in range(count)]
 
 

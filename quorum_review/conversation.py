@@ -118,7 +118,8 @@ async def handle(
     # A question in a thread is the case where reading past the diff matters
     # most: someone is pushing back, usually with "but X handles that", and the
     # honest answer requires opening X rather than restating the finding.
-    toolbox = next(iter(workspace_mod.build(1, QUESTION_TOOL_CALLS)), None)
+    budgets = workspace_mod.build(1, QUESTION_TOOL_CALLS, ctx.exclude_patterns)
+    toolbox = next(iter(budgets), None)
     try:
         answer = await provider.respond(
             model,

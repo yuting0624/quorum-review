@@ -45,9 +45,8 @@ def review_label() -> str:
     return os.getenv("QUORUM_FORK_LABEL", DEFAULT_LABEL).strip() or DEFAULT_LABEL
 
 
-def is_fork_event(event: dict[str, Any]) -> bool:
-    """Whether this payload describes a pull request from another repository."""
-    pull = event.get("pull_request")
+def is_fork_payload(pull: dict[str, Any] | None) -> bool:
+    """Whether a pull request object describes one from another repository."""
     if not isinstance(pull, dict):
         return False
     head_repo = (pull.get("head") or {}).get("repo") or {}
@@ -58,14 +57,33 @@ def is_fork_event(event: dict[str, Any]) -> bool:
     return bool(head_id and base_id and head_id != base_id)
 
 
-def carries_label(event: dict[str, Any]) -> bool:
-    """Whether the review label is currently on the pull request.
+async def is_fork(github: Any, number: int, event: dict[str, Any]) -> bool:
+    """Whether this pull request comes from another repository.
 
-    The pull request's label list is checked rather than `event.label`, so that
-    a re-run — a push to an already-labelled branch, a manual dispatch — is
-    still authorised without asking a maintainer to re-apply it.
+    Asks the API when the event does not carry a pull request object, which is
+    the case that matters: an ``issue_comment`` payload has no
+    ``pull_request``, so every field under it reads as null. A workflow
+    condition like ``head.repo.fork != true`` is therefore *true* for a comment
+    on a fork's pull request — the guard that looks like it excludes forks
+    admits them, and quietly.
+
+    That is not a hypothetical. It is what this reviewer found in its own
+    workflow, and the reason fork-ness is established here rather than
+    inferred from whatever the event happened to include.
     """
     pull = event.get("pull_request")
+    if isinstance(pull, dict) and pull.get("head"):
+        return is_fork_payload(pull)
+    return is_fork_payload(await github.pull_request(number))
+
+
+def carries_label(pull: dict[str, Any] | None) -> bool:
+    """Whether the review label is currently on the pull request.
+
+    The pull request's label list is checked rather than ``event.label``, so
+    that a re-run — a push to an already-labelled branch, a manual dispatch —
+    is still authorised without asking a maintainer to re-apply it.
+    """
     if not isinstance(pull, dict):
         return False
     wanted = review_label().casefold()
@@ -83,17 +101,23 @@ def actor(event: dict[str, Any]) -> str:
     return os.getenv("GITHUB_ACTOR", "").strip()
 
 
-async def refusal(github: Any, event: dict[str, Any]) -> str:
+async def refusal(github: Any, number: int, event: dict[str, Any]) -> str:
     """Why this fork review must not proceed, or "" if it may.
 
     Returns prose rather than raising: a refusal is a normal outcome that the
     log should explain, not an error someone has to debug.
     """
-    if not is_fork_event(event):
+    if not await is_fork(github, number, event):
         return ""
 
+    # Presence of the key, not truth of the value: an empty label list is a
+    # real answer, and refetching on it would treat "no labels" as "unknown".
+    pull = event.get("pull_request")
+    if not isinstance(pull, dict) or "labels" not in pull:
+        pull = await github.pull_request(number)
+
     label = review_label()
-    if not carries_label(event):
+    if not carries_label(pull):
         return (
             f"this pull request is from a fork and does not carry the "
             f"{label!r} label, so it was not reviewed. A maintainer can add "

@@ -35,17 +35,33 @@ def event(
 
 
 class FakeGitHub:
-    def __init__(self, writers: tuple[str, ...] = ("maintainer",)) -> None:
+    def __init__(
+        self,
+        writers: tuple[str, ...] = ("maintainer",),
+        pull: dict | None = None,
+    ) -> None:
         self._writers = set(writers)
+        self._pull = pull
         self.asked: list[str] = []
+        self.fetched = 0
 
     async def has_write_access(self, username: str) -> bool:
         self.asked.append(username)
         return username in self._writers
 
+    async def pull_request(self, number: int) -> dict:
+        self.fetched += 1
+        if self._pull is None:
+            raise AssertionError("the API was consulted without a pull to return")
+        return self._pull
+
 
 def refuse(payload: dict, github: FakeGitHub | None = None) -> str:
-    return asyncio.run(forks.refusal(github or FakeGitHub(), payload))
+    return asyncio.run(forks.refusal(github or FakeGitHub(), 7, payload))
+
+
+def fork(payload: dict, github: FakeGitHub | None = None) -> bool:
+    return asyncio.run(forks.is_fork(github or FakeGitHub(), 7, payload))
 
 
 @pytest.fixture(autouse=True)
@@ -57,20 +73,44 @@ def default_label(monkeypatch):
 
 
 def test_a_same_repository_pull_request_is_not_a_fork():
-    assert not forks.is_fork_event(event(fork=False, head_id=1, base_id=1))
+    assert not fork(event(fork=False, head_id=1, base_id=1))
 
 
 def test_a_fork_flag_is_enough():
-    assert forks.is_fork_event(event(fork=True))
+    assert fork(event(fork=True))
 
 
 def test_differing_repository_ids_are_enough():
     """A pull request from another repository in the same org has fork=false."""
-    assert forks.is_fork_event(event(fork=False, head_id=99, base_id=1))
+    assert fork(event(fork=False, head_id=99, base_id=1))
 
 
-def test_a_payload_without_a_pull_request_is_not_a_fork():
-    assert not forks.is_fork_event({"sender": {"login": "someone"}})
+def test_a_payload_without_a_pull_request_asks_the_api():
+    """The hole this closes, found by the reviewer in its own workflow.
+
+    An `issue_comment` payload has no `pull_request` object, so every field
+    under it reads as null — and `head.repo.fork != true` is therefore *true*
+    for a comment on a fork's pull request. The guard that looks like it
+    excludes forks admits them. Inferring from the payload is the bug; asking
+    is the fix.
+    """
+    github = FakeGitHub(pull=event(fork=True)["pull_request"])
+    assert fork({"sender": {"login": "someone"}}, github)
+    assert github.fetched == 1
+
+
+def test_a_comment_on_a_fork_still_needs_the_label():
+    """The whole point of the previous test: the label gate must engage here."""
+    payload = {"sender": {"login": "maintainer"}, "issue": {"number": 7}}
+    unlabelled = event(fork=True, labels=())
+    github = FakeGitHub(pull=unlabelled["pull_request"])
+    assert "does not carry" in refuse(payload, github)
+
+
+def test_a_comment_on_a_same_repository_pull_request_is_unaffected():
+    same_repo = event(fork=False, head_id=1, base_id=1)
+    github = FakeGitHub(pull=same_repo["pull_request"])
+    assert refuse({"sender": {"login": "anyone"}}, github) == ""
 
 
 # -- the two conditions ----------------------------------------------------
@@ -114,6 +154,12 @@ def test_the_label_is_read_from_the_pull_request_not_the_event():
     payload = event(labels=("quorum: review",))
     assert "label" not in payload  # no `event.label`, as on a synchronize event
     assert refuse(payload) == ""
+
+
+def test_carries_label_takes_a_pull_request_not_an_event():
+    assert forks.carries_label(event(labels=("quorum: review",))["pull_request"])
+    assert not forks.carries_label(event(labels=("other",))["pull_request"])
+    assert not forks.carries_label(None)
 
 
 def test_the_label_name_is_configurable(monkeypatch):

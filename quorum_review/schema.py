@@ -99,6 +99,16 @@ class PRContext:
     #: incremental diff were not looked at, and must not be read as resolved.
     incremental: bool = False
 
+    #: The exclusion patterns actually in force, resolved once when the diff
+    #: was selected. Carried here so the models' file tools apply the same set
+    #: rather than re-reading ``.quorumignore`` from the checkout.
+    #:
+    #: Re-reading it would undo the fork protection: the checkout *is* the
+    #: branch under review, so the head's copy would govern the tools even
+    #: when the base's copy governs the diff. Two reads of the same policy
+    #: file, resolved at two different refs, is a gap someone has to notice.
+    exclude_patterns: list[str] = field(default_factory=list)
+
 
 @dataclass
 class Skill:

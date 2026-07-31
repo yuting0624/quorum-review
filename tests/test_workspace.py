@@ -280,3 +280,43 @@ def test_the_benchmark_answer_key_is_hidden_from_the_models():
         "benchmark/runs/anything.json",
     ):
         assert hidden.run("read_file", {"path": path}).startswith("Error:")
+
+
+# -- one policy file, resolved once ----------------------------------------
+
+
+def test_the_tools_use_the_patterns_they_are_given_not_the_checkout(
+    monkeypatch, repo: pathlib.Path
+):
+    """The gap the reviewer found in its own diff.
+
+    `.quorumignore` was read twice: once by the diff selector, at whichever ref
+    policy said to trust, and again here — from the checkout, which *is* the
+    branch under review. On a fork that meant the base's copy governed the diff
+    while the head's copy governed the tools. Passing the resolved set in is
+    what makes the two halves the same decision.
+    """
+    (repo / ".quorumignore").write_text("app/**\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(repo))
+    monkeypatch.delenv("QUORUM_REPO_ACCESS", raising=False)
+
+    from quorum_review import workspace as workspace_mod
+
+    # The resolved set says nothing about app/, so the head's attempt to hide
+    # it must not take effect.
+    space = workspace_mod.build(1, 10, patterns=["*.lock"])[0]
+    assert space is not None
+    assert "REQUIRED_SCOPES" in space.run("read_file", {"path": "app/permissions.py"})
+
+
+def test_no_resolved_patterns_falls_back_to_the_checkout(monkeypatch, repo):
+    """A local run has no diff selector to resolve them."""
+    (repo / ".quorumignore").write_text("app/**\n", encoding="utf-8")
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(repo))
+    monkeypatch.delenv("QUORUM_REPO_ACCESS", raising=False)
+
+    from quorum_review import workspace as workspace_mod
+
+    space = workspace_mod.build(1, 10)[0]
+    assert space is not None
+    assert space.run("read_file", {"path": "app/permissions.py"}).startswith("Error:")

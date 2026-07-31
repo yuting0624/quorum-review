@@ -144,6 +144,18 @@ class GitHubClient:
             return None
         return response.text
 
+    async def pull_request(self, number: int) -> dict[str, Any]:
+        """The pull request as the API describes it.
+
+        Needed because the event payload cannot be relied on to describe it.
+        An ``issue_comment`` payload has no ``pull_request`` object at all, so
+        anything derived from one — is this a fork, does it carry a label — is
+        reading null and getting an answer that looks confident.
+        """
+        return (
+            await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
+        ).json()
+
     async def load_context(
         self,
         number: int,
@@ -163,7 +175,7 @@ class GitHubClient:
         The saving grows with every push: without it, a pull request on its
         tenth commit re-reads all ten commits' worth of diff every time.
         """
-        pull = (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
+        pull = await self.pull_request(number)
         head_sha = pull["head"]["sha"]
         base_sha = pull["base"]["sha"]
 
@@ -211,6 +223,7 @@ class GitHubClient:
             # was never examined, so its findings must survive the run.
             changed_files=sorted(diffs.split_by_file(diff)),
             incremental=incremental,
+            exclude_patterns=list(path_filter.patterns),
         )
         return ctx, skipped, trimmed, dropped
 

@@ -376,9 +376,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # the label. A workflow condition is one careless edit away from being
         # wrong, and under `pull_request_target` the consequence of being wrong
         # is a run with write access authorised by a stranger.
-        from_fork = forks.is_fork_event(event)
+        from_fork = await forks.is_fork(github, number, event)
         if from_fork:
-            refusal = await forks.refusal(github, event)
+            refusal = await forks.refusal(github, number, event)
             if refusal:
                 print(f"::notice title=Not reviewed::{refusal}")
                 print(f"skipped: {refusal}", file=sys.stderr)
@@ -407,7 +407,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
         )
 
         # -- independent scans ------------------------------------------------
-        scan_budgets = workspace_mod.build(len(scanning), workspace_mod.MAX_CALLS)
+        scan_budgets = workspace_mod.build(
+            len(scanning), workspace_mod.MAX_CALLS, ctx.exclude_patterns
+        )
         root = next((w.root for w in scan_budgets if w is not None), None)
         if root is not None and not workspace_mod.checkout_has_commit(root, ctx.head_sha):
             # The checkout is not this pull request — an issue_comment run gets
@@ -479,7 +481,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
             skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
             verify_budgets = (
-                workspace_mod.build(len(to_verify), VERIFY_TOOL_CALLS)
+                workspace_mod.build(
+                    len(to_verify), VERIFY_TOOL_CALLS, ctx.exclude_patterns
+                )
                 if any(w is not None for w in scan_budgets)
                 else [None] * len(to_verify)
             )
