@@ -159,6 +159,13 @@ jobs:
       # has. `always()` so a failed gate still uploads what it failed on.
       - name: Upload to code scanning
         if: always() && hashFiles('quorum.sarif') != ''
+        # Does not fail the job. Code scanning is a repository feature — free on
+        # public repositories, part of GitHub Advanced Security on private ones —
+        # and a red check every run for a feature the organisation has not bought
+        # would get the whole workflow removed. The findings are on the pull
+        # request and in the job summary either way; this step only adds a second
+        # home for them.
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: quorum.sarif

@@ -330,6 +330,19 @@ Only findings the reviewer stands behind are uploaded. Advisory and refuted ones
 stay in the comment: the Security tab is a queue someone is expected to empty,
 and a queue full of maybes is not emptied.
 
+Two things that are easy to get wrong, both learnt by having the upload
+rejected:
+
+- The SARIF carries the **whole open state from the ledger**, not what this run
+  newly reported. Code scanning treats an upload as a replacement, so a
+  re-review that finds nothing new — the common case, by design — would
+  otherwise mark every earlier alert fixed.
+- The upload needs `security-events: write` **and** `actions: read`, and code
+  scanning has to be enabled on the repository at all: free on public ones, part
+  of GitHub Advanced Security on private ones. The example marks the step
+  `continue-on-error` for exactly that reason — a red check every run for a
+  feature you have not bought is how the whole workflow gets deleted.
+
 ### 🏢 Rolling it out across an organisation
 
 Copying the workflow into fifty repositories means copying the trigger
