@@ -46,6 +46,10 @@ class RunReport:
     summary_only: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
+    #: Files the whole-diff budget left out entirely. Separate from
+    #: `trimmed_files` because they mean different things to a reader: a
+    #: trimmed file was partly reviewed, a dropped one was never looked at.
+    dropped_files: list[str] = field(default_factory=list)
     usage: dict[str, ModelUsage] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     incremental: bool = False
@@ -347,6 +351,18 @@ def render(report: RunReport) -> str:
             + ", ".join(f"`{path}`" for path in report.trimmed_files),
         ]
 
+    if report.dropped_files:
+        shown = ", ".join(f"`{p}`" for p in report.dropped_files[:10])
+        if len(report.dropped_files) > 10:
+            shown += f", and {len(report.dropped_files) - 10} more"
+        lines += [
+            "",
+            f"> ⚠️ **{len(report.dropped_files)} file(s) were not reviewed.** "
+            f"The diff exceeded the size budget, and these did not fit: {shown}. "
+            f"Nothing below is a statement about them. Split the pull request, "
+            f"or raise `max-diff-characters`.",
+        ]
+
     if report.skipped_files:
         lines += ["", _skipped_note(report.skipped_files)]
 
@@ -357,7 +373,15 @@ def render(report: RunReport) -> str:
         or report.resolved
         or report.suppressed
     ):
-        lines += ["", "No new issues found in this diff."]
+        # Deliberately not "looks good": the reviewer read a bounded slice of
+        # one change, and a clean result on a diff that was cut short is not
+        # the same statement as a clean result on all of it.
+        lines += [
+            "",
+            "No new issues found in the diff that was reviewed."
+            if report.dropped_files
+            else "No new issues found in this diff.",
+        ]
 
     lines += ["", "---", "", *_footer(report)]
     return "\n".join(lines)

@@ -131,22 +131,38 @@ disagreements — usually less than one scan plus a judgement on everything.
 
 ## 📊 Measured
 
-Ten seeded bugs and three decoys that look dangerous but are correct. Three runs
-per configuration. Full method and answer key:
-[`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
+A fixed pull request with ten seeded bugs, three decoys that look dangerous but
+are correct, and two bugs that **cannot be decided from the diff** — their
+correctness depends on a validator and a permission registry the pull request
+never touches. Three runs per configuration. Full method, answer key and raw
+findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
-| Scanning | Found (mean of 3) | Stability | False positives |
+**Which model scans decides what the review can find:**
+
+| Scanning | Found (mean of 3) | Stability |
+|---|---|---|
+| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** |
+| `claude-opus-5` alone | 10.0 / 10 | all 3/3 |
+| **both, independently** | **10.0 / 10** | **all 3/3** |
+
+**Reading past the diff decides whether it can be right about them:**
+
+| | Seeded bugs | Diff-undecidable bugs | Decoys flagged |
 |---|---|---|---|
-| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** | 0 |
-| `claude-opus-5` alone | 10.0 / 10 | all 3/3 | 0 |
-| **both, independently** | **10.0 / 10** | **all 3/3** | **0** |
+| diff only | 10 / 10 | **0 / 2**, every run | 0 |
+| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
 
-No configuration was fooled by any decoy in any run. Live from Actions: 13
-findings posted, **0% re-report rate** on an unchanged pull request.
+Both configurations also found real bugs nobody planted — and one of those,
+a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
+repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
+on an unchanged pull request.
 
-> **Read this narrowly.** One fixture, three runs, written by the same person who
-> wrote the reviewer. Enough to justify the dual-scan design; not enough to rank
-> the models.
+> **Read this narrowly.** One fixture, written by the same person who wrote the
+> reviewer. Two rounds of results had to be thrown away when the models turned
+> out to be reading the answer key — [both contamination sources are documented
+> rather than quietly fixed](benchmark/seeded-bugs/README.md#two-contamination-sources-both-found-by-giving-the-models-access),
+> and one of them was found by the reviewer itself. Enough to justify the design;
+> not enough to rank the models.
 
 ## 🚀 Install
 
@@ -175,7 +191,8 @@ Full setup, including Workload Identity Federation: **[docs/setup-vertex.md](doc
 
 Complete workflows: [`review-vertex.yml`](examples/review-vertex.yml) ·
 [`review-vertex-app.yml`](examples/review-vertex-app.yml) (GitHub App token) ·
-[`review-apikey.yml`](examples/review-apikey.yml) (no Google Cloud).
+[`review-apikey.yml`](examples/review-apikey.yml) (no Google Cloud) ·
+[`review-fork.yml`](examples/review-fork.yml) (fork pull requests).
 
 ## 💬 Talking to it
 
@@ -202,6 +219,10 @@ finding.
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
 | `repo-access` | `on` | read-only tools over the checkout, so a finding that turns on code outside the diff can be settled instead of guessed. Needs `actions/checkout` |
+| `fail-on` | `never` | `critical`/`high`/`medium`/`low` — exit non-zero so the action can be a required check |
+| `fail-on-degraded` | `false` | also fail when the reviewer could not run properly. See below |
+| `max-diff-characters` | `400000` | whole-diff budget; files that do not fit are named, never quietly skipped |
+| `fork-label` | `quorum: review` | label that authorises reviewing a pull request from a fork |
 | `incremental` | `on` | re-reviews only what changed since the last review |
 | `exclude` | — | extra paths to skip, on top of the built-in defaults |
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
@@ -218,6 +239,44 @@ finding.
 | **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | best recall, usually cheaper than the row above |
 
 The default is not the most expensive option — easy to assume, and wrong.
+
+### 🚦 Making it a required check
+
+`fail-on` turns the reviewer into something a branch protection rule can depend
+on. Findings the reviewer declined to stand behind — advisory, refuted — never
+gate; blocking on those would teach people the verdicts mean nothing.
+
+```yaml
+  - uses: yuting0624/quorum-review@v1
+    id: review
+    with:
+      google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      fail-on: critical
+
+  - if: steps.review.outputs.degraded == 'true'
+    run: echo "reviewed with less than full context — do not read a clean result as clean"
+```
+
+Outputs: `findings`, `critical`, `high`, `medium`, `low`, `advisory`, `refuted`,
+`resolved`, `degraded`, `repo-access`. The review also lands in the Actions job
+summary, so it is readable even when posting to the pull request fails.
+
+`fail-on-degraded` is separate, and off by default. Both defaults are judgement
+calls worth stating: a required check that passes because the reviewer was
+broken is worse than no check, but one that blocks every merge in the
+organisation because a Vertex region is having a bad afternoon is its own
+outage. Two policies, two switches.
+
+### 🍴 Pull requests from forks
+
+Supported, gated on a label, in a separate workflow:
+[`review-fork.yml`](examples/review-fork.yml). Read the comments at the top
+before copying it — `pull_request_target` is the trigger people get compromised
+by, and the reason this use is safe is that **nothing from the fork is ever
+executed**. Add a dependency-install step and that stops being true.
+
+Two conditions, both re-checked by the action rather than trusted to the
+workflow's `if:` — the label, and write access for whoever applied it.
 
 ## 🏷️ Post as your own GitHub App
 

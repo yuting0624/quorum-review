@@ -150,12 +150,14 @@ class GitHubClient:
         exclude_input: str = "",
         use_default_excludes: bool = True,
         since_sha: str = "",
-    ) -> tuple[PRContext, list[str], list[str]]:
+        trust_head_config: bool = True,
+    ) -> tuple[PRContext, list[str], list[str], list[str]]:
         """Fetch everything a provider needs.
 
-        Returns the context, the files skipped as not worth reviewing, and the
-        files that were too large to send whole. Both lists are surfaced in the
-        summary — a partial review must never read as a complete one.
+        Returns the context and three lists of files: skipped as not worth
+        reviewing, shortened because they were too large, and dropped because
+        the diff as a whole did not fit. All three are surfaced in the summary —
+        a partial review must never read as a complete one.
 
         With ``since_sha``, only what changed since that commit is reviewed.
         The saving grows with every push: without it, a pull request on its
@@ -163,13 +165,20 @@ class GitHubClient:
         """
         pull = (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
         head_sha = pull["head"]["sha"]
+        base_sha = pull["base"]["sha"]
 
-        # Read .quorumignore at the pull request's head, not the default
-        # branch, so a pull request that adds or edits it takes effect on
-        # itself rather than only after merging.
+        # Read .quorumignore at the pull request's head, so a pull request that
+        # adds or edits it takes effect on itself rather than only after
+        # merging. That is right when the author can already push here.
+        #
+        # It is not right for a fork. `.quorumignore` can only remove files from
+        # review, so an untrusted head is one commit away from an empty review
+        # that still reports success — `**` in a new file, and nothing is read.
+        # For those, the base branch's copy governs.
+        config_sha = head_sha if trust_head_config else base_sha
         path_filter = PathFilter.build(
             exclude_input=exclude_input,
-            ignore_file_contents=await self.read_file(IGNORE_FILE, head_sha),
+            ignore_file_contents=await self.read_file(IGNORE_FILE, config_sha),
             use_defaults=use_default_excludes,
         )
 
@@ -184,21 +193,26 @@ class GitHubClient:
             raw_diff = await self._pull_diff(number)
 
         selected, skipped = diffs.select(raw_diff, lambda p: not path_filter.excluded(p))
-        diff, trimmed = diffs.truncate(selected)
+        diff, trimmed, dropped = diffs.truncate(
+            selected, total_char_limit=_total_diff_limit()
+        )
 
         ctx = PRContext(
             owner=self.owner,
             repo=self.repo,
             number=number,
             head_sha=head_sha,
-            base_sha=since_sha if incremental else pull["base"]["sha"],
+            base_sha=since_sha if incremental else base_sha,
             title=pull.get("title") or "",
             body=pull.get("body") or "",
             diff=diff,
-            changed_files=sorted(diffs.split_by_file(selected)),
+            # What the review actually looked at, which is what decides whether
+            # a previously open finding may be closed as fixed. A dropped file
+            # was never examined, so its findings must survive the run.
+            changed_files=sorted(diffs.split_by_file(diff)),
             incremental=incremental,
         )
-        return ctx, skipped, trimmed
+        return ctx, skipped, trimmed, dropped
 
     async def has_write_access(self, username: str) -> bool:
         """Whether this user may change the repository.
@@ -470,3 +484,13 @@ class GitHubClient:
                 f"could not reply to comment {comment_id} -> "
                 f"{response.status_code}: {response.text[:400]}"
             )
+
+
+def _total_diff_limit() -> int:
+    """Whole-diff budget, read at call time so tests can move it."""
+    raw = os.getenv("QUORUM_MAX_DIFF_CHARS", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return diffs.DEFAULT_TOTAL_CHAR_LIMIT
+    return value if value > 0 else diffs.DEFAULT_TOTAL_CHAR_LIMIT

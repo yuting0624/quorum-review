@@ -148,7 +148,17 @@ def workspace_root() -> pathlib.Path | None:
     working directory: a composite action runs from its own checkout, so
     ``Path.cwd()`` is this project rather than the repository being reviewed —
     a mistake already made once, in the code that reads ``.quorumignore``.
+
+    ``QUORUM_WORKSPACE`` overrides it, which a fork review needs: there the
+    workspace holds the *base* repository and the fork's code is checked out
+    into a subdirectory, because running a fork's build is the thing that
+    turns ``pull_request_target`` into a compromise.
     """
+    override = os.getenv("QUORUM_WORKSPACE", "").strip()
+    if override:
+        candidate = pathlib.Path(override)
+        return candidate.resolve() if candidate.is_dir() else None
+
     raw = os.getenv("GITHUB_WORKSPACE", "").strip()
     if not raw:
         return None

@@ -1,0 +1,78 @@
+# Reviewing pull requests from forks, gated on a label.
+#
+# READ THIS BEFORE COPYING IT. `pull_request_target` runs with write access to
+# your repository and with your secrets, while the code in the pull request
+# belongs to someone else. Every published attack on this trigger has the same
+# shape: the workflow checks out the fork's code and then runs something from
+# it — `npm ci`, a build, a test suite, a linter that loads a config file.
+#
+# This workflow never executes anything from the fork. The action is installed
+# from its own published copy, and the fork's code is checked out into a
+# subdirectory that is only ever read as text. If you add a setup step here —
+# dependency install, code generation, anything — you have removed the property
+# that makes this safe.
+#
+# Two conditions authorise a run, and the action re-checks both itself:
+#
+#   1. The pull request carries the review label.
+#   2. Whoever applied it has write access. Labelling is available to triage
+#      collaborators, so the label alone is not authorisation.
+#
+# Keep this in a file separate from review-vertex.yml. Same-repository pull
+# requests do not need `pull_request_target` and should not use it.
+
+name: quorum-review (forks)
+
+on:
+  pull_request_target:
+    types: [labeled, synchronize]
+
+concurrency:
+  group: quorum-review-fork-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  review:
+    # `synchronize` is included so that pushes to an already-labelled branch are
+    # re-reviewed — otherwise a contributor could get a clean review and then
+    # push whatever they liked. It is filtered to labelled pull requests only.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'quorum: review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      # The fork's code, as data. `path:` keeps it out of the workspace root so
+      # that nothing here can be mistaken for this repository's own files, and
+      # `persist-credentials: false` means the checked-out tree carries no
+      # token that a later step could pick up.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+      # Pinned to a commit, not a tag. A tag can be moved to point at new code,
+      # and this job holds a write-scoped token.
+      - name: Review
+        uses: yuting0624/quorum-review@v1
+        with:
+          google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          skill: security-review
+          # Where the fork's code was checked out. Without this the models
+          # would read the base repository and quietly review the wrong tree.
+          workspace-path: ${{ github.workspace }}/pr-head
+          fork-label: "quorum: review"

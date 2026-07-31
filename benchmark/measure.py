@@ -219,7 +219,7 @@ async def main_async(args: argparse.Namespace) -> int:
     async with GitHubClient() as github:
         # No path filter: the fixture is the whole point, and the defaults
         # would be free to decide part of it is not worth reviewing.
-        ctx, _skipped, trimmed = await github.load_context(
+        ctx, _skipped, trimmed, dropped = await github.load_context(
             args.pr, use_default_excludes=False
         )
     if trimmed:

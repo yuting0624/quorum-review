@@ -19,7 +19,7 @@ import pathlib
 import sys
 import time
 
-from . import consensus, conversation, dismissal, learning
+from . import actions, consensus, conversation, dismissal, forks, learning
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
@@ -355,7 +355,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
     if conversation.is_question(event):
         async with GitHubClient() as github:
             ledger, _ = await github.load_ledger(number)
-            ctx, _skipped, _trimmed = await github.load_context(
+            ctx, _skipped, _trimmed, _dropped = await github.load_context(
                 number, exclude_input=os.getenv("QUORUM_EXCLUDE", "")
             )
             return await conversation.handle(
@@ -372,11 +372,26 @@ async def run(skill_name: str, dry_run: bool) -> int:
     started = time.monotonic()
 
     async with GitHubClient() as github:
+        # Forks are re-checked here even though the workflow already gated on
+        # the label. A workflow condition is one careless edit away from being
+        # wrong, and under `pull_request_target` the consequence of being wrong
+        # is a run with write access authorised by a stranger.
+        from_fork = forks.is_fork_event(event)
+        if from_fork:
+            refusal = await forks.refusal(github, event)
+            if refusal:
+                print(f"::notice title=Not reviewed::{refusal}")
+                print(f"skipped: {refusal}", file=sys.stderr)
+                return 0
+
         ledger, sticky = await github.load_ledger(number)
-        ctx, skipped_files, trimmed = await github.load_context(
+        ctx, skipped_files, trimmed, dropped = await github.load_context(
             number,
             exclude_input=os.getenv("QUORUM_EXCLUDE", ""),
             since_sha=ledger.last_reviewed_sha if incremental_enabled() else "",
+            # A fork's `.quorumignore` would let the branch under review decide
+            # what does not get reviewed.
+            trust_head_config=not from_fork,
         )
 
         report = report_mod.RunReport(
@@ -384,6 +399,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
             scanning_models=scanning,
             verification_on=verify_wanted,
             trimmed_files=trimmed,
+            dropped_files=dropped,
             skipped_files=skipped_files,
             incremental=ctx.incremental,
             since_sha=ctx.base_sha if ctx.incremental else "",
@@ -503,7 +519,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         if dry_run:
             print(report_mod.render(report))
-            return 0
+            return _finish(report)
 
         threshold = SEVERITY_RANK[inline_min_severity()]
         for finding in report.confirmed + report.unverified:
@@ -547,8 +563,26 @@ async def run(skill_name: str, dry_run: bool) -> int:
         body = report_mod.render(report)
         marker = ledger_mod.fit_to_comment(ledger, body)
         await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)
+        actions.write_job_summary(body)
 
-    return 0
+    return _finish(report)
+
+
+def _finish(report: report_mod.RunReport) -> int:
+    """Publish the run to the workflow, and decide whether to fail the check.
+
+    Kept out of ``run`` so the exit code has one origin. A reviewer that can
+    only comment is something people read when they remember to; a reviewer
+    that can fail a required check is part of the process.
+    """
+    actions.annotate(report)
+    actions.write_outputs(report)
+
+    message = actions.gate_message(report)
+    if message:
+        print(f"::error title=quorum-review::{message}")
+        print(f"error: {message}", file=sys.stderr)
+    return actions.exit_code(report)
 
 
 def list_models() -> int:

@@ -15,7 +15,10 @@ environment-variable change and nothing else.
 
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from .. import prompts, workspace
@@ -70,6 +73,35 @@ VERIFY_WITH_TOOLS_EFFORT = "medium"
 PROSE_EFFORT = "medium"
 PROSE_MAX_TOKENS = 8_000
 
+# Retry. Without it a single 429 loses a whole scan, and on the dual-scan design
+# that quietly halves the review — the summary reports one model down, but a
+# transient rate limit is not something a reader should have to act on.
+#
+# Only the errors below are retried. An auth or entitlement failure returns the
+# same answer however many times it is asked, so retrying it just spends the
+# run's time budget before reporting what it already knew.
+MAX_ATTEMPTS = int(os.getenv("QUORUM_MODEL_RETRIES", "3"))
+RETRY_BASE_DELAY = 2.0
+
+_RETRYABLE_HINTS = (
+    "429",
+    "resource_exhausted",
+    "rate limit",
+    "quota",
+    "500",
+    "502",
+    "503",
+    "504",
+    "internal error",
+    "unavailable",
+    "deadline",
+    "timeout",
+    "timed out",
+    "overloaded",
+    "connection reset",
+    "connection error",
+)
+
 _AUTH_HINTS = (
     "could not automatically determine credentials",
     "default credentials",
@@ -112,6 +144,46 @@ def _as_unavailable(model: str, error: Exception) -> Exception:
             f"{model} is not callable with the current credentials: {error}"
         )
     return error
+
+
+def _is_retryable(error: Exception) -> bool:
+    """Whether asking again might get a different answer.
+
+    ``ProviderUnavailable`` is excluded first and deliberately: it is produced
+    by the check above from 401/403/404, and those do not become 200 on the
+    second attempt. Note the ordering matters — a 503 mentioning "permission"
+    somewhere in its body would otherwise be classified as permanent.
+    """
+    if isinstance(error, ProviderUnavailable):
+        return False
+    text = str(error).lower()
+    return any(hint in text for hint in _RETRYABLE_HINTS)
+
+
+async def _with_retry(model: str, call: Callable[[], Awaitable[Any]]) -> Any:
+    """Run ``call``, retrying transient failures with exponential backoff.
+
+    Jitter is deliberately absent. The two models are called concurrently and a
+    rate limit usually hits both, so their retries do line up — but they are
+    two requests, not two hundred, and a predictable schedule is worth more
+    here than the thundering-herd protection jitter buys at scale.
+    """
+    delay = RETRY_BASE_DELAY
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return await call()
+        except Exception as error:  # noqa: BLE001 - classified, then re-raised
+            if attempt == MAX_ATTEMPTS or not _is_retryable(error):
+                raise
+            print(
+                f"note: {model} attempt {attempt}/{MAX_ATTEMPTS} failed "
+                f"({type(error).__name__}: {str(error)[:160]}); "
+                f"retrying in {delay:.0f}s",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(delay)
+            delay *= 2
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 class _GeminiEngine:
@@ -220,12 +292,15 @@ class _GeminiEngine:
                 return
 
     async def _generate(self, contents: list[Any], config: Any) -> Any:
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=self.model, contents=contents, config=config
-            )
-        except Exception as error:  # noqa: BLE001 - reclassified below
-            raise _as_unavailable(self.model, error) from error
+        async def once() -> Any:
+            try:
+                return await self._client.aio.models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+            except Exception as error:  # noqa: BLE001 - reclassified below
+                raise _as_unavailable(self.model, error) from error
+
+        response = await _with_retry(self.model, once)
 
         meta = getattr(response, "usage_metadata", None)
         self.usage.add(
@@ -344,29 +419,34 @@ class _ClaudeEngine:
         tools: list[dict[str, Any]] | None = None,
     ) -> Any:
         extra: dict[str, Any] = {"tools": tools} if tools else {}
-        try:
-            # Streaming even though the payload is small: a non-streaming call
-            # with a large max_tokens can outlive the SDK's HTTP timeout.
-            async with self._client.messages.stream(
-                model=self.model,
-                max_tokens=max_tokens,
-                output_config=output_config,
-                # The system prompt is identical across every verify call in a
-                # run, so a cache breakpoint here is read back once per finding.
-                # Vertex supports manual cache_control but not automatic caching.
-                system=[
-                    {
-                        "type": "text",
-                        "text": system,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=messages,
-                **extra,
-            ) as stream:
-                message = await stream.get_final_message()
-        except Exception as error:  # noqa: BLE001 - reclassified below
-            raise _as_unavailable(self.model, error) from error
+
+        async def once() -> Any:
+            try:
+                # Streaming even though the payload is small: a non-streaming
+                # call with a large max_tokens can outlive the HTTP timeout.
+                async with self._client.messages.stream(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    output_config=output_config,
+                    # The system prompt is identical across every verify call
+                    # in a run, so a cache breakpoint here is read back once
+                    # per finding. Vertex supports manual cache_control but not
+                    # automatic caching.
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=messages,
+                    **extra,
+                ) as stream:
+                    return await stream.get_final_message()
+            except Exception as error:  # noqa: BLE001 - reclassified below
+                raise _as_unavailable(self.model, error) from error
+
+        message = await _with_retry(self.model, once)
 
         used = message.usage
         self.usage.add(
