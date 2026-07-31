@@ -154,6 +154,7 @@ jobs:
                  github.event.comment.author_association)) ||
        (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
+        github.event.issue.state == 'open' &&
         (contains(github.event.comment.body, '@quorum /review') ||
          contains(github.event.comment.body, '@quorum /criteria')) &&
         github.event.comment.user.type != 'Bot' &&
@@ -174,12 +175,28 @@ jobs:
       # because an `issue_comment` run would otherwise check out the default
       # branch and review the wrong tree; the action detects that and falls
       # back to a diff-only review, but there is no reason to make it.
+      #
+      # `/merge` is preferred: it is the branch merged into base, which is what
+      # the diff describes. It does not exist for a pull request with
+      # conflicts, so `/head` is the fallback — a review of a conflicted branch
+      # is still worth having.
       - uses: actions/checkout@v4
+        id: merge-ref
+        continue-on-error: true
         with:
           ref: >-
             refs/pull/${{ github.event.pull_request.number
               || github.event.issue.number }}/merge
           fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        if: steps.merge-ref.outcome == 'failure'
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number }}/head
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Authenticate to Google Cloud

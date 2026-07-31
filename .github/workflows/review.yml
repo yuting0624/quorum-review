@@ -102,6 +102,7 @@ jobs:
                  github.event.comment.author_association)) ||
        (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
+        github.event.issue.state == 'open' &&
         (contains(github.event.comment.body, '@quorum /review') ||
          contains(github.event.comment.body, '@quorum /criteria')) &&
         github.event.comment.user.type != 'Bot' &&
@@ -127,6 +128,8 @@ jobs:
       # at run time that it has the right one; without it the tools are
       # withdrawn and the summary says the review was diff-only.
       - uses: actions/checkout@v4
+        id: merge-ref
+        continue-on-error: true
         with:
           ref: >-
             refs/pull/${{ github.event.pull_request.number
@@ -134,6 +137,20 @@ jobs:
               || github.event.inputs.pr }}/merge
           path: pr-head
           fetch-depth: 2
+          persist-credentials: false
+
+      # `/merge` does not exist for a pull request with conflicts, or for one
+      # that has been closed. `/head` does, and a review of a conflicted branch
+      # is still worth having.
+      - uses: actions/checkout@v4
+        if: steps.merge-ref.outcome == 'failure'
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}/head
+          path: pr-head
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Authenticate to Google Cloud
