@@ -34,6 +34,14 @@ class StickyComment:
     body: str
 
 
+@dataclass
+class ReviewThread:
+    """A review thread, identified the way GraphQL needs to resolve it."""
+
+    thread_id: str
+    is_resolved: bool
+
+
 def read_event() -> dict[str, Any]:
     """Load the workflow event payload written by the Actions runner.
 
@@ -229,6 +237,85 @@ class GitHubClient:
                 f"{response.status_code}: {response.text[:400]}"
             )
         return int(response.json()["id"])
+
+    # -- GraphQL -----------------------------------------------------------
+    #
+    # REST cannot resolve a review thread, and does not expose thread IDs at
+    # all. Collapsing a thread whose finding is fixed needs GraphQL, which is
+    # why this small amount of it exists rather than a second API layer.
+
+    async def _graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        response = await self._http.post(
+            "/graphql", json={"query": query, "variables": variables}
+        )
+        if response.status_code >= 400:
+            raise GitHubError(f"GraphQL -> {response.status_code}: {response.text[:400]}")
+
+        payload = response.json()
+        if payload.get("errors"):
+            raise GitHubError(f"GraphQL errors: {payload['errors']}")
+        return payload["data"]
+
+    _THREADS_QUERY = """
+    query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              isResolved
+              comments(first: 1) { nodes { databaseId } }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    async def review_threads(self, number: int) -> dict[int, ReviewThread]:
+        """Map the first comment's REST id to its thread.
+
+        Keying on the first comment is what bridges the two APIs: inline
+        comments are posted over REST, which returns a numeric id, while
+        resolving needs the GraphQL node id of the thread that comment started.
+        """
+        threads: dict[int, ReviewThread] = {}
+        cursor: str | None = None
+
+        while True:
+            data = await self._graphql(
+                self._THREADS_QUERY,
+                owner=self.owner,
+                repo=self.repo,
+                number=number,
+                cursor=cursor,
+            )
+            block = data["repository"]["pullRequest"]["reviewThreads"]
+            for node in block["nodes"]:
+                comments = node["comments"]["nodes"]
+                if not comments:
+                    continue
+                database_id = comments[0].get("databaseId")
+                if database_id is not None:
+                    threads[int(database_id)] = ReviewThread(
+                        thread_id=node["id"], is_resolved=bool(node["isResolved"])
+                    )
+
+            if not block["pageInfo"]["hasNextPage"]:
+                return threads
+            cursor = block["pageInfo"]["endCursor"]
+
+    _RESOLVE_MUTATION = """
+    mutation($threadId: ID!) {
+      resolveReviewThread(input: {threadId: $threadId}) {
+        thread { id isResolved }
+      }
+    }
+    """
+
+    async def resolve_thread(self, thread_id: str) -> None:
+        await self._graphql(self._RESOLVE_MUTATION, threadId=thread_id)
 
     async def reply_to_comment(self, number: int, comment_id: int, body: str) -> None:
         """Reply inside an existing review thread rather than starting a new one."""

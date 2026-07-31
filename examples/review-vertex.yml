@@ -19,6 +19,9 @@ on:
     types: [opened, reopened]
   issue_comment:
     types: [created]
+  # Replying "@quorum wontfix" to a review comment retires that finding.
+  pull_request_review_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       pr:
@@ -38,15 +41,25 @@ permissions:
 
 jobs:
   review:
-    # Run on a new PR, on manual dispatch, or when someone with write access
-    # comments `@quorum /review`.
+    # Run on a new PR, on manual dispatch, when someone with write access
+    # comments `@quorum /review`, or when they reply `@quorum wontfix` to a
+    # finding.
     #
-    # The Bot check is not optional: without it, the summary comment this action
-    # posts re-triggers the workflow, which posts another comment, and so on.
+    # The Bot check is not optional: without it, the comments this action posts
+    # re-trigger the workflow, which posts more comments, and so on.
+    #
+    # The author_association check is the authorisation boundary for dismissing
+    # findings — nothing downstream re-checks it.
     if: >-
       github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request != null &&
+      (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(github.event.comment.body, '@quorum') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                github.event.comment.author_association)) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
        contains(github.event.comment.body, '@quorum /review') &&
        github.event.comment.user.type != 'Bot' &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),

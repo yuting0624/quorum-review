@@ -19,7 +19,7 @@ import pathlib
 import sys
 import time
 
-from . import consensus
+from . import consensus, dismissal
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
@@ -158,9 +158,59 @@ async def verify_all(
     return list(verified), unavailable[0] if unavailable else ""
 
 
+async def close_threads(
+    github: GitHubClient,
+    number: int,
+    entries: list[ledger_mod.LedgerEntry],
+    head_sha: str,
+) -> None:
+    """Reply to and collapse the threads of findings that are no longer raised.
+
+    Leaving them open is the failure mode this project was built partly in
+    reaction to: a reviewer that keeps a wall of resolved comments open teaches
+    people to stop reading it. Best effort — a thread that cannot be collapsed
+    is not worth failing an otherwise good review over.
+    """
+    anchored = [entry for entry in entries if entry.review_comment_id]
+    if not anchored:
+        return
+
+    try:
+        threads = await github.review_threads(number)
+    except GitHubError as error:
+        print(f"warning: could not read review threads: {error}", file=sys.stderr)
+        return
+
+    for entry in anchored:
+        thread = threads.get(int(entry.review_comment_id or 0))
+        if thread is None or thread.is_resolved:
+            continue
+        try:
+            await github.reply_to_comment(
+                number,
+                int(entry.review_comment_id),  # type: ignore[arg-type]
+                f"No longer reported as of `{head_sha[:7]}` — resolving this "
+                f"thread. It will reappear if a later review finds it again.",
+            )
+            await github.resolve_thread(thread.thread_id)
+        except GitHubError as error:
+            print(
+                f"warning: could not resolve the thread for {entry.finding_id}: "
+                f"{error}",
+                file=sys.stderr,
+            )
+
+
 async def run(skill_name: str, dry_run: bool) -> int:
     event = read_event()
     number = pr_number_from_event(event)
+
+    # Retiring a false positive is a state change, not a review. Running a full
+    # review here would burn two model calls to answer a question nobody asked.
+    if dismissal.is_dismissal(event):
+        async with GitHubClient() as github:
+            return await dismissal.handle(github, event, number)
+
     skill = load_skill(skill_name)
 
     provider = build_provider()
@@ -200,10 +250,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # as fixed. Scans are not perfectly repeatable, so a finding can drop
         # out because the models missed it rather than because it was fixed —
         # accepted for now, since re-detection later simply reopens it.
+        newly_closed: list[ledger_mod.LedgerEntry] = []
         for entry in list(ledger.entries.values()):
             if entry.status == "open" and not ledger.still_present(entry, findings):
                 ledger.mark_fixed(entry.finding_id, ctx.head_sha)
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
+                newly_closed.append(entry)
 
         # Never re-report something already posted or dismissed. Matching is
         # positional, not by ID: the same model re-quotes the same bug
@@ -280,6 +332,8 @@ async def run(skill_name: str, dry_run: bool) -> int:
         report.unverified = [
             f for f in report.unverified if f.finding_id not in unanchored_ids
         ]
+
+        await close_threads(github, number, newly_closed, ctx.head_sha)
 
         # Refuted findings are still recorded: keeping them stops the next run
         # from re-proposing something already dismissed.
