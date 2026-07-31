@@ -103,6 +103,12 @@ GitHub event ──▶ google-github-actions/auth ──▶ short-lived GCP cred
                     confirmed → inline · uncertain → advisory · refuted → dropped
 ```
 
+Both models also get three read-only tools over the checkout — `read_file`,
+`search`, `list_files` — each on its own budget. That is what lets a reviewer
+answer *"is this already handled somewhere else?"*: the question a diff cannot
+answer, and the one behind most false positives and most misses. Nothing writes,
+nothing executes, nothing leaves the runner.
+
 ### Two findings from measuring this
 
 **A second opinion cannot raise recall.** It only ever sees findings that were
@@ -195,6 +201,7 @@ finding.
 | `verifier-model` | `claude-opus-5` | both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
+| `repo-access` | `on` | read-only tools over the checkout, so a finding that turns on code outside the diff can be settled instead of guessed. Needs `actions/checkout` |
 | `incremental` | `on` | re-reviews only what changed since the last review |
 | `exclude` | — | extra paths to skip, on top of the built-in defaults |
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
