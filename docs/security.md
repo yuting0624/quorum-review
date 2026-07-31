@@ -49,16 +49,22 @@ An unparseable response raises rather than returning "no findings" — a silent
 empty review looks identical to a clean one, which is the more dangerous
 failure.
 
-### Verification is a second, independent look
+### Two models read the diff independently
 
 This is the strongest control against attempt #1, and it comes for free with the
-two-stage design. A diff that manipulates the primary model still faces a
-verifier that never saw that session and never receives the primary's reasoning
-— so a suppressed finding is only suppressed if *both* models were fooled
-independently.
+design. Both models scan the same diff in separate sessions, neither seeing the
+other's output, so **a finding is only suppressed if both models were fooled
+independently.** Text crafted against one model's phrasing has to work twice, on
+two different models, with no way to confirm it worked the first time.
 
-The same asymmetry works against attempt #2: a finding invented through
-injection has to survive a model asked to refute it.
+That property is why both models scan rather than one scanning and one checking.
+A single scanner is a single point of failure for injection as well as for
+recall: manipulate it and the finding is never raised, so there is nothing for a
+second model to be asked about.
+
+The same asymmetry works against attempt #2. A finding invented through
+injection was raised by one model only, which means it is exactly the kind that
+gets sent to the other model — the one that was asked to refute it.
 
 ### Credentials are never in reach of a model
 

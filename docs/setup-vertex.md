@@ -29,22 +29,7 @@ gcloud services enable aiplatform.googleapis.com iamcredentials.googleapis.com \
   --project="$PROJECT_ID"
 ```
 
-## 2. Create the service account
-
-`roles/aiplatform.user` is enough to call models. Do not grant more: this
-identity is reachable from any workflow run in the repository.
-
-```bash
-gcloud iam service-accounts create quorum-review \
-  --project="$PROJECT_ID" \
-  --display-name="quorum-review PR reviewer"
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:quorum-review@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/aiplatform.user"
-```
-
-## 3. Enable Claude in Model Garden
+## 2. Enable Claude in Model Garden
 
 Claude on Vertex is a partner model and is off until someone accepts its terms
 for the project. There is no `gcloud` command; it is a console action.
@@ -64,11 +49,15 @@ and release channel, and a stale ID is the most common first-run failure:
 python -m src.review --list-models
 ```
 
-## 4. Set up Workload Identity Federation
+## 3. Set up Workload Identity Federation
 
 This is what replaces a stored service-account key. GitHub signs an OIDC token
 describing the workflow run; Google Cloud verifies it and issues a short-lived
 credential.
+
+This uses **Direct Workload Identity Federation**: the workflow's own federated
+identity holds the IAM role. There is no service account in the picture, so
+there is nothing that can be given a key, and one fewer identity to audit.
 
 ```bash
 gcloud iam workload-identity-pools create "github" \
@@ -86,38 +75,46 @@ gcloud iam workload-identity-pools providers create-oidc "quorum-review" \
   --attribute-condition="assertion.repository_owner == '${GITHUB_OWNER}'"
 ```
 
-Now let exactly one repository impersonate the service account. The
-`attribute.repository/...` suffix is the narrowing that matters — bind on the
-pool alone and every repository in the org inherits the grant.
+Now grant one repository the ability to call models. `roles/aiplatform.user` is
+enough; do not grant more, because this is reachable from any workflow run in
+that repository.
+
+The `attribute.repository/...` suffix is the narrowing that matters — bind on
+the pool alone and every repository in the organisation inherits the grant.
 
 ```bash
-gcloud iam service-accounts add-iam-policy-binding \
-  "quorum-review@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --project="$PROJECT_ID" \
-  --role="roles/iam.workloadIdentityUser" \
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --role="roles/aiplatform.user" \
   --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/${GITHUB_OWNER}/${GITHUB_REPO}"
 ```
 
-## 5. Add the repository secrets
+> Some organisations restrict project-level IAM edits. If this call is denied,
+> the alternative is the older pattern: create a service account, grant it
+> `roles/aiplatform.user`, grant the same `principalSet` above
+> `roles/iam.workloadIdentityUser` **on the service account**, and pass
+> `service_account:` to `google-github-actions/auth`. That needs
+> `roles/iam.serviceAccountAdmin`, which is a different permission than the one
+> just denied — so check which one you actually have before choosing.
+
+## 4. Add the repository secrets
 
 ```bash
 echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/quorum-review"
-echo "quorum-review@${PROJECT_ID}.iam.gserviceaccount.com"
 echo "$PROJECT_ID"
 ```
 
-Add those three under **Settings → Secrets and variables → Actions**:
+Add both under **Settings → Secrets and variables → Actions**:
 
 | Secret | Value |
 |---|---|
 | `WIF_PROVIDER` | the `projects/.../providers/quorum-review` string |
-| `WIF_SERVICE_ACCOUNT` | the service account email |
 | `GOOGLE_CLOUD_PROJECT` | your project ID |
 
-None of these is a credential. They name an identity; the trust comes from the
-attribute condition and the IAM binding above.
+Neither is a credential. They name an identity; the trust comes from the
+attribute condition and the IAM binding above. They are secrets only in the
+sense that there is no reason to publish them.
 
-## 6. Add the workflow
+## 5. Add the workflow
 
 Copy [`examples/review-vertex.yml`](../examples/review-vertex.yml) to
 `.github/workflows/`. Two lines in it are load-bearing:
@@ -128,7 +125,7 @@ Copy [`examples/review-vertex.yml`](../examples/review-vertex.yml) to
   comment this action posts re-triggers the workflow, which posts another
   comment. Do not remove it.
 
-## 7. Verify locally first
+## 6. Verify locally first
 
 Confirm both models answer on one credential before involving Actions. This
 isolates a Google Cloud problem from a GitHub Actions problem, and the two fail
@@ -173,7 +170,7 @@ whole repository exists to demonstrate.
 ## Troubleshooting
 
 **`404` on the Claude call, Gemini fine.** Model Garden enablement is missing or
-region-scoped. Re-check step 3, then try `claude-vertex-region: us-east5`.
+region-scoped. Re-check step 2, then try `claude-vertex-region: us-east5`.
 
 **`403 Permission denied` on either.** The service account is missing
 `roles/aiplatform.user`, or the workflow is federating as a different identity

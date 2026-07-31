@@ -125,7 +125,7 @@ steps:
   - uses: google-github-actions/auth@v2
     with:
       workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-      service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+      project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
   - uses: your-org/quorum-review@main
     with:
       google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
@@ -185,6 +185,14 @@ python -m src.review --list-models
   untrusted code with write access, which is not a trade worth making.
 - **A renamed file yields new findings.** Identity is derived from the path, so
   a rename reads as a new location.
+- **Two instances of one pattern, described identically, collapse into one.**
+  Findings are matched across models and across runs by position and wording
+  (`src/matching.py`). If the same defect appears twice in a file and a model
+  gives both occurrences the same title, they merge and the second is lost.
+- **"No longer reported" does not mean fixed.** A finding drops off when the
+  scan stops raising it, which can be a fix or can be non-determinism. The
+  summary says only what is known, and such findings are un-suppressed so they
+  reappear if detected again.
 - **`issue_comment` workflows run from the default branch.** Editing the
   workflow on a PR branch does not change how `@quorum /review` behaves on that
   PR — a GitHub Actions rule, not something this project can work around.

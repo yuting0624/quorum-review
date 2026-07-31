@@ -81,21 +81,68 @@ def test_corrupt_marker_is_treated_as_absent():
     assert ledger.decode_marker("no marker here") is None
 
 
-def test_open_and_wontfix_are_suppressed_but_fixed_is_not():
-    book = ledger.Ledger.empty(1)
-    book.record(ledger.LedgerEntry("open1", "a.py", "security", "high", "t"))
-    book.record(
-        ledger.LedgerEntry("wf1", "a.py", "security", "high", "t", status="wontfix")
-    )
-    book.record(
-        ledger.LedgerEntry("fx1", "a.py", "security", "high", "t", status="fixed")
+def tracked(fid, status, line, path="a.py"):
+    return ledger.LedgerEntry(
+        fid, path, "security", "high", "t", line=line, snippet=f"x = {line}",
+        status=status,
     )
 
-    assert book.is_suppressed("open1")
-    assert book.is_suppressed("wf1")
+
+def reported(fid, line, path="a.py"):
+    return Finding(path, line, "security", "high", "t", "b", f"x = {line}",
+                   finding_id=fid)
+
+
+def test_open_and_wontfix_are_suppressed_but_fixed_is_not():
+    book = ledger.Ledger.empty(1)
+    book.record(tracked("open1", "open", 10))
+    book.record(tracked("wf1", "wontfix", 50))
+    book.record(tracked("fx1", "fixed", 90))
+
+    assert book.is_suppressed(reported("open1", 10))
+    assert book.is_suppressed(reported("wf1", 50))
     # A fixed issue reappearing is a regression, and worth reporting again.
-    assert not book.is_suppressed("fx1")
-    assert not book.is_suppressed("never-seen")
+    assert not book.is_suppressed(reported("fx1", 90))
+    assert not book.is_suppressed(reported("new", 500))
+
+
+def test_suppression_survives_the_model_quoting_the_bug_differently():
+    """The failure that let eight duplicate comments through.
+
+    A second run re-quotes the same defect with a different span, so the ID
+    changes. Suppression has to match on position, not identity.
+    """
+    book = ledger.Ledger.empty(1)
+    book.record(tracked("original-id", "open", 42))
+
+    requoted = Finding(
+        "a.py", 43, "security", "high", "t", "b",
+        "something = entirely_different()", finding_id="a-brand-new-id",
+    )
+    assert book.is_suppressed(requoted)
+
+
+def test_recording_a_requoted_finding_reuses_the_published_entry():
+    """One defect must not accumulate one ledger entry per run.
+
+    The original ID is kept because a review comment was already posted
+    under it.
+    """
+    book = ledger.Ledger.empty(1)
+    book.record(tracked("original-id", "open", 42))
+    book.record(tracked("a-brand-new-id", "open", 43))
+
+    assert list(book.entries) == ["original-id"]
+
+
+def test_still_present_matches_positionally():
+    book = ledger.Ledger.empty(1)
+    entry = tracked("e1", "open", 42)
+    book.record(entry)
+
+    assert book.still_present(entry, [reported("different-id", 43)])
+    assert not book.still_present(entry, [reported("different-id", 400)])
+    assert not book.still_present(entry, [])
 
 
 def test_wontfix_survives_a_later_run():

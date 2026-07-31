@@ -20,45 +20,19 @@ where the models largely agree, only the disagreements cost a second call.
 
 from __future__ import annotations
 
-from .ledger import normalize_snippet
+from .matching import Report, same_defect
 from .schema import SEVERITY_RANK, Finding
 
-#: How far apart two reports of the same defect may sit before quoted code has
-#: to corroborate them. Models routinely disagree by a line about where a
-#: problem "is" — the assignment or the call that uses it — but two genuinely
-#: distinct bugs almost never land this close.
-LINE_TOLERANCE = 2
 
-#: The outer limit even when both models quote overlapping code. Identical
-#: snippets are not proof of identity: a file can contain the same
-#: `except Exception: pass` twice, and merging two of those would silently
-#: discard a real finding. Beyond this distance, treat them as separate.
-SNIPPET_LINE_TOLERANCE = 15
+def as_report(finding: Finding) -> Report:
+    return Report(
+        finding.file_path, finding.line, finding.code_snippet, finding.title
+    )
 
 
 def looks_like_same(a: Finding, b: Finding) -> bool:
-    """Whether two findings from different models describe the same defect.
-
-    Finding IDs cannot answer this: they hash the quoted snippet, and two models
-    quoting the same bug rarely quote exactly the same characters. The match is
-    positional first, with quoted code allowed to widen the window — but never
-    to remove it, because repeated code is common and over-merging loses a
-    finding outright.
-    """
-    if a.file_path != b.file_path:
-        return False
-
-    distance = abs(a.line - b.line)
-    if distance <= LINE_TOLERANCE:
-        return True
-    if distance > SNIPPET_LINE_TOLERANCE:
-        return False
-
-    left = normalize_snippet(a.code_snippet)
-    right = normalize_snippet(b.code_snippet)
-    if not left or not right:
-        return False
-    return left in right or right in left
+    """Whether two findings from different models describe the same defect."""
+    return same_defect(as_report(a), as_report(b))
 
 
 def _absorb(target: Finding, other: Finding) -> None:

@@ -190,19 +190,20 @@ async def run(skill_name: str, dry_run: bool) -> int:
             model: len(scan) for model, scan in zip(scanning, scans, strict=False)
         }
 
-        current_ids = {finding.finding_id for finding in findings}
-
         # Anything previously open that this scan no longer reports is treated
         # as fixed. Scans are not perfectly repeatable, so a finding can drop
         # out because the models missed it rather than because it was fixed —
         # accepted for now, since re-detection later simply reopens it.
         for entry in list(ledger.entries.values()):
-            if entry.status == "open" and entry.finding_id not in current_ids:
+            if entry.status == "open" and not ledger.still_present(entry, findings):
                 ledger.mark_fixed(entry.finding_id, ctx.head_sha)
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
 
-        # Never re-report something already posted or dismissed.
-        fresh = [f for f in findings if not ledger.is_suppressed(f.finding_id)]
+        # Never re-report something already posted or dismissed. Matching is
+        # positional, not by ID: the same model re-quotes the same bug
+        # differently between runs, so ID equality alone lets duplicates
+        # through — which is exactly what happened the first time this ran.
+        fresh = [f for f in findings if not ledger.is_suppressed(f)]
         report.suppressed = len(findings) - len(fresh)
 
         # -- consensus, then verify only what is unresolved --------------------

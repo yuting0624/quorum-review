@@ -20,7 +20,19 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .matching import Report, normalize_snippet, same_defect
 from .schema import Finding
+
+__all__ = [
+    "Ledger",
+    "LedgerEntry",
+    "assign_ids",
+    "compute_finding_id",
+    "decode_marker",
+    "encode_marker",
+    "fit_to_comment",
+    "normalize_snippet",
+]
 
 SCHEMA_VERSION = 1
 
@@ -35,22 +47,10 @@ _MARKER = re.compile(
 COMMENT_CHAR_LIMIT = 65_536
 COMPRESS_ABOVE = 4_096
 
-_COMMENT = re.compile(r"(#|//).*$", re.MULTILINE)
-_WHITESPACE = re.compile(r"\s+")
-
-
-def normalize_snippet(snippet: str) -> str:
-    """Reduce a code snippet to something reformatting will not change.
-
-    Strips comments and collapses all whitespace, so re-indentation, wrapping,
-    or an added explanatory comment does not mint a new finding ID.
-
-    This is not a parser: a ``#`` inside a string literal is treated as the
-    start of a comment. That is acceptable because the only requirement is
-    determinism — the same snippet must always hash the same way.
-    """
-    without_comments = _COMMENT.sub("", snippet)
-    return _WHITESPACE.sub(" ", without_comments).strip()
+def _report_of(finding: Finding) -> Report:
+    return Report(
+        finding.file_path, finding.line, finding.code_snippet, finding.title
+    )
 
 
 def compute_finding_id(file_path: str, code_snippet: str) -> str:
@@ -60,8 +60,14 @@ def compute_finding_id(file_path: str, code_snippet: str) -> str:
     finding, or moving a function, shifts every line below it; an ID that
     included the line would break and the finding would be re-reported as new.
 
-    Known limitation: a renamed file yields a different ID, so the finding is
-    treated as new. Left as-is for v1 and documented in the README.
+    The ID alone is **not** sufficient to recognise a returning finding: it
+    hashes the code the model chose to quote, and models do not quote the same
+    bug identically twice. ``Ledger.find_match`` falls back to positional
+    matching for that reason — see ``matching.same_defect``.
+
+    Known limitation: a renamed file yields a different ID and does not match
+    positionally either, so the finding is treated as new. Documented in the
+    README.
     """
     digest = hashlib.sha256()
     digest.update(file_path.encode("utf-8"))
@@ -79,6 +85,11 @@ class LedgerEntry:
     category: str
     severity: str
     title: str
+    #: Where it was last seen, and the code that was quoted. Stored so a later
+    #: run can recognise the same defect even when the model quotes it
+    #: differently and the ID therefore changes.
+    line: int = 0
+    snippet: str = ""
     reported_by: list[str] = field(default_factory=list)
     verdict: str = ""
     verifier_model: str = ""
@@ -89,6 +100,9 @@ class LedgerEntry:
     first_seen_sha: str = ""
     resolved_sha: str | None = None
     wontfix_reason: str | None = None
+
+    def as_report(self) -> Report:
+        return Report(self.file_path, self.line, self.snippet, self.title)
 
     def to_dict(self) -> dict[str, Any]:
         return {key: value for key, value in self.__dict__.items()}
@@ -106,6 +120,8 @@ class LedgerEntry:
             category=finding.category,
             severity=finding.severity,
             title=finding.title,
+            line=finding.line,
+            snippet=normalize_snippet(finding.code_snippet),
             reported_by=list(finding.reported_by),
             verdict=finding.verdict,
             verifier_model=finding.verifier_model,
@@ -130,21 +146,73 @@ class Ledger:
     def known(self, finding_id: str) -> LedgerEntry | None:
         return self.entries.get(finding_id)
 
-    def is_suppressed(self, finding_id: str) -> bool:
+    def find_match(self, finding: Finding) -> LedgerEntry | None:
+        """Find the entry describing this defect, if it is already tracked.
+
+        The ID is tried first because it is exact and cheap. It is not enough on
+        its own: it hashes the code the model quoted, and a second run of the
+        same model on the same diff routinely quotes a different span, yielding
+        a different ID for the same bug. Positional matching catches those.
+        """
+        exact = self.entries.get(finding.finding_id)
+        if exact is not None:
+            return exact
+
+        report = _report_of(finding)
+        return next(
+            (
+                entry
+                for entry in self.entries.values()
+                if same_defect(report, entry.as_report())
+            ),
+            None,
+        )
+
+    def is_suppressed(self, finding: Finding) -> bool:
         """True when this finding must not be posted again.
 
         Covers both "already reported and still open" and "the author declared
         it a false positive". Either way, re-posting is noise.
         """
-        entry = self.entries.get(finding_id)
+        entry = self.find_match(finding)
         return entry is not None and entry.status in ("open", "wontfix")
 
+    def still_present(self, entry: LedgerEntry, findings: list[Finding]) -> bool:
+        """Whether this run re-found a tracked defect."""
+        report = entry.as_report()
+        return any(
+            entry.finding_id == finding.finding_id
+            or same_defect(report, _report_of(finding))
+            for finding in findings
+        )
+
     def record(self, entry: LedgerEntry) -> None:
+        """Store an entry, folding it into an existing one for the same defect.
+
+        The lookup is positional as well as by ID: without that, a bug whose
+        quoted snippet shifted between runs would accumulate one ledger entry
+        per review, and the history that suppression depends on would be spread
+        across all of them.
+        """
         existing = self.entries.get(entry.finding_id)
+        if existing is None:
+            report = entry.as_report()
+            existing = next(
+                (
+                    candidate
+                    for candidate in self.entries.values()
+                    if same_defect(report, candidate.as_report())
+                ),
+                None,
+            )
+
         if existing is None:
             self.entries[entry.finding_id] = entry
             return
-        # Keep the original sighting and any human decision already made.
+
+        # Keep the identity we already published, and any human decision made
+        # against it — a comment already exists under the original ID.
+        entry.finding_id = existing.finding_id
         entry.first_seen_sha = existing.first_seen_sha or entry.first_seen_sha
         if existing.status == "wontfix":
             entry.status = "wontfix"
