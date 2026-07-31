@@ -216,8 +216,14 @@ looks new. Identity is therefore
 input**. Normalisation strips comments and collapses whitespace, so reformatting
 does not mint a new ID either.
 
-The trade: a renamed file produces new IDs, and the old findings read as
-resolved. Accepted for v1.
+The path being half the input is what a rename breaks: the snippet is
+unchanged, but the ID is not, and positional matching keys on the path too.
+Left alone, a refactor produces a page of resolutions and a page of identical
+fresh findings — the worst possible output for a change that altered no
+behaviour. So the diff's own `rename from` / `rename to` lines are read before
+anything is matched, and tracked findings are moved with their file. Git's
+similarity detection decides what counts as a rename; a file renamed *and*
+rewritten is a new file by that measure, and by ours.
 
 State is a base64 payload in a hidden HTML marker inside the summary comment
 (`<!-- quorum-state: ... -->`), gzipped past 4 KB. No database, no configuration

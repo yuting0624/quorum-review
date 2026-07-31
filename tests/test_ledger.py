@@ -279,3 +279,66 @@ def test_the_miss_count_survives_a_round_trip():
     assert restored is not None
     assert restored.entries["a"].misses == 1
     assert restored.missed("a", "sha2") is True
+
+
+# -- following a file that moved -------------------------------------------
+
+
+def test_a_tracked_finding_moves_with_its_file():
+    """A rename is the one change that breaks content-addressed identity: the
+    snippet is unchanged, but the path is half of the hash. Without this a
+    refactor produces a page of resolutions and a page of identical fresh
+    findings — the worst possible output for a change that altered nothing."""
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book, "old-id", file_path="app/old.py", snippet="bad = 1")
+
+    moved = book.follow_renames({"app/old.py": "app/new.py"})
+
+    assert moved == [("old-id", entry.finding_id)]
+    assert entry.file_path == "app/new.py"
+    assert entry.finding_id != "old-id"
+    assert book.entries[entry.finding_id] is entry
+    assert "old-id" not in book.entries
+
+
+def test_the_new_id_is_what_the_next_run_will_compute():
+    """Otherwise suppression breaks on the run after the rename instead of on
+    the rename itself, which is harder to notice."""
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book, "old-id", file_path="app/old.py", snippet="bad = 1")
+    book.follow_renames({"app/old.py": "app/new.py"})
+
+    assert entry.finding_id == ledger.compute_finding_id("app/new.py", "bad = 1")
+
+
+def test_files_that_did_not_move_are_untouched():
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book, "a", file_path="app/other.py")
+
+    assert book.follow_renames({"app/old.py": "app/new.py"}) == []
+    assert entry.file_path == "app/other.py"
+    assert entry.finding_id == "a"
+
+
+def test_a_collision_at_the_destination_keeps_the_existing_entry():
+    """The same defect arriving by two routes. The tracked one is the one the
+    posted comment points at."""
+    book = ledger.Ledger(pr_number=1)
+    destination_id = ledger.compute_finding_id("app/new.py", "bad = 1")
+    already = _entry(book, destination_id, file_path="app/new.py", snippet="bad = 1")
+    _entry(book, "old-id", file_path="app/old.py", snippet="bad = 1")
+
+    book.follow_renames({"app/old.py": "app/new.py"})
+
+    assert book.entries[destination_id] is already
+    assert "old-id" not in book.entries
+
+
+def test_a_dismissal_survives_the_move():
+    """Otherwise a rename resurrects every false positive someone retired."""
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book, "a", file_path="app/old.py", status="wontfix")
+    book.follow_renames({"app/old.py": "app/new.py"})
+
+    assert entry.status == "wontfix"
+    assert book.entries[entry.finding_id].status == "wontfix"

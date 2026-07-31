@@ -121,3 +121,73 @@ def test_dropping_is_stable_across_runs():
     first = diffs.truncate(diff, total_char_limit=2_000)[2]
     second = diffs.truncate(diff, total_char_limit=2_000)[2]
     assert first == second
+
+
+# -- renames ---------------------------------------------------------------
+
+RENAMED = """diff --git a/app/old_name.py b/app/new_name.py
+similarity index 92%
+rename from app/old_name.py
+rename to app/new_name.py
+--- a/app/old_name.py
++++ b/app/new_name.py
+@@ -1,2 +1,2 @@
+-x = 1
++x = 2
+diff --git a/app/plain.py b/app/plain.py
+--- a/app/plain.py
++++ b/app/plain.py
+@@ -1 +1 @@
+-a
++b
+"""
+
+
+def test_a_rename_is_reported_old_to_new():
+    assert diffs.renames(RENAMED) == {"app/old_name.py": "app/new_name.py"}
+
+
+def test_a_diff_with_no_renames_reports_none():
+    assert diffs.renames(DIFF) == {}
+
+
+def test_the_section_is_still_keyed_on_the_new_path():
+    """Line numbers in a finding refer to the file after the change."""
+    assert "app/new_name.py" in diffs.split_by_file(RENAMED)
+    assert "app/old_name.py" not in diffs.split_by_file(RENAMED)
+
+
+def test_a_rename_with_no_content_change_is_still_seen():
+    """git emits no hunks for a pure move, and those are the ones where the
+    findings certainly all survive."""
+    pure = (
+        "diff --git a/a.py b/b.py\n"
+        "similarity index 100%\n"
+        "rename from a.py\n"
+        "rename to b.py\n"
+    )
+    assert diffs.renames(pure) == {"a.py": "b.py"}
+
+
+def test_several_renames_in_one_diff():
+    two = RENAMED + (
+        "diff --git a/x.py b/y.py\nrename from x.py\nrename to y.py\n"
+    )
+    assert diffs.renames(two) == {
+        "app/old_name.py": "app/new_name.py",
+        "x.py": "y.py",
+    }
+
+
+def test_a_stray_rename_line_inside_a_hunk_is_not_a_rename():
+    """A diff that adds the text 'rename from ...' to a file is a content
+    change, and the header resets the state so it cannot be mistaken for one."""
+    contrived = (
+        "diff --git a/doc.md b/doc.md\n"
+        "--- a/doc.md\n"
+        "+++ b/doc.md\n"
+        "@@ -1 +1,2 @@\n"
+        " intro\n"
+        "+rename to somewhere.py\n"
+    )
+    assert diffs.renames(contrived) == {}

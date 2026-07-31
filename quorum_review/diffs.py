@@ -27,6 +27,8 @@ DEFAULT_FILE_CHAR_LIMIT = 20_000
 DEFAULT_TOTAL_CHAR_LIMIT = 400_000
 
 _HEADER = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
+_RENAME_FROM = re.compile(r"^rename from (?P<path>.+)$")
+_RENAME_TO = re.compile(r"^rename to (?P<path>.+)$")
 
 
 def split_by_file(diff: str) -> dict[str, str]:
@@ -52,6 +54,35 @@ def split_by_file(diff: str) -> dict[str, str]:
     if current_path is not None:
         sections[current_path] = "".join(buffer)
     return sections
+
+
+def renames(diff: str) -> dict[str, str]:
+    """``{old path: new path}`` for every file this diff moves.
+
+    Findings are keyed on a path, so a rename otherwise costs twice: every
+    finding in the file is closed as fixed, because nothing at the old path was
+    re-reported, and the same defects come back as new at the new path. A
+    reader sees a refactor produce a page of resolutions and a page of
+    identical fresh findings.
+
+    Read from the diff rather than asked of the API, so it works the same for
+    an incremental range as for a whole pull request.
+    """
+    moves: dict[str, str] = {}
+    old: str | None = None
+    for line in diff.splitlines():
+        if _HEADER.match(line):
+            old = None
+            continue
+        from_match = _RENAME_FROM.match(line)
+        if from_match:
+            old = from_match.group("path")
+            continue
+        to_match = _RENAME_TO.match(line)
+        if to_match and old:
+            moves[old] = to_match.group("path")
+            old = None
+    return moves
 
 
 def is_binary(section: str) -> bool:

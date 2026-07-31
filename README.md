@@ -492,8 +492,7 @@ Details, including the operational guidance: [docs/security.md](docs/security.md
 - **Diff-only context.** Findings that need to compare a change against code the
   diff does not touch — a constant documented in one file and changed in
   another — are out of reach.
-- **Forks are unsupported.** They get a read-only token and no secrets.
-- **A renamed file yields new findings.** Identity derives from the path.
+- **A file renamed *and* edited beyond recognition yields new findings.** Renames themselves are followed; git's own similarity detection decides what counts as one.
 - **Two instances of one pattern, described identically, collapse into one.**
 - **"No longer reported" does not mean fixed** — it can also mean the scan did
   not raise it this time. The summary says only what is known.
