@@ -16,6 +16,17 @@ name: quorum-review
 
 on:
   pull_request:
+    # Add `synchronize` to review every push, not just the first. It is not the
+    # default only because it is your money: with `incremental: on` a re-review
+    # reads the range since the last one rather than the whole pull request, and
+    # the ledger suppresses anything already reported, so the marginal cost of a
+    # push is roughly the size of that push. On a branch that gets twenty
+    # commits, that is the difference between reviewing it once and reviewing
+    # what actually changed.
+    #
+    # There is no feedback loop to worry about here — this action never pushes.
+    # The `concurrency` block below cancels a superseded run, so a rapid series
+    # of pushes costs one review rather than one per commit.
     types: [opened, reopened]
   issue_comment:
     types: [created]

@@ -292,6 +292,42 @@ broken is worse than no check, but one that blocks every merge in the
 organisation because a Vertex region is having a bad afternoon is its own
 outage. Two policies, two switches.
 
+### 🏢 Rolling it out across an organisation
+
+Copying the workflow into fifty repositories means copying the trigger
+conditions too — and this project has already had to fix two security bugs in
+those conditions. Neither fix would have reached a repository that copied the
+file in January.
+
+So they live in one place. Fork this repository, then each repository needs:
+
+```yaml
+# .github/workflows/review.yml
+name: quorum-review
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+jobs:
+  review:
+    uses: your-org/quorum-review/.github/workflows/reusable.yml@v1
+    secrets: inherit
+    with:
+      fail-on: critical      # optional
+```
+
+`on:` has to be in the caller — GitHub resolves triggers from the calling
+workflow, so a reusable one cannot decide when it runs. Everything else,
+including `action-ref` for pinning to a commit SHA and `runs-on` for a
+self-hosted runner, is an input.
+
+`synchronize` is worth adding once you have `incremental: on`: a re-review reads
+the range since the last one and the ledger suppresses what was already
+reported, so the marginal cost of a push is about the size of that push.
+
 ### 🍴 Pull requests from forks
 
 Supported, gated on a label, in a separate workflow:

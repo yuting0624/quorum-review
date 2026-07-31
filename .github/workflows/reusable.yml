@@ -1,0 +1,209 @@
+# Org-wide rollout: one copy of the policy, N repositories calling it.
+#
+# Adopting this by copying review-vertex.yml means ninety lines of YAML in every
+# repository, and every subsequent fix to the trigger conditions has to be
+# copied again — including the two security fixes this project has already made
+# to those conditions. Neither would have reached a repository that copied the
+# file in January.
+#
+# So the conditions live here, once. A repository that uses it needs five lines:
+#
+#     # .github/workflows/review.yml
+#     name: quorum-review
+#     on:
+#       pull_request:
+#         types: [opened, reopened, synchronize]
+#       issue_comment:
+#         types: [created]
+#       pull_request_review_comment:
+#         types: [created]
+#     jobs:
+#       review:
+#         uses: your-org/quorum-review/.github/workflows/reusable.yml@v1
+#         secrets: inherit
+#
+# Two things a caller cannot skip:
+#
+# - `on:` must be declared by the caller. GitHub resolves triggers from the
+#   calling workflow, not the called one, so a reusable workflow cannot decide
+#   when it runs. The `if:` below still governs whether the job does anything.
+# - `secrets: inherit`, or pass WIF_PROVIDER and GOOGLE_CLOUD_PROJECT
+#   explicitly. Organisation-level secrets make `inherit` the usual choice.
+#
+# Forks are not handled here: they need `pull_request_target`, which is a
+# different trust model and a different file. See examples/review-fork.yml.
+
+name: quorum-review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      skill:
+        type: string
+        required: false
+        default: security-review
+      scan:
+        type: string
+        required: false
+        default: both
+      verification:
+        type: string
+        required: false
+        default: "on"
+      repo-access:
+        type: string
+        required: false
+        default: "on"
+      incremental:
+        type: string
+        required: false
+        default: "on"
+      inline-severity:
+        type: string
+        required: false
+        default: low
+      fail-on:
+        description: >-
+          critical / high / medium / low to make this a required check.
+          Defaults to never, so adopting the workflow cannot start blocking
+          merges in someone's repository without them asking for it.
+        type: string
+        required: false
+        default: never
+      fail-on-degraded:
+        type: string
+        required: false
+        default: "false"
+      exclude:
+        type: string
+        required: false
+        default: ""
+      review-language:
+        type: string
+        required: false
+        default: ""
+      primary-model:
+        type: string
+        required: false
+        default: ""
+      verifier-model:
+        type: string
+        required: false
+        default: ""
+      max-diff-characters:
+        type: string
+        required: false
+        default: "400000"
+      runs-on:
+        description: A self-hosted label, if model calls have to leave from a known network.
+        type: string
+        required: false
+        default: ubuntu-latest
+      action-ref:
+        description: >-
+          Which version of the action to run. Pin this to a commit SHA in a
+          regulated environment — a tag can be moved to point at new code.
+        type: string
+        required: false
+        default: yuting0624/quorum-review@v1
+    secrets:
+      WIF_PROVIDER:
+        required: true
+      GOOGLE_CLOUD_PROJECT:
+        required: true
+    outputs:
+      findings:
+        value: ${{ jobs.review.outputs.findings }}
+      critical:
+        value: ${{ jobs.review.outputs.critical }}
+      high:
+        value: ${{ jobs.review.outputs.high }}
+      degraded:
+        value: ${{ jobs.review.outputs.degraded }}
+
+concurrency:
+  group: >-
+    quorum-review-${{ github.repository }}-${{ github.event.pull_request.number
+      || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  review:
+    # The conditions this file exists to centralise. Every one is load-bearing:
+    #
+    # - Forks are excluded. They get a read-only token and no secrets, so this
+    #   would only fail, noisily, on every outside contribution.
+    # - The Bot check prevents a loop: without it, the comments this action
+    #   posts satisfy the trigger and start another run.
+    # - author_association is a cheap pre-filter, not the authorisation
+    #   boundary. It cannot tell a read-only collaborator from a maintainer, so
+    #   the action re-checks the real permission against the API.
+    if: >-
+      github.event.pull_request.head.repo.fork != true &&
+      (github.event_name == 'pull_request' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request_review_comment' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@quorum') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)) ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        (contains(github.event.comment.body, '@quorum /review') ||
+         contains(github.event.comment.body, '@quorum /criteria')) &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)))
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 25
+
+    outputs:
+      findings: ${{ steps.review.outputs.findings }}
+      critical: ${{ steps.review.outputs.critical }}
+      high: ${{ steps.review.outputs.high }}
+      degraded: ${{ steps.review.outputs.degraded }}
+
+    steps:
+      # The pull request's code, as data — what the models read when a finding
+      # depends on something the diff does not contain. The ref is explicit
+      # because an `issue_comment` run would otherwise check out the default
+      # branch and review the wrong tree; the action detects that and falls
+      # back to a diff-only review, but there is no reason to make it.
+      - uses: actions/checkout@v4
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number }}/merge
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Review
+        id: review
+        uses: ${{ inputs.action-ref }}
+        with:
+          mode: vertex
+          google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          skill: ${{ inputs.skill }}
+          scan: ${{ inputs.scan }}
+          verification: ${{ inputs.verification }}
+          repo-access: ${{ inputs.repo-access }}
+          incremental: ${{ inputs.incremental }}
+          inline-severity: ${{ inputs.inline-severity }}
+          fail-on: ${{ inputs.fail-on }}
+          fail-on-degraded: ${{ inputs.fail-on-degraded }}
+          exclude: ${{ inputs.exclude }}
+          review-language: ${{ inputs.review-language }}
+          primary-model: ${{ inputs.primary-model }}
+          verifier-model: ${{ inputs.verifier-model }}
+          max-diff-characters: ${{ inputs.max-diff-characters }}
