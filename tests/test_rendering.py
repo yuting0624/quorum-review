@@ -336,3 +336,29 @@ def test_a_truncated_cell_never_ends_mid_escape():
         body = cell(hostile).removesuffix("…")
         assert not body.endswith(("&", "&a", "&am", "&amp"))
         assert (len(body) - len(body.rstrip("\\"))) % 2 == 0
+
+
+def test_a_cut_landing_on_a_backslash_before_whitespace_is_repaired():
+    r"""Reported by the reviewer: the parity check ran before `rstrip()`.
+
+    A cut ending `\   ` looks even — the last character is a space, so no
+    trailing backslashes are counted — and then stripping the whitespace puts
+    an odd backslash back on the end, where it escapes whatever follows.
+    """
+    from quorum_review.report import _bound
+
+    backslash = chr(92)
+    probe = ("x" * 155) + backslash + "   yyyy"
+    body = _bound(probe, 160).removesuffix("…")
+
+    assert (len(body) - len(body.rstrip(backslash))) % 2 == 0
+    assert not body.endswith(" ")
+
+
+def test_the_repair_leaves_an_even_run_alone():
+    from quorum_review.report import _bound
+
+    backslash = chr(92)
+    probe = ("x" * 150) + (backslash * 4) + "  zzzz"
+    body = _bound(probe, 160).removesuffix("…")
+    assert body.endswith(backslash * 4)

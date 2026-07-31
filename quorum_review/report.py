@@ -155,15 +155,18 @@ def _bound(escaped: str, limit: int) -> str:
     - Inside ``&amp;``, leaving ``&am`` to render as literal text.
     - After an odd number of backslashes, so the next character — in a table,
       the closing pipe — gets escaped and the column disappears.
+
+    Order matters and got it wrong once: whitespace is stripped *before* the
+    parity check, because a cut landing on ``\\ `` looks even until the strip
+    removes the space and puts the backslash back on the end.
     """
     if len(escaped) <= limit:
         return escaped
 
-    cut = _PARTIAL_ENTITY.sub("", escaped[: limit - 1])
-    trailing = len(cut) - len(cut.rstrip("\\"))
-    if trailing % 2:
+    cut = _PARTIAL_ENTITY.sub("", escaped[: limit - 1].rstrip()).rstrip()
+    if (len(cut) - len(cut.rstrip("\\"))) % 2:
         cut = cut[:-1]
-    return cut.rstrip() + "…"
+    return cut + "…"
 
 
 def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
