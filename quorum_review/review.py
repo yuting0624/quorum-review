@@ -82,6 +82,13 @@ def scan_with_all_models() -> bool:
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
+#: Inline comments one run may post. The severity threshold decides *which*
+#: findings interrupt a reader in the diff view; this decides how many. They are
+#: different limits and only one of them was here: a change that introduces
+#: forty high-severity findings passes any threshold and buries the pull
+#: request. The rest are listed in the summary, worst first, and none is lost.
+MAX_INLINE_COMMENTS = int(os.getenv("QUORUM_MAX_INLINE_COMMENTS", "25"))
+
 #: Tool calls one verification may make. Far below a scan's budget: a verifier
 #: is settling one specific claim, and it is called once per finding.
 VERIFY_TOOL_CALLS = int(os.getenv("QUORUM_VERIFY_TOOL_CALLS", "6"))
@@ -597,7 +604,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
             return _finish(report)
 
         threshold = SEVERITY_RANK[inline_min_severity()]
-        for finding in report.confirmed + report.unverified:
+        # Worst first, because the cap below decides what gets a comment and
+        # what only gets a table row. Posting in whatever order the models
+        # returned would let a batch of low-severity findings use up the
+        # allowance before a critical one reaches it.
+        posted_inline = 0
+        for finding in by_severity(report.confirmed + report.unverified):
             entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
 
             # Below the threshold the finding is recorded and listed in the
@@ -607,9 +619,20 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 ledger.record(entry)
                 continue
 
+            # The severity threshold does not bound the *count*, and this file
+            # already argues that a dozen simultaneous comments is how a
+            # reviewer gets muted. A change that introduces forty high-severity
+            # findings needs a conversation, not forty comments.
+            if posted_inline >= MAX_INLINE_COMMENTS:
+                report.over_comment_cap.append(finding)
+                ledger.record(entry)
+                continue
+
             comment_id = await post_finding(github, number, ctx.head_sha, finding)
             if comment_id is None:
                 report.unanchored.append(finding)
+            else:
+                posted_inline += 1
             entry.review_comment_id = comment_id
             ledger.record(entry)
 

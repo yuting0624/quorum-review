@@ -147,8 +147,6 @@ class Ledger:
 
     pr_number: int
     last_reviewed_sha: str = ""
-    interaction_id: str = ""
-    environment_id: str = ""
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -274,8 +272,6 @@ class Ledger:
             "schema_version": self.schema_version,
             "pr_number": self.pr_number,
             "last_reviewed_sha": self.last_reviewed_sha,
-            "interaction_id": self.interaction_id,
-            "environment_id": self.environment_id,
             "findings": [entry.to_dict() for entry in self.entries.values()],
         }
 
@@ -284,8 +280,6 @@ class Ledger:
         ledger = cls(
             pr_number=int(raw.get("pr_number", 0)),
             last_reviewed_sha=str(raw.get("last_reviewed_sha", "")),
-            interaction_id=str(raw.get("interaction_id", "")),
-            environment_id=str(raw.get("environment_id", "")),
             schema_version=int(raw.get("schema_version", SCHEMA_VERSION)),
         )
         for item in raw.get("findings", []) or []:

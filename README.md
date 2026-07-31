@@ -255,6 +255,7 @@ finding.
 | `incremental` | `on` | re-reviews only what changed since the last review |
 | `exclude` | — | extra paths to skip, on top of the built-in defaults |
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
+| `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
 | `claude-vertex-region` | `global` | try `us-east5` if your entitlement is region-scoped |

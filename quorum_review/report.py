@@ -45,6 +45,10 @@ class RunReport:
     resolved: list[str] = field(default_factory=list)
     unanchored: list[Finding] = field(default_factory=list)
     summary_only: list[Finding] = field(default_factory=list)
+    #: Findings that cleared the severity threshold but arrived after the run
+    #: had already posted its allowance of inline comments. Listed in the
+    #: summary rather than dropped.
+    over_comment_cap: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
     #: Files the whole-diff budget left out entirely. Separate from
@@ -348,6 +352,17 @@ def render(report: RunReport) -> str:
             f"<sub>{len(report.summary_only)} finding(s) are listed above but "
             f"not commented inline, being below the configured severity "
             f"threshold.</sub>",
+        ]
+
+    if report.over_comment_cap:
+        lines += [
+            "",
+            f"> ℹ️ **{len(report.over_comment_cap)} further finding(s) are in "
+            f"the table above but were not commented inline.** This run had "
+            f"already used its allowance of inline comments; a pull request "
+            f"buried under them is one nobody reads. They are not dismissed, "
+            f"and the most severe findings got the comments. Raise "
+            f"`max-inline-comments`, or split the change.",
         ]
 
     if report.trimmed_files:

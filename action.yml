@@ -122,6 +122,17 @@ inputs:
       pull request is how a reviewer gets muted.
     required: false
     default: low
+  max-inline-comments:
+    description: >-
+      How many findings get their own comment in the diff view. Separate from
+      inline-severity, which decides *which* ones: a change that introduces
+      forty high-severity findings clears any threshold and still buries the
+      pull request.
+
+      The most severe get the comments. The rest stay in the summary table and
+      are named there as not commented — none is dropped.
+    required: false
+    default: "25"
   max-verified-findings:
     description: >-
       Cap on how many unresolved findings reach a second opinion, highest
@@ -271,6 +282,7 @@ runs:
         QUORUM_REPO_ACCESS: ${{ inputs.repo-access }}
         QUORUM_VERIFY_TOOL_CALLS: ${{ inputs.verify-tool-calls }}
         QUORUM_INLINE_SEVERITY: ${{ inputs.inline-severity }}
+        QUORUM_MAX_INLINE_COMMENTS: ${{ inputs.max-inline-comments }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
         QUORUM_WORKSPACE: ${{ inputs.workspace-path }}
         QUORUM_FORK_LABEL: ${{ inputs.fork-label }}
