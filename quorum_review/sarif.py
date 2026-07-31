@@ -34,6 +34,7 @@ access-control findings this quarter" is legible.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from .schema import Finding
@@ -162,8 +163,18 @@ def _result(finding: Finding, models: list[str]) -> dict[str, Any]:
     return result
 
 
+def repository_uri() -> str:
+    """This repository's URL, from the Actions environment. "" outside it."""
+    server = os.getenv("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    repository = os.getenv("GITHUB_REPOSITORY", "").strip()
+    return f"{server}/{repository}" if repository else ""
+
+
 def build(
-    findings: list[Finding], models: list[str], commit: str = ""
+    findings: list[Finding],
+    models: list[str],
+    commit: str = "",
+    repository: str = "",
 ) -> dict[str, Any]:
     """A SARIF log for one review.
 
@@ -181,8 +192,16 @@ def build(
         },
         "results": [_result(finding, models) for finding in findings],
     }
-    if commit:
-        run["versionControlProvenance"] = [{"revisionId": commit}]
+
+    # Both keys or neither. `repositoryUri` is required alongside `revisionId`,
+    # and code scanning rejects the entire log for a schema violation rather
+    # than dropping the offending object — so a half-filled provenance block
+    # loses every finding in the run. It did, once.
+    repository = repository or repository_uri()
+    if commit and repository:
+        run["versionControlProvenance"] = [
+            {"repositoryUri": repository, "revisionId": commit}
+        ]
     return {"$schema": SCHEMA, "version": VERSION, "runs": [run]}
 
 
@@ -223,3 +242,30 @@ def write(
     pathlib.Path(path).write_text(
         json.dumps(build(findings, models, commit), indent=2), encoding="utf-8"
     )
+
+
+def problems(log: dict[str, Any]) -> list[str]:
+    """Requirements code scanning enforces, checked before it does.
+
+    Not a schema validator. These are the specific rules that have actually
+    rejected an upload, kept as a list so a test can assert them and a future
+    one can be added when the next rejection teaches us about it. A rejection
+    loses every finding in the run, not just the offending one.
+    """
+    issues: list[str] = []
+    for index, run in enumerate(log.get("runs", [])):
+        declared = {rule["id"] for rule in run["tool"]["driver"].get("rules", [])}
+        for provenance in run.get("versionControlProvenance", []):
+            if "repositoryUri" not in provenance:
+                issues.append(f"runs[{index}].versionControlProvenance: no repositoryUri")
+        for position, result in enumerate(run.get("results", [])):
+            where = f"runs[{index}].results[{position}]"
+            if result.get("ruleId") not in declared:
+                issues.append(f"{where}: ruleId is not declared by the driver")
+            for location in result.get("locations", []):
+                region = location["physicalLocation"].get("region", {})
+                if region.get("startLine", 0) < 1:
+                    issues.append(f"{where}: startLine must be at least 1")
+                if not location["physicalLocation"]["artifactLocation"].get("uri"):
+                    issues.append(f"{where}: no artifact uri")
+    return issues

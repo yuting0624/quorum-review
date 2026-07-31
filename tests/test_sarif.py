@@ -35,7 +35,12 @@ def finding(**kwargs) -> Finding:
 
 @pytest.fixture
 def log() -> dict:
-    return sarif.build([finding()], ["gemini-3.6-flash", "claude-opus-5"], "deadbeef")
+    return sarif.build(
+        [finding()],
+        ["gemini-3.6-flash", "claude-opus-5"],
+        "deadbeef",
+        "https://github.com/o/r",
+    )
 
 
 # -- shape -----------------------------------------------------------------
@@ -58,7 +63,7 @@ def test_every_result_names_a_rule_that_exists(log: dict):
 
 
 def test_the_commit_is_recorded():
-    log = sarif.build([finding()], ["m"], "deadbeef")
+    log = sarif.build([finding()], ["m"], "deadbeef", "https://github.com/o/r")
     assert log["runs"][0]["versionControlProvenance"][0]["revisionId"] == "deadbeef"
 
 
@@ -221,3 +226,43 @@ def test_the_ledger_carries_enough_to_build_a_result():
     assert result["ruleId"] == "security"
     assert result["partialFingerprints"]["quorumFindingId"] == "a"
     assert result["properties"]["verifiedBy"] == "model-b"
+
+
+# -- what has actually been rejected ---------------------------------------
+
+
+def test_a_complete_log_passes_the_checks_that_have_bitten_us(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    log = sarif.build([finding()], ["m"], "deadbeef")
+    assert sarif.problems(log) == []
+
+
+def test_provenance_carries_the_repository_uri(monkeypatch):
+    """Code scanning rejected an upload for exactly this, losing every finding."""
+    monkeypatch.setenv("GITHUB_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.example.com")
+    provenance = sarif.build([finding()], ["m"], "sha")["runs"][0][
+        "versionControlProvenance"
+    ][0]
+    assert provenance["repositoryUri"] == "https://github.example.com/owner/repo"
+    assert provenance["revisionId"] == "sha"
+
+
+def test_provenance_is_omitted_rather_than_half_filled(monkeypatch):
+    """A rejection loses the whole run, so an incomplete block is worse than none."""
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    log = sarif.build([finding()], ["m"], "sha")
+    assert "versionControlProvenance" not in log["runs"][0]
+    assert sarif.problems(log) == []
+
+
+def test_the_checker_notices_a_missing_repository_uri():
+    log = sarif.build([finding()], ["m"], "", "")
+    log["runs"][0]["versionControlProvenance"] = [{"revisionId": "sha"}]
+    assert any("repositoryUri" in problem for problem in sarif.problems(log))
+
+
+def test_the_checker_notices_an_undeclared_rule():
+    log = sarif.build([finding()], ["m"], "", "")
+    log["runs"][0]["results"][0]["ruleId"] = "invented"
+    assert any("not declared" in problem for problem in sarif.problems(log))

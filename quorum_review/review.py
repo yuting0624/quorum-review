@@ -616,13 +616,25 @@ def _write_sarif(report: report_mod.RunReport, ledger: ledger_mod.Ledger) -> Non
     path = os.getenv("QUORUM_SARIF_FILE", "").strip()
     if not path:
         return
+
+    log = sarif.build(
+        sarif.open_findings(ledger), list(report.models), report.head_sha
+    )
+    # Checked here rather than left to the uploader. Code scanning rejects a
+    # log wholesale for a schema violation, so one bad field loses every
+    # finding — and the failure surfaces two steps later, in someone else's
+    # action, as "not valid SARIF".
+    issues = sarif.problems(log)
+    if issues:
+        for issue in issues:
+            print(f"::warning title=SARIF not written::{issue}")
+        return
+
     try:
-        sarif.write(
-            path,
-            sarif.open_findings(ledger),
-            list(report.models),
-            report.head_sha,
-        )
+        import json
+        import pathlib
+
+        pathlib.Path(path).write_text(json.dumps(log, indent=2), encoding="utf-8")
     except OSError as error:  # noqa: BLE001 - cosmetic; never fail a run for it
         print(f"note: could not write {path}: {error}", file=sys.stderr)
 
