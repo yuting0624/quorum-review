@@ -214,3 +214,73 @@ def test_nothing_is_listed_when_nothing_was_suppressed():
     from quorum_review.report import RunReport, render
 
     assert "Which ones" not in render(RunReport(confirmed=[finding()]))
+
+
+# -- HTML, because several sections are <details> ---------------------------
+
+
+def test_a_title_cannot_close_a_details_block():
+    """Reported by the reviewer on the pull request that added the list.
+
+    Several sections wrap their content in `<details>`, and GitHub renders raw
+    HTML in comments. A title is model output derived from a diff someone else
+    wrote, so `</details>` in one would close the block early and spill the
+    rest of the summary out of it.
+    """
+    from quorum_review.report import RunReport, render
+
+    body = render(
+        RunReport(suppressed=1, suppressed_titles=["</details><h1>gotcha"])
+    )
+    assert "</details><h1>" not in body
+    assert "&lt;/details&gt;" in body
+    # The block this is inside still closes exactly once, where it should.
+    assert body.count("<summary>Which ones</summary>") == 1
+
+
+def test_escaping_is_invisible_to_the_reader():
+    """`&lt;` renders as `<`, so a legitimate comparison still reads right."""
+    assert flatten("a < b && c > d") == "a &lt; b &amp;&amp; c &gt; d"
+
+
+def test_the_ampersand_is_escaped_first():
+    """The other order turns `<` into `&amp;lt;`, which the reader then sees."""
+    assert flatten("<") == "&lt;"
+    assert "&amp;lt;" not in flatten("<")
+
+
+def test_a_refuted_finding_cannot_break_out_of_its_details_block():
+    from quorum_review.report import RunReport, render
+
+    body = render(
+        RunReport(
+            verification_on=True,
+            refuted=[finding("</details>escaped", verifier_reason="</details>too")],
+        )
+    )
+    assert "</details>escaped" not in body
+    assert "</details>too" not in body
+
+
+# -- the summary shares a size limit with the ledger ------------------------
+
+
+def test_the_suppressed_list_is_bounded():
+    """The visible body and the ledger marker share GitHub's 65,536-character
+    limit. Overflowing makes `fit_to_comment` drop the ledger's history to make
+    room for a list nobody reads."""
+    from quorum_review.report import MAX_SUPPRESSED_LISTED, RunReport, render
+
+    many = [f"finding number {n}" for n in range(MAX_SUPPRESSED_LISTED + 15)]
+    body = render(RunReport(suppressed=len(many), suppressed_titles=many))
+
+    assert body.count("\n- finding number") == MAX_SUPPRESSED_LISTED
+    assert "…and 15 more" in body
+    assert f"{len(many)} finding(s) were already reported" in body
+
+
+def test_a_short_list_says_nothing_about_more():
+    from quorum_review.report import RunReport, render
+
+    body = render(RunReport(suppressed=2, suppressed_titles=["a", "b"]))
+    assert "more" not in body.split("<summary>Which ones</summary>")[1][:200]

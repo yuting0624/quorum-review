@@ -103,18 +103,36 @@ def evidence(finding: Finding) -> str:
 #: row unreadable and push the rest of the table off the screen.
 MAX_CELL_CHARS = 160
 
+#: How many suppressed titles the summary lists before saying "and N more".
+#: The visible body shares GitHub's 65,536-character comment limit with the
+#: ledger marker, and overflowing it makes `fit_to_comment` drop the ledger's
+#: history to make room — trading state that matters for a list that does not.
+MAX_SUPPRESSED_LISTED = 20
+
 
 def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
-    """One line, bounded. For anywhere a title appears inside Markdown syntax.
+    """One line, bounded, and inert as HTML.
 
-    A newline inside ``**bold**`` ends the emphasis and, in a list, starts a
-    new item mid-sentence. Titles are model output; they are asked for one
-    line and mostly give one.
+    Three things, because a finding title is model output derived from a diff
+    an attacker wrote, and it lands in the middle of Markdown:
+
+    - **One line.** A newline inside ``**bold**`` ends the emphasis, and inside
+      a list starts a new item mid-sentence.
+    - **Bounded.** The schema asks for 80 characters; a run that returned a
+      paragraph would make the summary unreadable.
+    - **HTML-escaped.** Several sections are wrapped in ``<details>``, and
+      GitHub renders raw HTML in comments. A title containing ``</details>``
+      closes the block early and spills the rest of the summary out of it.
+      Escaping is invisible to the reader: ``&lt;`` renders as ``<``.
+
+    The ampersand goes first or ``<`` would become ``&amp;lt;``.
     """
     flattened = " ".join((text or "").split())
     if len(flattened) > limit:
         flattened = flattened[: limit - 1].rstrip() + "…"
-    return flattened
+    return (
+        flattened.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
 
 
 def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
@@ -306,12 +324,19 @@ def render(report: RunReport) -> str:
             f"this pull request and are not repeated here.",
         ]
         if report.suppressed_titles:
+            # Bounded, because the summary shares GitHub's 65,536-character
+            # limit with the ledger marker. Overflowing it makes
+            # `fit_to_comment` drop the ledger's history to make room for a
+            # list nobody reads, which trades state for noise.
+            shown = report.suppressed_titles[:MAX_SUPPRESSED_LISTED]
+            remainder = len(report.suppressed_titles) - len(shown)
             lines += [
                 "",
                 "<details>",
                 "<summary>Which ones</summary>",
                 "",
-                *(f"- {flatten(title)}" for title in report.suppressed_titles),
+                *(f"- {flatten(title)}" for title in shown),
+                *([f"- …and {remainder} more"] if remainder else []),
                 "",
                 "Matched to an existing finding by position and wording, not by "
                 "an exact identifier — models do not quote the same defect the "
