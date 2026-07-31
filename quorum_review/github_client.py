@@ -428,24 +428,36 @@ class GitHubClient:
             page += 1
 
     async def load_ledger(self, number: int) -> tuple[Ledger, StickyComment | None]:
-        """The state from the last review, or as much of it as survives.
+        """The state from the last review, reconciled with what is actually posted.
 
-        The ledger lives in a hidden marker inside the summary comment, and
-        someone can delete that — tidying a noisy pull request is a normal
-        thing to do and nothing warns them. Rather than starting over and
-        re-posting everything, what the inline comments still carry is
-        recovered: see ``ledger.rebuild``.
+        The marker inside the summary comment is the record, and the comments
+        on the pull request are the reality. They drift apart in two ways, and
+        both end in the same place — a finding posted twice:
+
+        - **The summary is deleted.** Tidying a noisy pull request is a normal
+          thing to do and nothing warns anyone. Every open finding then looks
+          new, and every dismissal is silently undone.
+        - **A run is cancelled between posting and saving.** ``cancel-in-progress``
+          is on by default and a second push during a review triggers it, so
+          this is ordinary rather than exotic. The comments went out; the
+          marker describing them did not.
+
+        So the marker is read and then reconciled: anything on the pull request
+        that the marker does not know about is recovered from the comment
+        itself. Reality wins, because reality is what the reader is looking at.
         """
         sticky = await self.find_sticky_comment(number)
-        if sticky is not None:
-            recovered = decode_marker(sticky.body)
-            if recovered is not None:
-                return recovered, sticky
+        recorded = decode_marker(sticky.body) if sticky is not None else None
 
         comments = await self.review_comments(number)
-        recovered = await self._rebuild_ledger(number, comments)
-        recovered.was_rebuilt = True
-        return recovered, sticky
+        posted = await self._rebuild_ledger(number, comments)
+
+        if recorded is None:
+            posted.was_rebuilt = True
+            return posted, sticky
+
+        recorded.recovered = recorded.absorb(posted)
+        return recorded, sticky
 
     async def _rebuild_ledger(
         self, number: int, comments: list[dict[str, Any]]

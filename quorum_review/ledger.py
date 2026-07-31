@@ -150,6 +150,11 @@ class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
+    #: How many entries had to be taken from the posted comments because the
+    #: marker did not know about them. Not serialised: it describes a
+    #: reconciliation, not the review.
+    recovered: int = field(default=0, compare=False)
+
     #: True when this was reconstructed from comments rather than read from the
     #: marker. Not serialised — it describes how this instance came to exist,
     #: not the review. The caller cannot infer it: a marker that is present but
@@ -229,6 +234,34 @@ class Ledger:
             self.entries.setdefault(entry.finding_id, entry)
             moved.append((old_id, entry.finding_id))
         return moved
+
+    def absorb(self, posted: Ledger) -> int:
+        """Take in findings that are on the pull request but not in this record.
+
+        Returns how many. The usual cause is a run cancelled between posting
+        its comments and saving the marker that describes them —
+        ``cancel-in-progress`` is on by default, so a second push during a
+        review is enough. The comments are there; nothing knows it, and the
+        next review posts them again.
+
+        Matching is the same positional-and-wording rule used everywhere else,
+        so a finding the marker already tracks is not duplicated by its own
+        comment. Anything genuinely unknown is added with a
+        ``review_comment_id``, which is what stops a second copy going out.
+        """
+        added = 0
+        for entry in posted.entries.values():
+            if self.entries.get(entry.finding_id) is not None:
+                continue
+            report = entry.as_report()
+            if any(
+                same_defect(report, known.as_report())
+                for known in self.entries.values()
+            ):
+                continue
+            self.entries[entry.finding_id] = entry
+            added += 1
+        return added
 
     def record(self, entry: LedgerEntry) -> None:
         """Store an entry, folding it into an existing one for the same defect.
