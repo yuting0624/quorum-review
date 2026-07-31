@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .matching import normalize_snippet, same_defect
+from .matching import Report, normalize_snippet, same_defect
 from .schema import Finding
 
 __all__ = [
@@ -46,6 +46,12 @@ _MARKER = re.compile(
 #: that, then start dropping history if even the compressed form is too big.
 COMMENT_CHAR_LIMIT = 65_536
 COMPRESS_ABOVE = 4_096
+
+def _report_of(finding: Finding) -> Report:
+    return Report(
+        finding.file_path, finding.line, finding.code_snippet, finding.title
+    )
+
 
 def compute_finding_id(file_path: str, code_snippet: str) -> str:
     """Derive a stable ID from location and content.
@@ -94,6 +100,9 @@ class LedgerEntry:
     first_seen_sha: str = ""
     resolved_sha: str | None = None
     wontfix_reason: str | None = None
+
+    def as_report(self) -> Report:
+        return Report(self.file_path, self.line, self.snippet, self.title)
 
     def to_dict(self) -> dict[str, Any]:
         return {key: value for key, value in self.__dict__.items()}
@@ -149,17 +158,15 @@ class Ledger:
         if exact is not None:
             return exact
 
-        for entry in self.entries.values():
-            if same_defect(
-                finding.file_path,
-                finding.line,
-                finding.code_snippet,
-                entry.file_path,
-                entry.line,
-                entry.snippet,
-            ):
-                return entry
-        return None
+        report = _report_of(finding)
+        return next(
+            (
+                entry
+                for entry in self.entries.values()
+                if same_defect(report, entry.as_report())
+            ),
+            None,
+        )
 
     def is_suppressed(self, finding: Finding) -> bool:
         """True when this finding must not be posted again.
@@ -172,16 +179,10 @@ class Ledger:
 
     def still_present(self, entry: LedgerEntry, findings: list[Finding]) -> bool:
         """Whether this run re-found a tracked defect."""
+        report = entry.as_report()
         return any(
             entry.finding_id == finding.finding_id
-            or same_defect(
-                entry.file_path,
-                entry.line,
-                entry.snippet,
-                finding.file_path,
-                finding.line,
-                finding.code_snippet,
-            )
+            or same_defect(report, _report_of(finding))
             for finding in findings
         )
 
@@ -195,18 +196,12 @@ class Ledger:
         """
         existing = self.entries.get(entry.finding_id)
         if existing is None:
+            report = entry.as_report()
             existing = next(
                 (
                     candidate
                     for candidate in self.entries.values()
-                    if same_defect(
-                        entry.file_path,
-                        entry.line,
-                        entry.snippet,
-                        candidate.file_path,
-                        candidate.line,
-                        candidate.snippet,
-                    )
+                    if same_defect(report, candidate.as_report())
                 ),
                 None,
             )

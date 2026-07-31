@@ -20,15 +20,19 @@ where the models largely agree, only the disagreements cost a second call.
 
 from __future__ import annotations
 
-from .matching import same_defect
+from .matching import Report, same_defect
 from .schema import SEVERITY_RANK, Finding
+
+
+def as_report(finding: Finding) -> Report:
+    return Report(
+        finding.file_path, finding.line, finding.code_snippet, finding.title
+    )
 
 
 def looks_like_same(a: Finding, b: Finding) -> bool:
     """Whether two findings from different models describe the same defect."""
-    return same_defect(
-        a.file_path, a.line, a.code_snippet, b.file_path, b.line, b.code_snippet
-    )
+    return same_defect(as_report(a), as_report(b))
 
 
 def _absorb(target: Finding, other: Finding) -> None:
