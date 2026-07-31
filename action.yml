@@ -1,0 +1,90 @@
+name: quorum-review
+description: Cross-model pull request review on Google Cloud.
+author: quorum-review contributors
+
+branding:
+  icon: check-square
+  color: gray-dark
+
+inputs:
+  mode:
+    description: >-
+      'vertex' runs both models on one Google Cloud credential. 'direct' uses an
+      AI Studio key plus an Anthropic key.
+    required: false
+    default: vertex
+  skill:
+    description: Review criteria to load from skills/<name>/SKILL.md.
+    required: false
+    default: security-review
+  primary-model:
+    description: >-
+      Model that scans the diff. Leave unset for the built-in default. Set this
+      to a Claude ID and verifier-model to a Gemini ID to reverse the roles.
+    required: false
+    default: ""
+  verifier-model:
+    description: Model that judges each finding independently.
+    required: false
+    default: ""
+  review-language:
+    description: >-
+      Human language for finding prose, e.g. 'Japanese'. Defaults to English.
+    required: false
+    default: ""
+  google-cloud-project:
+    description: Google Cloud project ID. Required in vertex mode.
+    required: false
+    default: ""
+  claude-vertex-region:
+    description: >-
+      Vertex region for Claude. 'global' is recommended; try 'us-east5' if your
+      Model Garden entitlement is region-scoped.
+    required: false
+    default: global
+  github-token:
+    description: Token used to read the diff and post comments.
+    required: false
+    default: ${{ github.token }}
+  max-verified-findings:
+    description: >-
+      Cap on how many findings reach the verifier, highest severity first.
+      Verification costs one model call per finding.
+    required: false
+    default: "20"
+  dry-run:
+    description: Print the summary instead of posting it.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install quorum-review
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}"
+
+    - name: Review
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        QUORUM_MODE: ${{ inputs.mode }}
+        REVIEW_SKILL: ${{ inputs.skill }}
+        PRIMARY_MODEL: ${{ inputs.primary-model }}
+        VERIFIER_MODEL: ${{ inputs.verifier-model }}
+        REVIEW_LANGUAGE: ${{ inputs.review-language }}
+        GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
+        CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
+        MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # Empty inputs must not shadow a default set inside the code.
+        for name in PRIMARY_MODEL VERIFIER_MODEL REVIEW_LANGUAGE; do
+          if [ -z "${!name}" ]; then unset "$name"; fi
+        done
+        python -m src.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}

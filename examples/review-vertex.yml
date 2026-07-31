@@ -1,0 +1,59 @@
+# Recommended setup: one Google Cloud credential drives both models.
+#
+# There is no long-lived secret in this workflow. The GitHub OIDC token is
+# exchanged for short-lived Google Cloud credentials, and both Gemini and Claude
+# authenticate off those same Application Default Credentials.
+#
+# Prerequisites are in docs/setup-vertex.md — in particular, Claude must be
+# enabled in Vertex AI Model Garden for the project, or every verification call
+# comes back 404.
+
+name: quorum-review
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+# `contents: read` covers reading the diff. `id-token: write` is what lets the
+# workflow mint the OIDC token for federation — without it, auth fails.
+#
+# Note that `permissions:` only governs GITHUB_TOKEN. If you switch to a GitHub
+# App token, the effective permissions are the App installation's instead.
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  review:
+    # Run on a new PR, or when someone with write access comments `@quorum /review`.
+    #
+    # The Bot check is not optional: without it, the summary comment this action
+    # posts re-triggers the workflow, which posts another comment, and so on.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@quorum /review') &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Review
+        uses: ./
+        with:
+          mode: vertex
+          google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          skill: security-review
