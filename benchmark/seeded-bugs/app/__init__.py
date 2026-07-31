@@ -4,7 +4,18 @@ This exists as a review fixture for measuring detection quality. It is not
 intended to be deployed.
 """
 
-from . import admin, auth, documents, export, fetcher, indexer, plugins, search, sharing
+from . import (
+    admin,
+    auth,
+    documents,
+    export,
+    fetcher,
+    indexer,
+    plugins,
+    reports,
+    search,
+    sharing,
+)
 from .auth import AuthError
 from .documents import Forbidden, NotFound
 
@@ -55,6 +66,16 @@ def handle_available_formats() -> list:
     return plugins.available_formats()
 
 
+def handle_write_report(token: str, doc_id: int, filename: str) -> str:
+    user = auth.require_user(token)
+    return reports.write_report(user, doc_id, filename)
+
+
+def handle_list_reports(token: str) -> list:
+    user = auth.require_user(token)
+    return reports.list_reports(user)
+
+
 __all__ = [
     "AuthError",
     "Forbidden",
@@ -67,5 +88,7 @@ __all__ = [
     "handle_get_document",
     "handle_import_url",
     "handle_list_documents",
+    "handle_list_reports",
     "handle_search",
+    "handle_write_report",
 ]
