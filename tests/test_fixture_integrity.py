@@ -97,6 +97,45 @@ def test_b10_swallowed_authorization_failure():
     assert "except Exception:\n        pass" in text
 
 
+# -- context-dependent cases -----------------------------------------------
+#
+# These are only decidable by reading a file the pull request does not touch.
+# Both halves have to hold: the call site in reports.py, and the definition on
+# main that makes it safe or broken. Assert both, or a change to either one
+# silently turns the case into something else.
+
+
+def test_c1_the_path_join_is_guarded_by_a_shared_validator():
+    """Looks like traversal in the diff; is not. Flagging it is a false positive."""
+    call_site = source("reports.py")
+    assert "os.path.join(_user_dir(user), validators.safe_export_name(filename))" in (
+        call_site
+    )
+
+    validator = source("validators.py")
+    assert "os.path.basename" in validator
+    assert '".."' in validator
+    assert "fullmatch" in validator
+
+
+def test_c2_the_scope_check_passes_for_everyone():
+    """Reads correctly; the action is missing from the registry, which fails open."""
+    assert 'permissions.has_scope(user, "document.report")' in source("reports.py")
+
+    registry = source("permissions.py")
+    assert '"document.report"' not in registry
+    # Unlisted actions must still be treated as permitted, or the case is a
+    # denial-of-service rather than a bypass.
+    assert "if required is None:\n        return True" in registry
+
+
+def test_c3_the_audit_call_does_not_match_the_signature():
+    assert 'audit.record(user, "document.report", doc_id)' in source("reports.py")
+    assert (
+        "def record(action: str, user_id: int, doc_id: int" in source("audit.py")
+    )
+
+
 # -- decoys: these must stay correct ---------------------------------------
 
 
