@@ -61,3 +61,19 @@ def test_every_documented_action_reference_matches_the_major_version():
         f"__version__ is {quorum_review.__version__}, so the alias is v{major}, "
         f"but these point elsewhere: {wrong}"
     )
+
+
+def test_the_install_snippet_checks_out_the_code_under_review():
+    """Without it, the feature the README publishes measurements for is off.
+
+    The action detects a missing or wrong checkout and falls back to a
+    diff-only review, which it says in the summary — so nothing breaks, and a
+    reader who copied the snippet gets the configuration the measured table
+    calls worse while reading the numbers for the better one.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    install = readme.split("## 🚀 Install", 1)[1].split("```", 3)[1]
+
+    assert "actions/checkout" in install
+    assert "quorum-review@v" in install
+    assert "refs/pull/" in install, "the ref has to be explicit; see review-vertex.yml"

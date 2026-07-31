@@ -199,6 +199,14 @@ permissions:
   pull-requests: write
 
 steps:
+  # Not optional. This is the tree the models read when a finding depends on
+  # code the diff does not contain — the difference measured above. Without
+  # it the review silently falls back to diff-only and says so in the summary.
+  - uses: actions/checkout@v4
+    with:
+      ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      fetch-depth: 2
+
   - uses: google-github-actions/auth@v2
     with:
       workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
