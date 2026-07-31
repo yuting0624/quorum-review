@@ -46,7 +46,7 @@ While you are here, confirm your Gemini model ID. Availability varies by project
 and release channel, and a stale ID is the most common first-run failure:
 
 ```bash
-python -m src.review --list-models
+python -m quorum_review.review --list-models
 ```
 
 ## 3. Set up Workload Identity Federation

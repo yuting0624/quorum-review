@@ -9,9 +9,9 @@ degrades the run instead of ending it.
 
 import asyncio
 
-from src import consensus, prompts, review
-from src.providers.base import ProviderUnavailable
-from src.schema import Finding, PRContext, Skill, Verdict
+from quorum_review import consensus, prompts, review
+from quorum_review.providers.base import ProviderUnavailable
+from quorum_review.schema import Finding, PRContext, Skill, Verdict
 
 CTX = PRContext(
     owner="o",

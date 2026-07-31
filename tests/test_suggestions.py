@@ -4,8 +4,8 @@ A wrong suggestion is worse than none: it lands in the branch without anyone
 reading it closely.
 """
 
-from src import report as report_mod
-from src.schema import MAX_FIX_LINES, Finding, findings_from_payload
+from quorum_review import report as report_mod
+from quorum_review.schema import MAX_FIX_LINES, Finding, findings_from_payload
 
 BASE = {
     "file_path": "app/auth.py",

@@ -1,30 +1,34 @@
-# quorum-review
+<div align="center">
 
-**Cross-model pull request review on Google Cloud.**
+# 🗳️ quorum-review
 
-Two models review your pull request. Each reads the diff without seeing the
-other's output. Where they agree independently, that is the result. Where only
-one of them found something, the other is asked to judge it. Only what survives
-gets posted.
+**Two models review your pull request. Neither one sees the other's work.**
 
-The interesting part is not the review. It is that both models run on **a single
-Google Cloud credential**, federated from GitHub Actions, with no long-lived
-secret stored in the repository.
+Where they agree independently, that is the result. Where only one found
+something, the other is asked to judge it. Both run on **a single Google Cloud
+credential** — no API keys, no long-lived secret in your repository.
 
-> ### This is a reference implementation, not a product
->
-> It is a worked example of running Gemini and Claude together on Vertex AI.
-> Pull request review is the subject matter chosen to make the example concrete
-> and testable — it is not an attempt to compete with the review tools that
-> already exist. Read the code expecting to learn the arrangement, not to adopt
-> a supported service. There is no support channel and no compatibility promise.
+[![CI](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml/badge.svg)](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+![Gemini on Vertex AI](https://img.shields.io/badge/Gemini-Vertex%20AI-4285F4?logo=googlegemini&logoColor=white)
+![Claude on Vertex AI](https://img.shields.io/badge/Claude-Vertex%20AI-D97757?logo=anthropic&logoColor=white)
+
+</div>
 
 ---
 
-## What it looks like
+> ### 📐 A reference implementation, not a product
+>
+> This is a worked example of running Gemini and Claude together on Vertex AI.
+> Pull request review is the subject matter, chosen because it makes the example
+> concrete and testable — not an attempt to compete with the review tools that
+> already exist. Read it expecting to learn the arrangement. No support channel,
+> no compatibility promise.
+
+## ⚡ What it looks like
 
 One summary comment, edited in place on every run, plus an inline comment per
-confirmed finding. Taken from a real run against the benchmark fixture:
+confirmed finding. From a real run:
 
 > ## Quorum review
 >
@@ -41,257 +45,291 @@ confirmed finding. Taken from a real run against the benchmark fixture:
 > |---|---|---|---|---|
 > | 🔴 critical | security | `app/search.py:18` | SQL injection via f-string interpolation | both models, independently |
 > | 🟠 high | security | `app/fetcher.py:29` | SSRF: user URL fetched with no allowlist | both models, independently |
-> | 🟡 medium | reliability | `app/export.py:23` | TOCTOU between existence check and open() | `claude-opus-5`, checked by `gemini-3.6-flash` |
+> | 🟡 medium | reliability | `app/export.py:23` | TOCTOU between existence check and open() | `claude-opus-5`, agreed by `gemini-3.6-flash` |
 >
 > <sub>Reviewed `03a1883` · models `gemini-3.6-flash`, `claude-opus-5` · 82s</sub>
 
-The **Evidence** column is the part worth looking at. "Both models,
-independently" means two models that could not see each other's output reached
-the same conclusion — stronger than either one's confidence. Anything else was
-found by one and checked by the other.
+The **Evidence** column is the point. *Both models, independently* means two
+models that could not see each other's output reached the same conclusion —
+better than either one's self-reported confidence, and it costs nothing extra.
 
-## Why this exists
+## 💡 Why
 
-Cross-model consensus, incremental review, and second-opinion verification are
-all things other projects already do. What none of them do is run the models on
-one cloud credential: every implementation we found stacks API keys from
-separate vendors.
+Cross-model consensus, incremental review, and second-opinion verification all
+exist elsewhere. What did not exist is running the models on **one cloud
+credential**: every implementation we found stacks API keys from separate
+vendors.
 
-For a team already on Google Cloud, that difference is the whole story:
-
-| | Two vendor API keys | This repository |
+| | Two vendor API keys | quorum-review |
 |---|---|---|
-| Secrets in the repo | Two long-lived keys | **None** — OIDC federation issues short-lived credentials |
-| Billing | Two invoices, two contracts | One, against existing Google Cloud commitments |
-| Where the code goes | Two vendors' infrastructure | Stays inside your Vertex AI region |
-| Model governance | Per-vendor, ad hoc | `vertexai.allowedModels` org policy covers both |
+| **Secrets in the repo** | two long-lived keys | **none** — OIDC federation, short-lived credentials |
+| **Billing** | two invoices, two contracts | one, against existing Google Cloud commitments |
+| **Where the code goes** | two vendors' infrastructure | stays inside your Vertex AI region |
+| **Model governance** | per-vendor, ad hoc | one `vertexai.allowedModels` org policy covers both |
 
-`src/providers/direct.py` implements the two-API-key version so the comparison is
-concrete rather than rhetorical. `src/providers/vertex.py` is the file worth
-reading.
+The whole trick is what these two lines *don't* contain:
 
-## How a review runs
-
-```
-GitHub event (pull_request, or an @quorum /review comment)
-  │
-  ├─ google-github-actions/auth   OIDC token → short-lived Google Cloud credentials
-  │
-  └─ quorum-review
-       ├─ read the PR diff, and the ledger from the previous run
-       │
-       ├─ scan   Gemini on Vertex  ─┐  independently, neither sees the other
-       ├─ scan   Claude on Vertex  ─┤
-       │                            ▼
-       ├─ merge   both reported it → agreed, no further call
-       │          one reported it  → the other model judges it
-       │
-       └─ post   confirmed inline · uncertain as advisory · refuted discarded
+```python
+gemini = genai.Client(vertexai=True, project=project, location="global")
+claude = AsyncAnthropicVertex(project_id=project, region="global")
 ```
 
-Both models authenticate off the same Application Default Credentials. That is
-the entire point of the repository.
+No API key in either. Both resolve the same Application Default Credentials that
+`google-github-actions/auth` just wrote. [`providers/direct.py`](quorum_review/providers/direct.py)
+implements the two-API-key version so the comparison is concrete rather than
+rhetorical; [`providers/vertex.py`](quorum_review/providers/vertex.py) is the file worth reading.
 
-### Why both models scan
+## 🔀 How a review runs
 
-**A second opinion can only judge findings that were reported.** It is never
-shown a bug the first model missed, so with one model scanning, that model's
-blind spots are the whole reviewer's blind spots — no verifier, however strong,
-can raise recall.
+```
+GitHub event ──▶ google-github-actions/auth ──▶ short-lived GCP credentials
+                                                          │
+                        ┌─────────────────────────────────┴───────────────┐
+                        │                                                 │
+                  scan: Gemini                                      scan: Claude
+                  (whole diff)                                      (whole diff)
+                        │        neither sees the other's output          │
+                        └────────────────────┬────────────────────────────┘
+                                             ▼
+                                     merge and compare
+                                             │
+                    ┌────────────────────────┴────────────────────────┐
+                    ▼                                                 ▼
+        both reported it                                   only one reported it
+        → agreed, no further call                          → the other one judges it
+                    │                                                 │
+                    └────────────────────────┬────────────────────────┘
+                                             ▼
+                    confirmed → inline · uncertain → advisory · refuted → dropped
+```
 
-We measured exactly that. `gemini-3.6-flash` missed the same seeded TOCTOU bug
-in three runs out of three; pairing it with `claude-opus-5` did not help,
-because Claude was never asked about it. Having both models scan fixes it,
-because recall becomes the union rather than one model's ceiling.
+### Two findings from measuring this
 
-### Agreement is evidence, and it is free
+**A second opinion cannot raise recall.** It only ever sees findings that were
+already reported, so a bug the scanner missed is never put in front of it.
+`gemini-3.6-flash` missed the same seeded TOCTOU bug in **three runs out of
+three**; pairing it with `claude-opus-5` recovered nothing, because Claude was
+never asked. Whichever model scans sets a hard ceiling on what the review can
+find — which is why both models scan.
 
-When two models that could not see each other's output report the same defect,
-that is a stronger signal than either one's self-reported confidence — and it
-costs nothing extra to obtain. Those findings skip verification entirely.
+**Agreement is free, and it makes the whole thing cheaper.** Scanning is one call
+regardless of diff size; verification is one call *per finding*. Letting
+agreement stand without a second call means you pay for two scans plus the
+disagreements — usually less than one scan plus a judgement on everything.
 
-Only the disagreements get a second call, which makes the arrangement *cheaper*
-than verifying everything: on a diff where the models mostly agree, you pay for
-two scans and a handful of judgements instead of one scan and one judgement per
-finding.
+| Configuration | Calls | Recall |
+|---|---|---|
+| one scan, no verification | 1 | that model's ceiling |
+| one scan, verify each finding | 1 + N | that model's ceiling |
+| **both scan, verify disagreements** | **2 + d** | **the union** |
 
-### The judge never sees the reporter's reasoning
+## 📊 Measured
 
-A finding that only one model raised is sent to the other with the location, the
-code, and the one-line claim — not the argument, not the severity rating, not
-who reported it. Hand a model someone else's rationale and it agrees with it;
-the stage stops filtering anything. See `prompts.verify_user`.
+Ten seeded bugs and three decoys that look dangerous but are correct. Three runs
+per configuration. Full method and answer key:
+[`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
-This also blunts prompt injection: a diff crafted to talk one model out of
-reporting something still has to get past a second model that never saw the
-manipulated session — and that second model is now scanning too, not just
-reacting.
+| Scanning | Found (mean of 3) | Stability | False positives |
+|---|---|---|---|
+| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** | 0 |
+| `claude-opus-5` alone | 10.0 / 10 | all 3/3 | 0 |
+| **both, independently** | **10.0 / 10** | **all 3/3** | **0** |
 
-### Living with it
+No configuration was fooled by any decoy in any run. Live from Actions: 13
+findings posted, **0% re-report rate** on an unchanged pull request.
 
-**Argue with a finding** by replying `@quorum <question>` in its thread. The
-model that reported it answers — not one that would have to invent a defence of
-someone else's reasoning. It will concede when you are right, and tell you how
-to retire the finding.
+> **Read this narrowly.** One fixture, three runs, written by the same person who
+> wrote the reviewer. Enough to justify the dual-scan design; not enough to rank
+> the models.
 
-**Dismiss a false positive** by replying `@quorum wontfix — <why>` to the review
-comment. It is not reported again, and the reason is kept.
-
-**Feed dismissals back into the criteria** with `@quorum /criteria`. Once a few
-findings have been retired, it summarises them into a proposed edit to your
-`SKILL.md` so the same mistake stops being made. It proposes; you apply.
-Dismissal reasons come from pull request comments, and applying those
-automatically would let someone argue the reviewer out of a whole category of
-finding.
-
-**Resolved findings close themselves** — given a token that is allowed to.
-When a finding stops being reported its thread gets a reply, and is collapsed
-if possible. The default `GITHUB_TOKEN` **cannot** resolve review threads,
-whatever `permissions:` says, so out of the box the reply appears and the
-thread stays open; the summary says so when that happens. Pass a GitHub App
-token via `github-token` to get the collapse.
-
-**Fixes arrive as suggestions when they are safe.** Only when the model can
-replace the anchored lines completely — a partial fix someone clicks apply on is
-worse than no fix.
-
-**Generated files are skipped.** Lockfiles, vendored code, build output, and
-generated sources are excluded by default; add your own with `exclude` or a
-`.quorumignore`. Whatever is skipped is named in the summary.
-
-**Re-reviews read only the new commits**, using the sha in the ledger. Findings
-in files those commits do not touch are carried over rather than re-derived —
-and, importantly, are not mistaken for fixed.
-
-### Findings are tracked by content, not by line
-
-The failure mode of automated review is not wrong findings — it is the *same*
-finding re-posted on every push. Findings are keyed on
-`sha256(file_path + normalised_code)`, with **no line number in the hash**, so
-adding an import above a finding does not resurrect it. State lives in a hidden
-marker inside the summary comment: no external storage, nothing to configure,
-and the state travels with the pull request. See `src/ledger.py`.
-
-## Setup
-
-Vertex mode (recommended) — see **[docs/setup-vertex.md](docs/setup-vertex.md)**
-for Workload Identity Federation and, easy to miss, enabling Claude in Vertex AI
-Model Garden.
+## 🚀 Install
 
 ```yaml
 # .github/workflows/review.yml
 permissions:
   contents: read
-  id-token: write        # required for OIDC federation
+  id-token: write          # required for OIDC federation
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@v4
   - uses: google-github-actions/auth@v2
     with:
       workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
       project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-  - uses: your-org/quorum-review@main
+
+  - uses: yuting0624/quorum-review@v1
     with:
       google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 ```
 
-Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
-[`examples/review-apikey.yml`](examples/review-apikey.yml).
+**Prerequisites:** a Google Cloud project with Vertex AI enabled, and **Claude
+enabled in Vertex AI Model Garden** — skip that and every Claude call returns 404
+while the Gemini half keeps working, which is a confusing way to find out.
+Full setup, including Workload Identity Federation: **[docs/setup-vertex.md](docs/setup-vertex.md)**.
 
-### Optional: post as your own GitHub App
+Complete workflows: [`review-vertex.yml`](examples/review-vertex.yml) ·
+[`review-vertex-app.yml`](examples/review-vertex-app.yml) (GitHub App token) ·
+[`review-apikey.yml`](examples/review-apikey.yml) (no Google Cloud).
+
+## 💬 Talking to it
+
+| you write | it does |
+|---|---|
+| `@quorum /review` | re-review the pull request |
+| `@quorum <question>` *(reply in a thread)* | the model that reported the finding answers — and concedes when you are right |
+| `@quorum wontfix — <why>` *(reply in a thread)* | retires that finding; the reason is kept |
+| `@quorum /criteria` | turns accumulated dismissals into a proposed edit to your `SKILL.md` |
+
+Dismissals are proposals into the criteria, never applied automatically:
+the reasons arrive in pull request comments, and writing those straight into the
+review criteria would let someone argue the reviewer out of a whole category of
+finding.
+
+## ⚙️ Configuration
+
+| Input | Default | Notes |
+|---|---|---|
+| `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
+| `skill` | `security-review` | also ships `code-quality-review`; add your own under `skills/` |
+| `primary-model` | a Gemini model | **confirm against your project** — `python -m quorum_review.review --list-models` |
+| `verifier-model` | `claude-opus-5` | both models scan; the names only decide which runs alone under `scan: single` |
+| `scan` | `both` | `single` is cheaper and caps recall at one model's |
+| `verification` | `on` | `off` skips the second opinion on findings only one model raised |
+| `incremental` | `on` | re-reviews only what changed since the last review |
+| `exclude` | — | extra paths to skip, on top of the built-in defaults |
+| `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
+| `review-language` | English | e.g. `Japanese` — affects finding prose only |
+| `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
+| `claude-vertex-region` | `global` | try `us-east5` if your entitlement is region-scoped |
+
+**Cost tiers**, roughly, per review:
+
+| Setting | Model calls | Trade |
+|---|---|---|
+| `scan: single`, `verification: off` | 1 | cheapest; one model's recall, unfiltered |
+| `scan: single`, `verification: on` | 1 + N | filters false positives, recall still capped |
+| **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | best recall, usually cheaper than the row above |
+
+The default is not the most expensive option — easy to assume, and wrong.
+
+## 🏷️ Post as your own GitHub App
 
 ```bash
 python scripts/create_app.py
 ```
 
 Reads [`app-manifest.yml`](app-manifest.yml), walks GitHub's manifest flow, and
-tells you which secrets to set. Then use
-[`examples/review-vertex-app.yml`](examples/review-vertex-app.yml).
-
-Worth doing for two reasons. Resolved threads only collapse with an App token —
-GitHub does not let the Actions app call `resolveReviewThread`, whatever
-`permissions:` says. And comments arrive under a name and avatar you chose
-rather than `github-actions[bot]`.
+prints the secrets to set. Worth doing for two reasons: resolved threads only
+collapse with an App token — GitHub does not let the Actions app call
+`resolveReviewThread`, whatever `permissions:` says — and comments arrive under
+a name and avatar you chose.
 
 The App receives no webhooks and runs nowhere; Actions already delivers the
 events, so it exists purely to mint short-lived tokens. It cannot write to your
 repository. A single shared App is not distributable — its private key would
 have to come with it — which is why you make your own.
 
-## Configuration
+---
 
-| Input | Default | Notes |
-|---|---|---|
-| `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` instead |
-| `skill` | `security-review` | Also ships `code-quality-review`; add your own under `skills/` |
-| `primary-model` | a Gemini model | **Confirm this against your project** — see below |
-| `verifier-model` | `claude-opus-5` | Both models scan; the names only decide which runs alone under `scan: single` |
-| `scan` | `both` | `single` uses one model — cheaper, but caps recall at that model's |
-| `verification` | `on` | `off` skips the second opinion on findings only one model raised |
-| `incremental` | `on` | Re-reviews only what changed since the last review |
-| `exclude` | — | Extra paths to skip, on top of the built-in defaults |
-| `inline-severity` | `low` | Lowest severity that gets its own comment in the diff view |
-| `github-token` | `GITHUB_TOKEN` | Pass an App token to collapse resolved threads |
-| `review-language` | English | e.g. `Japanese` — affects finding prose only |
-| `claude-vertex-region` | `global` | Try `us-east5` if your entitlement is region-scoped |
-| `max-verified-findings` | `20` | Cap on second opinions; ignored when verification is off |
+<details>
+<summary><b>🧠 How the pieces fit</b></summary>
 
-**Cost tiers.** Roughly, per review:
+**Independence is enforced, not assumed.** Scans run concurrently with identical
+prompts and never see each other. A finding only one model raised is sent to the
+other with the location, the code, and a one-line claim — not the argument, not
+the severity, not who reported it. Give a model someone else's reasoning and it
+agrees with it; the stage then filters nothing.
+`test_verify_prompt_withholds_the_reporters_reasoning` exists to stop a
+well-meaning refactor eroding that.
 
-| Setting | Model calls | Trade |
-|---|---|---|
-| `scan: single`, `verification: off` | 1 | Cheapest. One model's recall, unfiltered |
-| `scan: single`, `verification: on` | 1 + N | Filters false positives, still capped recall |
-| `scan: both`, `verification: on` (default) | 2 + disagreements | Best recall. Usually cheaper than the row above |
+**Findings are identified by content, not by line.** Line-based identity breaks
+the moment someone adds an import. Identity is
+`sha256(path + normalised code)` with no line number in it, plus positional and
+wording matching across models and across runs
+([`matching.py`](quorum_review/matching.py)). Getting this wrong is what made the
+first live re-run post eight duplicate comments.
 
-The default is not the most expensive option, which is easy to assume and wrong:
-agreement between the two scans removes most of the per-finding calls.
+**State lives in the summary comment**, as a hidden base64 marker, gzipped past
+4 KB. No database, no configuration, and the state cannot drift away from the
+pull request it describes.
 
-**Swapping the roles is configuration, not code.** Set `primary-model` to a
-Claude ID and `verifier-model` to a Gemini ID and the pipeline reverses —
-engines are resolved by model ID, not hardcoded per stage. Which ordering
-actually performs better is an open question; `benchmark/` exists to answer it.
+**Everything degrades rather than failing.** A scanning model that dies leaves the
+other's findings; a verifier that dies makes findings advisory; a token that
+cannot collapse threads still posts the reply. In every case the summary says
+which happened — a reviewer running at half strength must not look like a clean
+one.
 
-**Confirm your Gemini model ID before the first run.** Availability varies by
-project and release channel, and it is the single most common thing to get
-wrong:
+Full write-up: [docs/architecture.md](docs/architecture.md).
 
-```bash
-python -m src.review --list-models
-```
+</details>
 
-## Known limitations
+<details>
+<summary><b>🔒 Security model</b></summary>
 
-- **Managed Agents is not used.** The design this is modelled on calls for a
-  persistent sandbox that can install packages and run tests. That API is
-  pre-GA and not licensed for production, so the primary stage is a plain
-  Gemini call over the diff instead. The `ReviewProvider` protocol
-  (`src/providers/base.py`) exists so a sandboxed implementation can be dropped
-  in later without touching the orchestrator.
-- **Forks are unsupported.** `GITHUB_TOKEN` is read-only on pull requests from
-  forks, so posting fails. `pull_request_target` would fix that by running
-  untrusted code with write access, which is not a trade worth making.
-- **A renamed file yields new findings.** Identity is derived from the path, so
-  a rename reads as a new location.
+The reviewer reads attacker-controlled input by design: the diff, the title, the
+body, and every comment. So the question is not whether hostile input arrives —
+it always does — but what it can accomplish.
+
+- **Untrusted input is labelled as data.** Everything goes inside `<untrusted_*>`
+  tags, and the system prompt tells the model to report embedded instructions as
+  a finding rather than follow them.
+- **Output is schema-constrained** and re-validated on our side; entries with an
+  out-of-enum severity are discarded rather than repaired.
+- **Two independent scans are the strongest control.** A diff that talks one
+  model out of reporting something has to fool a second model too, with no way
+  to know whether it worked the first time.
+- **No credential is ever in reach of a model.** They see the diff; they do not
+  execute code or make network calls.
+- **The reviewer cannot write to your repository.** `contents: read`, and no code
+  path that pushes.
+- **Forks are excluded**, because `pull_request_target` would mean write access
+  while reviewing untrusted code.
+
+Details, including the operational guidance: [docs/security.md](docs/security.md).
+
+</details>
+
+<details>
+<summary><b>🚧 Known limits</b></summary>
+
+- **No sandbox.** The intended primary stage is an agent that can check out the
+  branch, install dependencies, and run tests. That API is pre-GA and not
+  licensed for production, so the scan is a plain model call over the diff. The
+  `ReviewProvider` protocol exists so that swap costs one new file.
+- **Diff-only context.** Findings that need to compare a change against code the
+  diff does not touch — a constant documented in one file and changed in
+  another — are out of reach.
+- **Forks are unsupported.** They get a read-only token and no secrets.
+- **A renamed file yields new findings.** Identity derives from the path.
 - **Two instances of one pattern, described identically, collapse into one.**
-  Findings are matched across models and across runs by position and wording
-  (`src/matching.py`). If the same defect appears twice in a file and a model
-  gives both occurrences the same title, they merge and the second is lost.
-- **"No longer reported" does not mean fixed.** A finding drops off when the
-  scan stops raising it, which can be a fix or can be non-determinism. The
-  summary says only what is known, and such findings are un-suppressed so they
-  reappear if detected again.
-- **`issue_comment` workflows run from the default branch.** Editing the
-  workflow on a PR branch does not change how `@quorum /review` behaves on that
-  PR — a GitHub Actions rule, not something this project can work around.
-- **Re-review on push is opt-in.** `synchronize` is deliberately absent from the
-  example workflows: it burns a review on every commit, and bot comments can
-  re-trigger the workflow.
-- Phase 0 scope. Incremental re-review, conversational replies, false-positive
-  dismissal, and suggested fixes are not implemented yet.
+- **"No longer reported" does not mean fixed** — it can also mean the scan did
+  not raise it this time. The summary says only what is known.
+- **`issue_comment` workflows run from the default branch.** Editing the workflow
+  on a branch does not change how `@quorum` behaves on that pull request. A
+  GitHub Actions rule, not something this can work around.
 
-## Development
+</details>
+
+<details>
+<summary><b>📦 What's inside · development</b></summary>
+
+```
+action.yml                   composite action
+quorum_review/
+  review.py                  orchestrator: scan → merge → verify → post
+  providers/vertex.py        Gemini + Claude on one credential  ← the point
+  providers/direct.py        the two-API-key control case
+  consensus.py               merging independent scans
+  matching.py                is this the same defect? (across models, across runs)
+  ledger.py                  finding identity and state, in a hidden comment marker
+  conversation.py            answering questions in a thread
+  dismissal.py               retiring a false positive
+  learning.py                dismissals → proposed criteria change
+  github_client.py           REST + the GraphQL needed to resolve threads
+skills/                      review criteria, pluggable
+benchmark/                   seeded-bug fixture + repeated-measurement harness
+scripts/create_app.py        GitHub App manifest flow
+```
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
@@ -299,23 +337,22 @@ pip install -e ".[dev]"
 pytest && ruff check .
 ```
 
-`benchmark/seeded-bugs/` is a fixture with ten known bugs and three decoys that
-look dangerous but are correct. It is how detection rate and false-positive
-count get measured rather than asserted — including whether the verification
-stage earns its cost. See [`benchmark/seeded-bugs/README.md`](benchmark/seeded-bugs/README.md).
+Measure a configuration against the fixture:
 
-## Documentation
+```bash
+python -m benchmark.measure --pr 1 --runs 3 \
+  --primary gemini-3.6-flash --verifier claude-opus-5
+```
 
-- [docs/setup-vertex.md](docs/setup-vertex.md) — federation, IAM, Model Garden
-- [docs/architecture.md](docs/architecture.md) — why the pipeline is shaped this way
-- [docs/security.md](docs/security.md) — the threat model and what it does not cover
-
-## License
-
-Apache-2.0. See [LICENSE](LICENSE).
+</details>
 
 ---
 
-<sub>Gemini and Antigravity are trademarks of Google LLC. Claude is a trademark
-of Anthropic PBC. This is not an official Google product and is not endorsed by
-or affiliated with Google or Anthropic.</sub>
+## ⚠️ Disclaimer
+
+Personal project, Apache-2.0. **Not affiliated with, endorsed by, or supported
+by Google or Anthropic.** Gemini, Antigravity, and Google Cloud are trademarks of
+Google LLC; Claude is a trademark of Anthropic PBC; GitHub is a trademark of
+GitHub, Inc. Those names appear only to identify the services this
+interoperates with. You are responsible for your own cloud costs, credentials,
+and data-sharing choices. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

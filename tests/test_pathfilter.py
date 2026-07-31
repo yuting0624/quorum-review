@@ -1,6 +1,6 @@
 import pytest
 
-from src.pathfilter import PathFilter, matches, parse_patterns
+from quorum_review.pathfilter import PathFilter, matches, parse_patterns
 
 NOISE = [
     "package-lock.json",
@@ -18,7 +18,7 @@ NOISE = [
 
 CODE = [
     "src/app.py",
-    "src/providers/vertex.py",
+    "quorum_review/providers/vertex.py",
     "web/src/components/Button.tsx",
     "cmd/server/main.go",
     "Makefile",

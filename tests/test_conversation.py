@@ -1,6 +1,6 @@
-from src import conversation, prompts
-from src.ledger import Ledger, LedgerEntry
-from src.schema import PRContext
+from quorum_review import conversation, prompts
+from quorum_review.ledger import Ledger, LedgerEntry
+from quorum_review.schema import PRContext
 
 CTX = PRContext(
     owner="o",

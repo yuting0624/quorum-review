@@ -24,12 +24,12 @@ import asyncio
 import os
 import sys
 
-from src import consensus
-from src import ledger as ledger_mod
-from src import review as review_mod
-from src.github_client import GitHubClient
-from src.providers import build_provider
-from src.schema import Finding, PRContext
+from quorum_review import consensus
+from quorum_review import ledger as ledger_mod
+from quorum_review import review as review_mod
+from quorum_review.github_client import GitHubClient
+from quorum_review.providers import build_provider
+from quorum_review.schema import Finding, PRContext
 
 # Answer key. Each entry is (path suffix, keywords); a finding matches when the
 # path matches and any keyword appears in its title or body. Keywords are

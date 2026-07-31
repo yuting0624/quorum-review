@@ -1,7 +1,7 @@
 # Architecture
 
 Why the pipeline is shaped the way it is. If you only read one source file, read
-[`src/providers/vertex.py`](../src/providers/vertex.py).
+[`quorum_review/providers/vertex.py`](../quorum_review/providers/vertex.py).
 
 ## The claim being demonstrated
 
@@ -21,7 +21,7 @@ GitHub event
   ├─ google-github-actions/auth
   │    OIDC token → short-lived Google Cloud credentials → ADC
   │
-  └─ src/review.py
+  └─ quorum_review/review.py
        ├─ github_client     PR metadata, diff, ledger from the previous run
        │
        ├─ provider.scan(A)  ─┐ concurrent, independent — neither model
@@ -61,7 +61,7 @@ The consequences are the reason a platform team cares:
 - Inference stays in the Vertex region; code is not sent to a second vendor.
 - One invoice, drawing on existing Google Cloud commitments.
 
-[`src/providers/direct.py`](../src/providers/direct.py) implements the same
+[`quorum_review/providers/direct.py`](../quorum_review/providers/direct.py) implements the same
 review against two vendor API keys. It exists so the comparison can be read
 rather than argued.
 

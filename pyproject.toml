@@ -22,10 +22,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 
-# The entry point is `python -m src.review`, run from a checkout of this
+# The entry point is `python -m quorum_review.review`, run from a checkout of this
 # repository, so the package name matches the directory rather than the project.
 [tool.setuptools]
-packages = ["src", "src.providers"]
+packages = ["quorum_review", "quorum_review.providers"]
 
 [tool.ruff]
 line-length = 90

@@ -138,4 +138,4 @@ runs:
         for name in PRIMARY_MODEL VERIFIER_MODEL REVIEW_LANGUAGE QUORUM_PR_NUMBER; do
           if [ -z "${!name}" ]; then unset "$name"; fi
         done
-        python -m src.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        python -m quorum_review.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}

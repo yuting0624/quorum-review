@@ -1,4 +1,4 @@
-from src import dismissal
+from quorum_review import dismissal
 
 
 def reply(body, in_reply_to=1234):

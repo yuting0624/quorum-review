@@ -1,4 +1,4 @@
-from src import diffs
+from quorum_review import diffs
 
 DIFF = """\
 diff --git a/app/search.py b/app/search.py
