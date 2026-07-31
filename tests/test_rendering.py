@@ -365,3 +365,29 @@ def test_the_repair_leaves_an_even_run_alone():
 
     assert len(probe) > 160
     assert body.endswith(backslash * 4)
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        ("x" * 155) + chr(92) + "   " + "y" * 40,
+        ("x" * 153) + " " + chr(92) + "  " + "y" * 40,
+        ("x" * 152) + "&amp" + "  " + "y" * 40,
+        ("x" * 153) + chr(92) * 4 + "   " + "z" * 40,
+        ("x" * 150) + " " + chr(92) + " " + chr(92) + " " + "y" * 40,
+    ],
+)
+def test_the_repairs_reach_a_fixed_point(probe: str):
+    """They expose each other, which is why `_bound` loops.
+
+    Stripping whitespace can uncover a backslash that was even a moment ago;
+    dropping that backslash can uncover whitespace again. Two attempts to
+    sequence them by hand were each wrong in a different direction.
+    """
+    from quorum_review.report import _bound
+
+    body = _bound(probe, 160).removesuffix("…")
+
+    assert not body.endswith(" ")
+    assert (len(body) - len(body.rstrip(chr(92)))) % 2 == 0
+    assert not body.endswith(("&", "&a", "&am", "&amp"))
