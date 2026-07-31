@@ -47,6 +47,14 @@ _MARKER = re.compile(
 COMMENT_CHAR_LIMIT = 65_536
 COMPRESS_ABOVE = 4_096
 
+#: Consecutive runs that must fail to re-raise a finding before it is called
+#: fixed. One is not enough: on a pull request whose code had not changed,
+#: two findings dropped out of one run and returned in the next. Two is the
+#: smallest number that distinguishes "the models disagreed with themselves"
+#: from "the code changed", and it costs at most one extra review of latency
+#: before a genuine fix is acknowledged.
+MISSES_BEFORE_FIXED = 2
+
 def _report_of(finding: Finding) -> Report:
     return Report(
         finding.file_path, finding.line, finding.code_snippet, finding.title
@@ -97,6 +105,9 @@ class LedgerEntry:
     review_comment_id: int | None = None
     review_thread_id: str | None = None
     status: str = "open"  # open | fixed | wontfix
+    #: Consecutive runs that examined this file and did not re-raise the
+    #: finding. Reset the moment it is seen again. See ``Ledger.missed``.
+    misses: int = 0
     first_seen_sha: str = ""
     resolved_sha: str | None = None
     wontfix_reason: str | None = None
@@ -226,6 +237,35 @@ class Ledger:
         if entry is not None and entry.status == "open":
             entry.status = "fixed"
             entry.resolved_sha = head_sha
+
+    def missed(self, finding_id: str, head_sha: str) -> bool:
+        """Record that a run examined this file and did not re-raise the finding.
+
+        Returns True once it has happened enough times to call the defect
+        fixed. One miss is not enough, and this is not a hypothetical: on a
+        pull request whose code had not changed at all, two findings dropped
+        out of one run and came back in the next. Models are not perfectly
+        repeatable, and a single scan disagreeing with the previous one is
+        ordinary.
+
+        Closing on the first miss was tolerable while the consequence was a
+        line in a summary comment. It stopped being tolerable once the ledger
+        started driving code scanning, where a finding that closes and reopens
+        every other run is an alert that flaps — and a flapping alert is worse
+        than a stale one, because people learn to ignore the whole feed rather
+        than one entry.
+        """
+        entry = self.entries.get(finding_id)
+        if entry is None or entry.status != "open":
+            return False
+
+        entry.misses += 1
+        if entry.misses < MISSES_BEFORE_FIXED:
+            return False
+
+        entry.status = "fixed"
+        entry.resolved_sha = head_sha
+        return True
 
     # -- serialisation -----------------------------------------------------
 

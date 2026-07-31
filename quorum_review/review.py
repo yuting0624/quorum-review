@@ -506,22 +506,25 @@ async def run(skill_name: str, dry_run: bool) -> int:
             model: len(scan) for model, scan in zip(scanning, scans, strict=False)
         }
 
-        # Anything previously open that this scan no longer reports is treated
-        # as fixed. Scans are not perfectly repeatable, so a finding can drop
-        # out because the models missed it rather than because it was fixed —
-        # accepted for now, since re-detection later simply reopens it.
+        # A previously open finding that this scan does not re-raise is a
+        # candidate for being fixed, not a fixed one. Scans are not perfectly
+        # repeatable — observed on a pull request whose code had not changed at
+        # all, where two findings dropped out of one run and came back in the
+        # next — so it takes consecutive misses. See `Ledger.missed`.
         #
         # Only files this run actually looked at are eligible. On an
         # incremental review the diff covers just the new commits, so a finding
-        # in an untouched file was never examined — closing it would report a
-        # fix that nobody made.
+        # in an untouched file was never examined — counting that as a miss
+        # would close it after two pushes to unrelated files.
         reviewed = set(ctx.changed_files)
         newly_closed: list[ledger_mod.LedgerEntry] = []
         for entry in list(ledger.entries.values()):
             if entry.status != "open" or entry.file_path not in reviewed:
                 continue
-            if not ledger.still_present(entry, findings):
-                ledger.mark_fixed(entry.finding_id, ctx.head_sha)
+            if ledger.still_present(entry, findings):
+                entry.misses = 0
+                continue
+            if ledger.missed(entry.finding_id, ctx.head_sha):
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
                 newly_closed.append(entry)
 

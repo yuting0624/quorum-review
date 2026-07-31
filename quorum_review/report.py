@@ -308,9 +308,12 @@ def render(report: RunReport) -> str:
             "",
             "### No longer reported",
             "",
-            "Previously flagged and not raised by this review — either fixed, or "
-            "not re-detected. These are no longer suppressed, so they will "
-            "reappear if a later review finds them again.",
+            "Not raised by the last two reviews of these files. Two, rather "
+            "than one, because models are not perfectly repeatable and a "
+            "single scan disagreeing with the previous one is ordinary — "
+            "closing on the first miss made findings flap. Still not a "
+            "guarantee of a fix: they will reappear if a later review finds "
+            "them again.",
             "",
         ]
         lines += [f"- {title}" for title in report.resolved]

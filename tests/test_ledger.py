@@ -195,3 +195,87 @@ def test_assign_ids_populates_every_finding():
     ledger.assign_ids(findings)
     assert all(f.finding_id for f in findings)
     assert findings[0].finding_id != findings[1].finding_id
+
+
+# -- a finding is not fixed because one scan disagreed with the last one ----
+
+
+def _entry(book, finding_id="a", **kwargs):
+    from quorum_review.ledger import LedgerEntry
+
+    base = {
+        "finding_id": finding_id,
+        "file_path": "app/x.py",
+        "category": "security",
+        "severity": "high",
+        "title": "something is wrong",
+        "line": 10,
+        "snippet": "bad = 1",
+    }
+    base.update(kwargs)
+    entry = LedgerEntry(**base)
+    book.entries[finding_id] = entry
+    return entry
+
+
+def test_one_miss_does_not_close_a_finding():
+    """Observed on a pull request whose code had not changed at all: two
+    findings dropped out of one run and came back in the next. Closing on the
+    first miss makes a code-scanning alert flap, and a flapping alert teaches
+    people to ignore the whole feed."""
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book)
+
+    assert book.missed("a", "sha1") is False
+    assert entry.status == "open"
+    assert entry.misses == 1
+
+
+def test_consecutive_misses_close_it():
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book)
+
+    book.missed("a", "sha1")
+    assert book.missed("a", "sha2") is True
+    assert entry.status == "fixed"
+    assert entry.resolved_sha == "sha2"
+
+
+def test_a_dismissed_finding_is_not_reopened_by_a_miss():
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book, status="wontfix")
+
+    assert book.missed("a", "sha") is False
+    assert entry.status == "wontfix"
+    assert entry.misses == 0
+
+
+def test_an_unknown_finding_is_not_an_error():
+    assert ledger.Ledger(pr_number=1).missed("nope", "sha") is False
+
+
+def test_a_finding_seen_again_starts_over():
+    """Two misses have to be consecutive, or every long-lived finding closes
+    eventually just from accumulated noise."""
+    book = ledger.Ledger(pr_number=1)
+    entry = _entry(book)
+
+    book.missed("a", "sha1")
+    entry.misses = 0  # what review.py does when still_present() is true
+    assert book.missed("a", "sha2") is False
+    assert entry.status == "open"
+
+
+def test_the_miss_count_survives_a_round_trip():
+    """It lives in the comment marker, so a counter that does not serialise
+    resets on every run and the guard does nothing."""
+    from quorum_review.ledger import decode_marker, encode_marker
+
+    book = ledger.Ledger(pr_number=1)
+    _entry(book)
+    book.missed("a", "sha1")
+
+    restored = decode_marker(encode_marker(book))
+    assert restored is not None
+    assert restored.entries["a"].misses == 1
+    assert restored.missed("a", "sha2") is True
