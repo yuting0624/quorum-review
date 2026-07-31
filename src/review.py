@@ -72,6 +72,17 @@ def scan_with_all_models() -> bool:
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
+def inline_min_severity() -> str:
+    """Lowest severity that earns its own inline comment.
+
+    Everything still appears in the summary. This only decides what interrupts
+    the reader in the diff view: a dozen simultaneous comments on one pull
+    request is how a reviewer gets muted.
+    """
+    value = os.getenv("QUORUM_INLINE_SEVERITY", "low").strip().lower()
+    return value if value in SEVERITY_RANK else "low"
+
+
 def load_skill(name: str) -> Skill:
     path = SKILLS_ROOT / name / "SKILL.md"
     if not path.exists():
@@ -379,11 +390,20 @@ async def run(skill_name: str, dry_run: bool) -> int:
             print(report_mod.render(report))
             return 0
 
+        threshold = SEVERITY_RANK[inline_min_severity()]
         for finding in report.confirmed + report.unverified:
+            entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
+
+            # Below the threshold the finding is recorded and listed in the
+            # summary, but does not get its own comment in the diff view.
+            if SEVERITY_RANK.get(finding.severity, 99) > threshold:
+                report.summary_only.append(finding)
+                ledger.record(entry)
+                continue
+
             comment_id = await post_finding(github, number, ctx.head_sha, finding)
             if comment_id is None:
                 report.unanchored.append(finding)
-            entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
             entry.review_comment_id = comment_id
             ledger.record(entry)
 

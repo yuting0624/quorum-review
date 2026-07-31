@@ -10,9 +10,10 @@ different strengths of evidence, and the comment says which is which.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
-from .schema import Finding, ModelUsage
+from .schema import SEVERITIES, SEVERITY_RANK, Finding, ModelUsage
 
 SEVERITY_ICON = {
     "critical": "🔴",
@@ -42,6 +43,7 @@ class RunReport:
     refuted: list[Finding] = field(default_factory=list)
     resolved: list[str] = field(default_factory=list)
     unanchored: list[Finding] = field(default_factory=list)
+    summary_only: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
     usage: dict[str, ModelUsage] = field(default_factory=dict)
@@ -75,11 +77,29 @@ def _row(finding: Finding) -> str:
 
 
 def _table(findings: list[Finding]) -> str:
+    """Render a findings table, worst first.
+
+    Reading order is the only prioritisation a summary can offer, so it should
+    not be the order the models happened to return.
+    """
+    ordered = sorted(
+        findings,
+        key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.file_path, f.line),
+    )
     header = (
         "| Severity | Category | Location | Finding | Evidence |\n"
         "|---|---|---|---|---|"
     )
-    return "\n".join([header, *(_row(finding) for finding in findings)])
+    return "\n".join([header, *(_row(finding) for finding in ordered)])
+
+
+def _counts(findings: list[Finding]) -> str:
+    """A one-line severity tally, so the headline does not need the table."""
+    tally = Counter(finding.severity for finding in findings)
+    parts = [
+        f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)
+    ]
+    return ", ".join(parts)
 
 
 def _how_it_ran(report: RunReport) -> list[str]:
@@ -175,11 +195,20 @@ def render(report: RunReport) -> str:
         ]
 
     if report.confirmed:
-        lines += ["", "### Confirmed", "", _table(report.confirmed)]
+        lines += [
+            "",
+            f"### Confirmed — {_counts(report.confirmed)}",
+            "",
+            _table(report.confirmed),
+        ]
 
     if report.unverified:
-        lines += ["", "### Reported, not independently checked", "",
-                  _table(report.unverified)]
+        lines += [
+            "",
+            f"### Reported, not independently checked — {_counts(report.unverified)}",
+            "",
+            _table(report.unverified),
+        ]
 
     if report.advisory:
         lines += [
@@ -251,6 +280,14 @@ def render(report: RunReport) -> str:
                 f"- `{finding.file_path}:{finding.line}` — **{finding.title}**: "
                 f"{finding.body}"
             )
+
+    if report.summary_only:
+        lines += [
+            "",
+            f"<sub>{len(report.summary_only)} finding(s) are listed above but "
+            f"not commented inline, being below the configured severity "
+            f"threshold.</sub>",
+        ]
 
     if report.trimmed_files:
         lines += [

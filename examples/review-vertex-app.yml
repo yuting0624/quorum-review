@@ -1,0 +1,87 @@
+# Same as review-vertex.yml, but comments are posted by your own GitHub App.
+#
+# Two things this buys you over the default GITHUB_TOKEN:
+#
+# - Resolved threads actually collapse. GitHub does not let the Actions app
+#   call `resolveReviewThread`, whatever `permissions:` says. An App token can.
+# - Comments arrive under a name and avatar you chose, instead of
+#   "github-actions[bot]".
+#
+# Create the App first — one command, about a minute:
+#
+#     python scripts/create_app.py
+#
+# It reads app-manifest.yml, walks you through GitHub's manifest flow, and
+# tells you which secrets to set. The App receives no webhooks and runs
+# nowhere; it exists only to mint short-lived tokens.
+
+name: quorum-review
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+
+concurrency:
+  group: >-
+    quorum-review-${{ github.event.pull_request.number
+      || github.event.issue.number
+      || github.event.inputs.pr }}
+  cancel-in-progress: true
+
+# `pull-requests` is not requested here: the App token carries its own
+# permissions, and GITHUB_TOKEN is no longer the thing posting comments.
+# `id-token: write` is still required, for Google Cloud federation.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.head.repo.fork != true &&
+      (github.event_name == 'pull_request' ||
+       github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request_review_comment' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@quorum') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)) ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '@quorum /review') &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                 github.event.comment.author_association)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Mint a token from the App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Review
+        uses: yuting0624/quorum-review@v1
+        with:
+          google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          github-token: ${{ steps.app-token.outputs.token }}
+          skill: security-review
+          pr-number: ${{ github.event.inputs.pr }}

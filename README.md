@@ -21,6 +21,35 @@ secret stored in the repository.
 
 ---
 
+## What it looks like
+
+One summary comment, edited in place on every run, plus an inline comment per
+confirmed finding. Taken from a real run against the benchmark fixture:
+
+> ## Quorum review
+>
+> `gemini-3.6-flash`, `claude-opus-5` each read the diff without seeing the
+> other's output (`gemini-3.6-flash` 9 and `claude-opus-5` 11), which merged to
+> **11** distinct finding(s). **9** of those were reported by both models
+> independently.
+> The remaining findings were each judged by the model that did *not* report
+> them: **2** confirmed, **0** uncertain, **0** refuted.
+>
+> ### Confirmed — 3 critical, 5 high, 3 medium
+>
+> | Severity | Category | Location | Finding | Evidence |
+> |---|---|---|---|---|
+> | 🔴 critical | security | `app/search.py:18` | SQL injection via f-string interpolation | both models, independently |
+> | 🟠 high | security | `app/fetcher.py:29` | SSRF: user URL fetched with no allowlist | both models, independently |
+> | 🟡 medium | reliability | `app/export.py:23` | TOCTOU between existence check and open() | `claude-opus-5`, checked by `gemini-3.6-flash` |
+>
+> <sub>Reviewed `03a1883` · models `gemini-3.6-flash`, `claude-opus-5` · 82s</sub>
+
+The **Evidence** column is the part worth looking at. "Both models,
+independently" means two models that could not see each other's output reached
+the same conclusion — stronger than either one's confidence. Anything else was
+found by one and checked by the other.
+
 ## Why this exists
 
 Cross-model consensus, incremental review, and second-opinion verification are
@@ -158,6 +187,26 @@ steps:
 Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
 [`examples/review-apikey.yml`](examples/review-apikey.yml).
 
+### Optional: post as your own GitHub App
+
+```bash
+python scripts/create_app.py
+```
+
+Reads [`app-manifest.yml`](app-manifest.yml), walks GitHub's manifest flow, and
+tells you which secrets to set. Then use
+[`examples/review-vertex-app.yml`](examples/review-vertex-app.yml).
+
+Worth doing for two reasons. Resolved threads only collapse with an App token —
+GitHub does not let the Actions app call `resolveReviewThread`, whatever
+`permissions:` says. And comments arrive under a name and avatar you chose
+rather than `github-actions[bot]`.
+
+The App receives no webhooks and runs nowhere; Actions already delivers the
+events, so it exists purely to mint short-lived tokens. It cannot write to your
+repository. A single shared App is not distributable — its private key would
+have to come with it — which is why you make your own.
+
 ## Configuration
 
 | Input | Default | Notes |
@@ -170,6 +219,8 @@ Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
 | `incremental` | `on` | Re-reviews only what changed since the last review |
 | `exclude` | — | Extra paths to skip, on top of the built-in defaults |
+| `inline-severity` | `low` | Lowest severity that gets its own comment in the diff view |
+| `github-token` | `GITHUB_TOKEN` | Pass an App token to collapse resolved threads |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `claude-vertex-region` | `global` | Try `us-east5` if your entitlement is region-scoped |
 | `max-verified-findings` | `20` | Cap on second opinions; ignored when verification is off |
