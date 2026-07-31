@@ -22,10 +22,18 @@ GitHub event
   │    OIDC token → short-lived Google Cloud credentials → ADC
   │
   └─ src/review.py
-       ├─ github_client   PR metadata, diff, ledger from the previous run
-       ├─ provider.scan   one call, whole diff        → candidate findings
-       ├─ provider.verify one call per finding        → confirmed | refuted | uncertain
-       └─ github_client   inline comments + summary comment carrying the new ledger
+       ├─ github_client     PR metadata, diff, ledger from the previous run
+       │
+       ├─ provider.scan(A)  ─┐ concurrent, independent — neither model
+       ├─ provider.scan(B)  ─┤ sees the other's output
+       │                     ▼
+       ├─ consensus.merge    both reported → agreed, no further call
+       │                     one reported  → unresolved
+       │
+       ├─ provider.verify    one call per unresolved finding, always by a
+       │                     model that did not report it
+       │
+       └─ github_client      inline comments + summary carrying the new ledger
 ```
 
 There is no server. GitHub delivers events to Actions directly, and state lives
@@ -57,95 +65,127 @@ The consequences are the reason a platform team cares:
 review against two vendor API keys. It exists so the comparison can be read
 rather than argued.
 
-## Why two stages
+## Why both models scan
 
-A single model tuned for recall reports too much; tuned for precision it stays
-quiet about real bugs. Splitting the two lets each stage be tuned for one thing:
+The design originally had one model scan and the other verify. Measurement
+killed that, and the reason is structural rather than a matter of which model is
+better.
 
-| | Primary | Verifier |
+**A verifier can only judge findings that were reported.** A bug the scanning
+model missed is not a bug the verifier evaluates and gets wrong — it is a bug
+the verifier is never shown. Whichever model scans sets a hard ceiling on the
+review's recall, and no second opinion, however strong, can lift it.
+
+That is not theoretical. `gemini-3.6-flash` missed the seeded TOCTOU defect in
+three runs out of three. Pairing it with `claude-opus-5` recovered nothing,
+because Claude was never asked. Having both models scan took the same pair from
+9.0/10 to a stable 10.0/10 — see
+[`benchmark/seeded-bugs/README.md`](../benchmark/seeded-bugs/README.md).
+
+The union also removes a decision nobody can make reliably in advance: which
+model is stronger on *this* codebase. The two Gemini models tested had different
+blind spots from each other. Picking one is a bet; running both is not.
+
+### Independent agreement is evidence, and it is free
+
+Two models that could not see each other's output reaching the same conclusion
+is a better signal than either model's self-reported confidence — and it arrives
+as a by-product of scanning twice. Those findings are marked agreed and skip
+verification.
+
+Only disagreements cost a second call, which makes the arrangement cheaper than
+verifying everything:
+
+| Configuration | Calls | Recall |
+|---|---|---|
+| One scan, no verification | 1 | That model's ceiling |
+| One scan, verify each finding | 1 + N | That model's ceiling |
+| **Both scan, verify disagreements** | **2 + d** | **The union** |
+
+`d` is the number of findings only one model raised. On a diff where the models
+largely agree, `d` is far smaller than `N` — so the default configuration is
+usually cheaper than the middle row as well as more accurate.
+
+Verification is still capped at the top 20 unresolved findings by severity
+(`max-verified-findings`); anything past the cap is demoted to advisory, never
+silently dropped.
+
+### Each stage is tuned for one thing
+
+| | Scan | Second opinion |
 |---|---|---|
 | Scope | The whole diff, one call | One finding, one call |
 | Optimise for | Recall | Precision |
 | Effort | `high` | `low` |
 | Told to | Cast a wide net; do not self-filter | Default to refuting unless you can show the failure |
 
-Verification costs one model call per finding, which is why it is capped at the
-top 20 by severity (`max-verified-findings`). Findings past the cap are demoted
-to advisory, never silently dropped.
+### Verification subtracts, so it can subtract something real
 
-### Verification raises precision. It can never raise recall.
+The stage can only remove findings. If a refutation is wrong, a true positive
+goes with it — which happened in the measurements, on a finding two models
+refuted and a third confirmed.
 
-This is the property most easily misread, and the measurements made it concrete.
+That is why it is a switch (`verification: off`) rather than an architectural
+given, and why agreement bypasses it rather than being re-checked.
 
-The verifier only ever sees findings the primary model already reported. A bug
-the primary missed is not a bug the verifier evaluates and gets wrong — it is a
-bug the verifier is never shown. **The primary model's recall is a hard ceiling
-on the pipeline's recall**, and no verifier, however strong, can raise it.
+### Independence is enforced, not assumed
 
-So when `gemini-3.1-pro-preview` missed the mutable-default-argument defect,
-pairing it with `claude-opus-5` did not help: Claude was never asked. Swapping
-the roles so that Claude scanned found the bug immediately — because the fix for
-a recall problem is a better *primary*, not a better verifier.
+Two rules keep the models genuinely independent, and both are load-bearing:
 
-The corollary is the direction the arrow can move. Verification can only remove
-things, so it trades recall for precision:
+**Scans never see each other.** They run concurrently over the same diff with
+identical prompts. If one model's output leaked into the other's prompt, the
+agreement signal would be worthless — a model shown another's findings tends to
+endorse them.
 
-- Something confirmed was seen by two models that never spoke to each other.
-- Something refuted is gone, and if the refutation was wrong, a true positive
-  went with it. In the measurements this happened — see
-  [`benchmark/seeded-bugs/README.md`](../benchmark/seeded-bugs/README.md).
+**The judge never sees the reporter's reasoning.** A finding only one model
+raised is sent to the other with the file, the line, the code, and a one-line
+claim. Not the argument, not the severity rating, not who reported it. Give a
+model someone else's reasoning and it agrees; the stage then confirms everything
+and filters nothing.
+`test_verify_prompt_withholds_the_reporters_reasoning` in
+[`tests/test_review.py`](../tests/test_review.py) exists to stop a well-meaning
+refactor from eroding this.
 
-Which is why verification is a switch (`verification: off`) and not an
-architectural given. A repository that would rather read three extra false
-positives than miss one real bug should turn it off, and pay for one model
-instead of two.
+Keeping the judge ignorant also gives it something the reporter cannot provide:
+a **severity score decided from scratch**. Never having seen the original
+rating, its rating is independent evidence rather than an echo, and it wins.
 
-### Cost is shaped by which stage scales
+### As an injection defence
 
-Scanning is one call regardless of how large the diff is. Verification is one
-call **per finding**. The stage that scales with N is the second one, so on cost
-grounds the cheaper model belongs there:
-
-| | Calls | Put here |
-|---|---|---|
-| Primary scan | 1 | The model with the best recall — it sets the ceiling |
-| Verification | N | The cheaper model — it only has to judge one claim at a time |
-
-That inverts the arrangement this project started with, and the measurements
-support the inversion on accuracy as well as cost.
-
-### The verifier is deliberately kept ignorant
-
-It receives the file, the line, the code, and a one-line claim. It does not
-receive the primary model's argument, its severity rating, or its identity.
-
-This is the single most important decision in the codebase. Give a model
-someone else's reasoning and it tends to agree; the second stage then confirms
-everything and filters nothing. `test_verify_prompt_withholds_the_reporters_reasoning`
-in [`tests/test_review.py`](../tests/test_review.py) exists to keep this from
-being eroded by a well-meaning refactor.
-
-It also gives the verifier something to do that the primary cannot: **re-score
-severity from scratch**. Because it never saw the original rating, its rating is
-independent evidence rather than an echo, and its score is the one that wins.
-
-### Verification as an injection defence
-
-A diff that talks the primary model out of reporting something still has to get
-past a second model that never saw the manipulated session. That is a real
-security property, not a side effect — see [security.md](security.md).
+A diff that talks one model out of reporting something has to get past a second
+model that never saw the manipulated session — and that second model is now
+scanning independently, not merely reacting to what the first produced. See
+[security.md](security.md).
 
 ### Degrading instead of failing
 
-If the verifier cannot run — no entitlement, wrong region, exhausted quota — the
-review continues with primary findings only, and the summary comment says so in
-as many words. A reviewer that goes silent is worse than one that says it is
-running at half strength.
+Every failure mode narrows the review rather than ending it, and the summary
+always says which happened:
 
-## The roles are configuration
+- A scanning model fails → the review proceeds on the other's findings, with the
+  failure named. A reviewer running at half strength must not look like a clean
+  one.
+- A verifier fails → affected findings become advisory rather than disappearing.
+- Only one model is configured → every finding is unresolved by definition, and
+  the pipeline collapses gracefully into the older scan-then-verify shape.
 
-`PRIMARY_MODEL` and `VERIFIER_MODEL` are resolved to an engine by model-ID
-prefix, not hardcoded per stage:
+## Cross-model identity
+
+Merging two scans needs a way to tell "these two reports are the same defect",
+and finding IDs cannot do it: they hash the quoted snippet, and two models
+almost never quote a bug identically.
+
+`consensus.looks_like_same` matches positionally instead — same file, and within
+two lines, widening to fifteen when both models quote overlapping code. The
+widening is capped deliberately. Identical snippets are not proof of identity: a
+file can contain the same `except Exception: pass` twice, and merging those
+would discard a real finding outright. A test caught exactly that during
+development.
+
+## Any model can play any part
+
+`provider.scan(model, ...)` and `provider.verify(model, ...)` take the model as
+an argument; the engine is resolved by model-ID prefix rather than by stage:
 
 ```python
 def _engine(self, model: str) -> _Engine:
@@ -154,10 +194,9 @@ def _engine(self, model: str) -> _Engine:
     return _GeminiEngine(model, self._project, self._gemini_location)
 ```
 
-So running the experiment in reverse — Claude scanning, Gemini verifying — is
-two environment variables. Whether Gemini-then-Claude actually beats
-Claude-then-Gemini is unknown; `benchmark/` exists to find out rather than
-assume.
+That is what lets the same two models scan *and* judge each other, and it is
+what made the role-ordering experiment cheap enough to actually run — the
+question was settled by measurement rather than argument.
 
 ## Findings are identified by content
 
