@@ -367,17 +367,31 @@ def test_the_repair_leaves_an_even_run_alone():
     assert body.endswith(backslash * 4)
 
 
-@pytest.mark.parametrize(
-    "probe",
-    [
-        ("x" * 155) + chr(92) + "   " + "y" * 40,
-        ("x" * 153) + " " + chr(92) + "  " + "y" * 40,
-        ("x" * 152) + "&amp" + "  " + "y" * 40,
-        ("x" * 153) + chr(92) * 4 + "   " + "z" * 40,
-        ("x" * 150) + " " + chr(92) + " " + chr(92) + " " + "y" * 40,
-    ],
-)
-def test_the_repairs_reach_a_fixed_point(probe: str):
+BACKSLASH = chr(92)
+
+#: Sequences that must be at the cut for the repair to be exercised at all.
+#: The reviewer's seventh finding on this pull request was that an earlier
+#: version placed them wherever they happened to land, so several probes cut
+#: through filler and asserted nothing — a vacuous test, which is worse than
+#: no test because it reads as coverage.
+AT_THE_CUT = [
+    BACKSLASH + "   ",
+    " " + BACKSLASH + "  ",
+    "&amp",
+    BACKSLASH * 4 + "   ",
+    " " + BACKSLASH + " " + BACKSLASH + " ",
+    BACKSLASH,
+    "&a",
+]
+
+
+def probe_cutting_through(tail: str, limit: int = 160) -> str:
+    """Filler + ``tail``, sized so the cut at ``limit - 1`` lands at its end."""
+    return "x" * (limit - 1 - len(tail)) + tail + "z" * 50
+
+
+@pytest.mark.parametrize("tail", AT_THE_CUT)
+def test_the_repairs_reach_a_fixed_point(tail: str):
     """They expose each other, which is why `_bound` loops.
 
     Stripping whitespace can uncover a backslash that was even a moment ago;
@@ -386,8 +400,13 @@ def test_the_repairs_reach_a_fixed_point(probe: str):
     """
     from quorum_review.report import _bound
 
-    body = _bound(probe, 160).removesuffix("…")
+    probe = probe_cutting_through(tail)
+    result = _bound(probe, 160)
 
+    assert result.endswith("…"), "the probe did not reach the cut"
+    assert result != probe
+
+    body = result.removesuffix("…")
     assert not body.endswith(" ")
-    assert (len(body) - len(body.rstrip(chr(92)))) % 2 == 0
+    assert (len(body) - len(body.rstrip(BACKSLASH))) % 2 == 0
     assert not body.endswith(("&", "&a", "&am", "&amp"))
