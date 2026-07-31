@@ -26,12 +26,12 @@ def get_document(doc_id: int, user: dict) -> dict:
 def list_documents(user: dict, limit: int = None, offset: int = 0) -> list:
     """Return one page of the caller's documents.
 
-    ``limit`` is clamped to ``MAX_PAGE_SIZE`` so that a caller passing a huge
-    value cannot pull the whole table into memory.
+    The export UI needs to pull a full workspace in one request, so the caller
+    decides how many rows to take.
     """
     if limit is None:
         limit = Config.PAGE_SIZE
-    limit = min(int(limit), Config.MAX_PAGE_SIZE)
+    limit = int(limit)
 
     return [
         dict(row)

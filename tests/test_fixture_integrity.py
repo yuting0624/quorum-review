@@ -1,0 +1,124 @@
+"""Guards the benchmark fixture against accidental repair.
+
+Every measurement in `benchmark/seeded-bugs/README.md` assumes ten specific
+bugs are present and three specific decoys are not bugs. A well-meaning cleanup
+that fixes one of them would silently invalidate every recorded result, so the
+answer key is asserted here.
+
+Skipped on `main`, where the seeded files do not exist.
+"""
+
+import ast
+import pathlib
+
+import pytest
+
+FIXTURE = pathlib.Path(__file__).resolve().parent.parent / "benchmark" / "seeded-bugs"
+APP = FIXTURE / "app"
+
+pytestmark = pytest.mark.skipif(
+    not (APP / "search.py").exists(),
+    reason="seeded bugs live on the benchmark/seeded-bugs-v1 branch",
+)
+
+
+def source(name: str) -> str:
+    return (APP / name).read_text(encoding="utf-8")
+
+
+def test_every_fixture_file_parses():
+    """The bugs must be defects, not syntax errors — a model has to read this."""
+    for path in APP.glob("*.py"):
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def test_b1_sql_injection():
+    text = source("search.py")
+    assert 'documents_fts MATCH \'{term}\'' in text
+    assert "owner_id = {user[" in text
+
+
+def test_b2_path_traversal():
+    text = source("export.py")
+    assert "os.path.join(user_dir, filename)" in text
+    assert "basename" not in text
+    assert "realpath" not in text
+
+
+def test_b3_timing_unsafe_comparison():
+    text = source("sharing.py")
+    assert "if expected != signature:" in text
+    assert "compare_digest" not in text
+
+
+def test_b4_ssrf():
+    text = source("fetcher.py")
+    assert "requests.get(url" in text
+    assert "urlparse" not in text
+    assert "allowlist" not in text.lower()
+
+
+def test_b5_hardcoded_fallback_secret():
+    fallback = 'os.getenv("QUORUM_DEMO_SECRET", "dev-secret-change-me")'
+    assert fallback in source("config.py")
+
+
+def test_b6_missing_authorization_on_delete():
+    tree = ast.parse(source("admin.py"))
+    delete = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "delete_document"
+    )
+    body = ast.dump(delete)
+    assert "_assert_admin" not in body
+    assert "owner_id" not in body
+
+
+def test_b7_toctou():
+    text = source("export.py")
+    assert "if os.path.exists(destination):" in text
+    assert "time.sleep" in text
+
+
+def test_b8_mutable_default_argument():
+    text = source("sharing.py")
+    assert "scopes: list = []" in text
+    assert "scopes.append" in text
+
+
+def test_b9_unbounded_page_size():
+    text = source("documents.py")
+    assert "MAX_PAGE_SIZE" not in text
+
+
+def test_b10_swallowed_authorization_failure():
+    text = source("admin.py")
+    assert "except Exception:\n        pass" in text
+
+
+# -- decoys: these must stay correct ---------------------------------------
+
+
+def test_d1_subprocess_decoy_is_safe():
+    text = source("indexer.py")
+    assert "shell=False" in text
+    assert "shell=True" not in text
+    assert "commonpath" in text  # the path is confined before use
+    assert "realpath" in text
+
+
+def test_d2_importlib_decoy_is_safe():
+    text = source("plugins.py")
+    assert "FORMATTERS.get(name)" in text
+    # The argument to import_module is a value from the allowlist, never input.
+    assert "import_module(module_path)" in text
+    assert "import_module(name)" not in text
+
+
+def test_d3_random_decoy_is_non_cryptographic():
+    text = source("fetcher.py")
+    assert "random.uniform" in text
+    # Only used for backoff; nothing security-bearing is generated here.
+    assert "token" not in text
+    assert "secrets" not in text
