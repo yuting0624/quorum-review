@@ -152,6 +152,9 @@ findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 | diff only | 10 / 10 | **0 / 2**, every run | 0 |
 | **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
 
+Re-measured at `v1.0.0`, forty commits after the first run, because a number
+attached to code that has since changed is a number about nothing. It held.
+
 Both configurations also found real bugs nobody planted — and one of those,
 a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
 repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
