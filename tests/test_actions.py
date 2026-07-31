@@ -121,16 +121,42 @@ def test_degradation_does_not_need_a_severity_gate(monkeypatch):
     [
         RunReport(scan_failures=["model-a: 503"]),
         RunReport(verifier_error="not entitled"),
-        RunReport(trimmed_files=["big.py"]),
         RunReport(dropped_files=["huge.py"]),
     ],
 )
-def test_every_way_of_seeing_less_counts_as_degraded(report):
+def test_doing_less_than_configured_counts_as_degraded(report):
     assert actions.degraded(report)
 
 
 def test_a_complete_run_is_not_degraded():
     assert not actions.degraded(RunReport(confirmed=[finding()]))
+
+
+def test_a_trimmed_file_is_not_degradation():
+    """Truncation is the configured policy working, not a failure of it.
+
+    Nearly every real repository has a file over 20,000 characters. Counting
+    that would make `degraded` true on almost every run — useless as a signal,
+    and enough to make `fail-on-degraded` block every merge.
+    """
+    report = RunReport(trimmed_files=["big.py", "also-big.py"])
+    assert not actions.degraded(report)
+
+
+def test_trimmed_and_dropped_files_are_reported_separately(
+    monkeypatch, tmp_path: pathlib.Path
+):
+    out = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    actions.write_outputs(
+        RunReport(trimmed_files=["big.py"], dropped_files=["a.py", "b.py"])
+    )
+    written = dict(
+        line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines()
+    )
+    assert written["trimmed"] == "1"
+    assert written["dropped"] == "2"
+    assert written["degraded"] == "true"
 
 
 # -- outputs ---------------------------------------------------------------
@@ -185,3 +211,33 @@ def test_the_job_summary_is_written(monkeypatch, tmp_path: pathlib.Path):
 def test_a_summary_that_cannot_be_written_does_not_end_the_run(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(tmp_path / "no" / "such" / "dir.md"))
     actions.write_job_summary("body")  # must not raise
+
+
+# -- the wiring between the report and the process exit --------------------
+
+
+def test_the_orchestrator_returns_the_gate_decision(monkeypatch, capsys):
+    """The unit above decides; this checks the decision reaches the exit code."""
+    from quorum_review import review
+
+    monkeypatch.setenv("QUORUM_FAIL_ON", "high")
+    code = review._finish(RunReport(confirmed=[finding("critical")]))
+
+    assert code == 1
+    assert "::error title=quorum-review::" in capsys.readouterr().out
+
+
+def test_the_orchestrator_returns_zero_when_nothing_gates(monkeypatch, capsys):
+    from quorum_review import review
+
+    monkeypatch.setenv("QUORUM_FAIL_ON", "critical")
+    assert review._finish(RunReport(confirmed=[finding("medium")])) == 0
+    assert "::error" not in capsys.readouterr().out
+
+
+def test_a_failed_scan_is_annotated_even_when_it_does_not_gate(capsys):
+    from quorum_review import review
+
+    assert review._finish(RunReport(scan_failures=["model-a: 503"])) == 0
+    out = capsys.readouterr().out
+    assert "::warning title=Scanning model failed::model-a: 503" in out

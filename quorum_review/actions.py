@@ -67,12 +67,19 @@ def severity_counts(report: RunReport) -> dict[str, int]:
 
 
 def degraded(report: RunReport) -> bool:
-    """Whether this run saw less than it was configured to see."""
+    """Whether this run did less than it was configured to do.
+
+    Note what is *not* here: a file shortened to the per-file limit. Truncation
+    is the configured policy working normally, and almost every real repository
+    has a file over 20,000 characters — counting it would make `degraded` true
+    on nearly every run, which makes it useless as a signal and makes
+    `fail-on-degraded` block everything. Trimmed files are still named in the
+    summary and reported as their own output.
+
+    A dropped file does count. Nothing about it was read.
+    """
     return bool(
-        report.scan_failures
-        or report.verifier_error
-        or report.trimmed_files
-        or report.dropped_files
+        report.scan_failures or report.verifier_error or report.dropped_files
     )
 
 
@@ -102,11 +109,8 @@ def gate_message(report: RunReport) -> str:
             reasons.append(f"{len(report.scan_failures)} scanning model(s) failed")
         if report.verifier_error:
             reasons.append("the second opinion was unavailable")
-        if report.trimmed_files or report.dropped_files:
-            reasons.append(
-                f"{len(report.trimmed_files) + len(report.dropped_files)} file(s) "
-                f"were not fully reviewed"
-            )
+        if report.dropped_files:
+            reasons.append(f"{len(report.dropped_files)} file(s) were not reviewed")
         return (
             "failing because this review was degraded and fail-on-degraded is "
             f"set: {'; '.join(reasons)}"
@@ -144,6 +148,8 @@ def write_outputs(report: RunReport) -> None:
         "advisory": str(len(report.advisory)),
         "refuted": str(len(report.refuted)),
         "resolved": str(len(report.resolved)),
+        "trimmed": str(len(report.trimmed_files)),
+        "dropped": str(len(report.dropped_files)),
         "degraded": "true" if degraded(report) else "false",
         "repo-access": report.repo_access or "off",
         **{name: str(count) for name, count in counts.items()},
