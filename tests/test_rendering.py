@@ -307,3 +307,32 @@ def test_a_truncated_entity_is_not_left_half_written():
 
 def test_a_value_under_the_limit_keeps_its_whole_text():
     assert flatten("a & b") == "a &amp; b"
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["&" * 400, "<" * 400, "|" * 400, "\\" * 400, "a|" + chr(92) + "&<" * 100],
+)
+def test_a_cell_stays_within_the_limit_after_every_escape(hostile: str):
+    """Reported by the reviewer: the bound was asserted on `flatten`, and
+    `cell` escaped backslashes and pipes afterwards — doubling a hostile value
+    straight back over it. Escaping is not length-preserving, so the cut has
+    to come last."""
+    assert len(cell(hostile)) <= MAX_CELL_CHARS
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["&" * 400, "<" * 400, "|" * 400, "\\" * 400, "a|" + chr(92) + "&<" * 100],
+)
+def test_a_truncated_cell_still_makes_one_row(hostile: str):
+    """The subtle half: a cut landing after an odd number of backslashes
+    escapes the *closing* pipe, and the column disappears."""
+    assert structural_pipes(f"| {cell(hostile)} |") == 2
+
+
+def test_a_truncated_cell_never_ends_mid_escape():
+    for hostile in ("&" * 400, "\\" * 400):
+        body = cell(hostile).removesuffix("…")
+        assert not body.endswith(("&", "&a", "&am", "&amp"))
+        assert (len(body) - len(body.rstrip("\\"))) % 2 == 0

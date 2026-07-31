@@ -135,21 +135,34 @@ def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
     Escaping happens *before* truncation, and that order is a correction: the
     other way round, a title of 160 ampersands passed the length check and then
     grew to 800 characters. Twenty-five of those is a fifth of GitHub's comment
-    budget spent on nothing. The cost is that a cut can land inside an entity,
-    so a trailing partial one is trimmed off.
+    budget spent on nothing. The cost is that a cut can land inside an escape
+    sequence, which ``_bound`` repairs.
     """
-    escaped = (
+    return _bound(
         " ".join((text or "").split())
         .replace("&", "&amp;")
         .replace("<", "&lt;")
-        .replace(">", "&gt;")
+        .replace(">", "&gt;"),
+        limit,
     )
+
+
+def _bound(escaped: str, limit: int) -> str:
+    """Cut to ``limit`` without leaving half an escape sequence behind.
+
+    Two ways a naive cut goes wrong, and both were live at some point:
+
+    - Inside ``&amp;``, leaving ``&am`` to render as literal text.
+    - After an odd number of backslashes, so the next character — in a table,
+      the closing pipe — gets escaped and the column disappears.
+    """
     if len(escaped) <= limit:
         return escaped
 
-    cut = escaped[: limit - 1]
-    # `&am` at the end would render as literal text rather than an ampersand.
-    cut = _PARTIAL_ENTITY.sub("", cut)
+    cut = _PARTIAL_ENTITY.sub("", escaped[: limit - 1])
+    trailing = len(cut) - len(cut.rstrip("\\"))
+    if trailing % 2:
+        cut = cut[:-1]
     return cut.rstrip() + "…"
 
 
@@ -171,9 +184,21 @@ def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
 
     Both breakages were live. Neither shows up in a test that only checks the
     text appears somewhere in the row.
+
+    The bound is applied after every escape, not by delegating to ``flatten``:
+    doing it there and then escaping here doubled a cell of backslashes or
+    pipes right back over the limit. Escaping is not length-preserving, so the
+    cut has to come last.
     """
-    escaped = flatten(text, limit).replace("\\", "\\\\")
-    return escaped.replace("|", r"\|")
+    escaped = (
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("|", r"\|")
+    )
+    return _bound(escaped, limit)
 
 
 def _row(finding: Finding) -> str:
