@@ -284,3 +284,26 @@ def test_a_short_list_says_nothing_about_more():
 
     body = render(RunReport(suppressed=2, suppressed_titles=["a", "b"]))
     assert "more" not in body.split("<summary>Which ones</summary>")[1][:200]
+
+
+def test_escaping_cannot_grow_a_value_past_the_limit():
+    """Reported by the reviewer: truncation ran before escaping.
+
+    A title of 160 ampersands passed the length check and then grew to 800
+    characters. Twenty-five of those is a fifth of GitHub's comment budget
+    spent on nothing.
+    """
+    for hostile in ("&" * 400, "<" * 400, "&<>" * 200):
+        assert len(flatten(hostile)) <= MAX_CELL_CHARS
+
+
+def test_a_truncated_entity_is_not_left_half_written():
+    """The cost of escaping first: a cut can land inside `&amp;`, and `&am`
+    renders as literal text rather than an ampersand."""
+    result = flatten("&" * 400).removesuffix("…")
+    assert not result.endswith(("&", "&a", "&am", "&amp"))
+    assert result.endswith("&amp;")
+
+
+def test_a_value_under_the_limit_keeps_its_whole_text():
+    assert flatten("a & b") == "a &amp; b"

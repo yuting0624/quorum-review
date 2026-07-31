@@ -10,6 +10,7 @@ different strengths of evidence, and the comment says which is which.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -109,6 +110,10 @@ MAX_CELL_CHARS = 160
 #: history to make room — trading state that matters for a list that does not.
 MAX_SUPPRESSED_LISTED = 20
 
+#: A truncation can land inside `&amp;`, leaving `&am` to render as literal
+#: text. Matches only an unterminated entity at the very end.
+_PARTIAL_ENTITY = re.compile(r"&[a-z]{0,4}$")
+
 
 def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
     """One line, bounded, and inert as HTML.
@@ -126,13 +131,26 @@ def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
       Escaping is invisible to the reader: ``&lt;`` renders as ``<``.
 
     The ampersand goes first or ``<`` would become ``&amp;lt;``.
+
+    Escaping happens *before* truncation, and that order is a correction: the
+    other way round, a title of 160 ampersands passed the length check and then
+    grew to 800 characters. Twenty-five of those is a fifth of GitHub's comment
+    budget spent on nothing. The cost is that a cut can land inside an entity,
+    so a trailing partial one is trimmed off.
     """
-    flattened = " ".join((text or "").split())
-    if len(flattened) > limit:
-        flattened = flattened[: limit - 1].rstrip() + "…"
-    return (
-        flattened.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = (
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
     )
+    if len(escaped) <= limit:
+        return escaped
+
+    cut = escaped[: limit - 1]
+    # `&am` at the end would render as literal text rather than an ampersand.
+    cut = _PARTIAL_ENTITY.sub("", cut)
+    return cut.rstrip() + "…"
 
 
 def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
