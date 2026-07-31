@@ -56,10 +56,11 @@ jobs:
     #
     # Three conditions here are load-bearing:
     #
-    # - Forks are excluded. They get a read-only token and no access to
-    #   secrets, so the run could only fail — noisily, on every contribution.
-    #   `pull_request_target` would fix that by giving write access to a run
-    #   that reviews untrusted code, which is not a trade worth making.
+    # - Forks are excluded here. They get a read-only token and no secrets, so
+    #   this workflow could only fail on them — noisily, on every outside
+    #   contribution. Reviewing them needs `pull_request_target`, which is a
+    #   different trust model and belongs in its own file: see
+    #   examples/review-fork.yml, and read its header before deploying it.
     #
     # - The Bot check prevents a loop: without it the comments this action
     #   posts re-trigger the workflow, which posts more comments.
@@ -88,9 +89,30 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # Two checkouts, because this repository reviews its own pull
+      # requests: the action has to run from a known-good commit, not from
+      # the branch it is reviewing.
+      #
       # Pin third-party actions to a commit rather than a tag when the token
       # in scope matters to you: a tag can be moved to point at new code.
       - uses: actions/checkout@v4
+
+      # The pull request's code, as data — this is what the models read when a
+      # finding depends on something the diff does not contain. The ref is
+      # given explicitly because an `issue_comment` run would otherwise check
+      # out the default branch and review the wrong tree. `fetch-depth: 2`
+      # keeps the head commit in the clone, which is how the reviewer confirms
+      # at run time that it has the right one; without it the tools are
+      # withdrawn and the summary says the review was diff-only.
+      - uses: actions/checkout@v4
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}/merge
+          path: pr-head
+          fetch-depth: 2
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -105,3 +127,4 @@ jobs:
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
+          workspace-path: ${{ github.workspace }}/pr-head

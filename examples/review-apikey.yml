@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Review
-        uses: ./
+        uses: yuting0624/quorum-review@v1
         with:
           mode: direct
           skill: security-review

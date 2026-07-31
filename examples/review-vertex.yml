@@ -56,10 +56,11 @@ jobs:
     #
     # Three conditions here are load-bearing:
     #
-    # - Forks are excluded. They get a read-only token and no access to
-    #   secrets, so the run could only fail — noisily, on every contribution.
-    #   `pull_request_target` would fix that by giving write access to a run
-    #   that reviews untrusted code, which is not a trade worth making.
+    # - Forks are excluded here. They get a read-only token and no secrets, so
+    #   this workflow could only fail on them — noisily, on every outside
+    #   contribution. Reviewing them needs `pull_request_target`, which is a
+    #   different trust model and belongs in its own file: see
+    #   examples/review-fork.yml, and read its header before deploying it.
     #
     # - The Bot check prevents a loop: without it the comments this action
     #   posts re-trigger the workflow, which posts more comments.
@@ -116,7 +117,7 @@ jobs:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 
       - name: Review
-        uses: ./
+        uses: yuting0624/quorum-review@v1
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
