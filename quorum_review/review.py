@@ -451,6 +451,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # content-addressed identity — the snippet is unchanged but the path is
         # half of the hash — so without this a refactor closes every finding in
         # the file and immediately re-reports all of them at the new path.
+        # A rebuilt ledger has no marker to have come from. Saying so matters:
+        # a run that lost its history and recovered part of it is not the same
+        # as one that never lost anything.
+        if sticky is None or ledger_mod.MARKER_PREFIX not in (sticky.body or ""):
+            report.recovered = len(ledger.entries)
+
         report.renamed_files = diffs.renames(ctx.diff)
         if report.renamed_files:
             ledger.follow_renames(report.renamed_files)

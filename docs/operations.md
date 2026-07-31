@@ -102,6 +102,14 @@ created by `python scripts/create_app.py`. The reply is still posted either way.
 from the **default branch**, not the pull request. If the workflow was added on
 a branch that is not merged, there is nothing to run.
 
+**Someone deleted the summary comment.** That comment carries the review's
+entire state in a hidden marker, so deleting it would normally mean every open
+finding is posted again and every `wontfix` is undone. It does not: findings
+and dismissals are recovered from the inline comments still on the pull
+request, and the next summary says how many. Severity, which model raised each
+finding, and the reason behind a dismissal are gone — they were only in the
+marker.
+
 **A finding is reported twice.** It should not be; the ledger matches on
 position and title overlap, not just ID. Worth an issue with both comments.
 

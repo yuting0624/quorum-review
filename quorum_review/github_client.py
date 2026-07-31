@@ -17,7 +17,8 @@ from typing import Any
 import httpx
 
 from . import diffs
-from .ledger import MARKER_PREFIX, Ledger, decode_marker
+from .ledger import MARKER_PREFIX, Ledger, decode_marker, rebuild
+from .matching import is_dismissal_text
 from .pathfilter import IGNORE_FILE, PathFilter
 from .schema import PRContext
 
@@ -361,6 +362,23 @@ class GitHubClient:
             )
         return response.text
 
+    async def review_comments(self, number: int) -> list[dict[str, Any]]:
+        """Every inline comment on the pull request, oldest first."""
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = await self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+                params={"per_page": 100, "page": page},
+            )
+            comments = response.json()
+            if not comments:
+                return collected
+            collected += comments
+            if len(comments) < 100:
+                return collected
+            page += 1
+
     async def thread_comments(self, number: int, root_id: int) -> list[dict[str, Any]]:
         """Every comment in one review thread, oldest first.
 
@@ -410,10 +428,27 @@ class GitHubClient:
             page += 1
 
     async def load_ledger(self, number: int) -> tuple[Ledger, StickyComment | None]:
+        """The state from the last review, or as much of it as survives.
+
+        The ledger lives in a hidden marker inside the summary comment, and
+        someone can delete that — tidying a noisy pull request is a normal
+        thing to do and nothing warns them. Rather than starting over and
+        re-posting everything, what the inline comments still carry is
+        recovered: see ``ledger.rebuild``.
+        """
         sticky = await self.find_sticky_comment(number)
-        if sticky is None:
-            return Ledger.empty(number), None
-        return decode_marker(sticky.body) or Ledger.empty(number), sticky
+        if sticky is not None:
+            recovered = decode_marker(sticky.body)
+            if recovered is not None:
+                return recovered, sticky
+
+        comments = await self.review_comments(number)
+        dismissed = {
+            int(comment["in_reply_to_id"])
+            for comment in comments
+            if comment.get("in_reply_to_id") and is_dismissal_text(comment.get("body"))
+        }
+        return rebuild(number, comments, dismissed), sticky
 
     # -- writes ------------------------------------------------------------
 

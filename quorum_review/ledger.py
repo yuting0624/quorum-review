@@ -414,3 +414,61 @@ def assign_ids(findings: list[Finding]) -> list[Finding]:
     for finding in findings:
         finding.finding_id = compute_finding_id(finding.file_path, finding.code_snippet)
     return findings
+
+
+#: The footer every inline comment carries. It is how a posted finding can be
+#: recognised after the state that described it is gone.
+_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
+_TITLE = re.compile(r"^\s*\S*\s*\*\*(?P<title>.+?)\*\*", re.MULTILINE)
+
+
+def rebuild(number: int, comments: list[dict[str, Any]], dismissed: set[int]) -> Ledger:
+    """Reconstruct enough state from the comments the reviewer already posted.
+
+    The ledger lives in a hidden marker inside the summary comment, which
+    someone can delete — tidying up a noisy pull request is a normal thing to
+    do, and nothing warns them. Without this, the next review has no history:
+    every open finding is posted a second time, and every ``wontfix`` someone
+    took the trouble to justify is silently undone.
+
+    What the comments themselves carry is enough to stop that. Each inline
+    comment ends with its category and finding ID, and GitHub supplies the path
+    and line. That reconstructs identity, location and suppression — not the
+    verifier's reasoning or which models reported it, which are only worth
+    anything on the run that produced them.
+
+    ``dismissed`` is the set of root comment IDs whose threads contain a
+    dismissal. Recovering those matters more than the rest: a re-raised finding
+    is noise, but a re-raised finding somebody explicitly retired is the
+    reviewer overruling a person.
+    """
+    ledger = Ledger.empty(number)
+    for comment in comments:
+        if comment.get("in_reply_to_id"):
+            continue
+        footer = _FOOTER.search(comment.get("body") or "")
+        if footer is None:
+            continue
+
+        comment_id = int(comment.get("id") or 0)
+        title = _TITLE.search(comment.get("body") or "")
+        ledger.entries[footer.group("id")] = LedgerEntry(
+            finding_id=footer.group("id"),
+            file_path=str(comment.get("path") or ""),
+            category=footer.group("category"),
+            # Not recoverable, and only used for ordering and for the gate.
+            # Reporting it as high would let a rebuilt ledger fail a build that
+            # the original never would have.
+            severity="low",
+            title=title.group("title").strip() if title else "(recovered finding)",
+            line=int(comment.get("line") or comment.get("original_line") or 0),
+            review_comment_id=comment_id,
+            status="wontfix" if comment_id in dismissed else "open",
+            wontfix_reason=(
+                "recovered from the thread; the original reason was in the "
+                "summary comment that was deleted"
+                if comment_id in dismissed
+                else None
+            ),
+        )
+    return ledger
