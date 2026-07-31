@@ -139,3 +139,33 @@ them; neither fix would have reached a repository that copied the file first.
 
 Pin `action-ref` to a commit SHA in a regulated environment. A tag can be moved
 to point at new code, and the job holds a write-scoped token.
+
+## Versions
+
+`v1` is a moving alias for the latest `v1.x.y`, which is the GitHub Actions
+convention and what the examples use. `v1.x.y` tags are immutable; pin to one,
+or to a commit SHA, in a regulated environment.
+
+The alias is moved by [`release.yml`](../.github/workflows/release.yml) when a
+version tag is pushed, not by hand. That is a reaction to getting it wrong:
+`v1` once sat 38 commits behind `main` while the README told everyone to use
+it, so the documented install path shipped without the repository-access
+feature the README measures and without two security fixes to the workflow
+trigger conditions. Nothing failed, no check went red, and the one repository
+that had adopted it simply never received them.
+
+The usual warning about tags is that one can be moved to point at *new* code.
+A tag left pointing at old code is the same hazard with the opposite face, and
+it is quieter.
+
+To cut a release:
+
+```bash
+# bump __version__ in quorum_review/__init__.py and version in pyproject.toml
+git tag -a v0.3.0 -m "..." && git push origin v0.3.0
+```
+
+The workflow refuses a tag that disagrees with `__version__`. A release whose
+artefacts misreport their own version is worse than no release: every finding
+it produces, in a comment and in the Security tab, is stamped with a number
+that does not identify the code that made it.
