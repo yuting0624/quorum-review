@@ -36,6 +36,27 @@ one and invalidate the recorded numbers.
 | B9 | `app/documents.py` | reliability | medium | `limit` is no longer capped, so `MAX_PAGE_SIZE` can be bypassed and the whole table loaded |
 | B10 | `app/admin.py` | correctness | high | `except Exception: pass` swallows an authorization failure, so a denied check reads as success |
 
+## Context-dependent cases
+
+These were added later, after the first measurements showed the fixture was
+flattering a diff-only reviewer: **every original bug was visible inside the
+diff**, which is an artefact of who wrote it rather than a property of real
+pull requests.
+
+All three live in `app/reports.py`. Their correctness depends on files the pull
+request does not touch, so a reviewer that reads only the diff cannot settle
+them — it can only guess.
+
+| # | Type | Depends on | Description |
+|---|---|---|---|
+| C1 | **decoy** | `app/validators.py` | `os.path.join` on user input looks like traversal, but `safe_export_name` has already reduced it to one path segment. **Flagging it is a false positive.** |
+| C2 | **bug** (security, high) | `app/permissions.py` | The scope check reads correctly and passes for everyone: `"document.report"` is absent from `REQUIRED_SCOPES`, and `has_scope` returns True for unlisted actions — as its docstring warns |
+| C3 | **bug** (correctness, medium) | `app/audit.py` | `audit.record(user, "document.report", doc_id)` — the signature is `(action, user_id, doc_id)`, so this writes a useless row rather than raising |
+
+C1 is the one that matters most. "Is this input validated upstream?" is the
+commonest cause of false positives in code review, and it is exactly the
+question a diff cannot answer.
+
 ### Caveat on B8
 
 B8 is weaker than intended and the fixture, not the reviewer, is at fault. The
@@ -208,6 +229,10 @@ ledger. They only appeared once the thing actually posted twice.
 
 ## Still to measure
 
+- **The context-dependent cases (C1–C3).** Added after the measurements below,
+  so those numbers do not include them. Measuring the gap they expose is what
+  justifies — or does not justify — letting the models read files outside the
+  diff.
 - Re-review after genuinely fixing some seeded bugs. The 0% above proves nothing
   is re-posted on an unchanged PR; it does not prove a real fix is recognised as
   one. Note also that one finding appeared under "no longer reported" purely
