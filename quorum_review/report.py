@@ -10,6 +10,7 @@ different strengths of evidence, and the comment says which is which.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -37,6 +38,10 @@ class RunReport:
 
     scanned: int = 0
     suppressed: int = 0
+    #: Titles of the findings suppressed as already reported. Matching is
+    #: positional and by title overlap rather than exact, so it can be wrong;
+    #: a count alone leaves a reader no way to notice that it was.
+    suppressed_titles: list[str] = field(default_factory=list)
     agreed: list[Finding] = field(default_factory=list)
     confirmed: list[Finding] = field(default_factory=list)
     unverified: list[Finding] = field(default_factory=list)
@@ -86,19 +91,131 @@ def evidence(finding: Finding) -> str:
     """
     if finding.agreed:
         return "both models, independently"
-    reporter = finding.reported_by[0] if finding.reported_by else "?"
+    reporter = cell(finding.reported_by[0]) if finding.reported_by else "?"
     if finding.verifier_model:
-        return f"`{reporter}`, agreed by `{finding.verifier_model}`"
+        return f"`{reporter}`, agreed by `{cell(finding.verifier_model)}`"
     if finding.reported_by:
         return f"`{reporter}`, unchecked"
     return "unknown"
 
 
+#: A title longer than this is not a title. The schema asks for 80 characters
+#: and models mostly comply, but a run that produces a paragraph would make one
+#: row unreadable and push the rest of the table off the screen.
+MAX_CELL_CHARS = 160
+
+#: How many suppressed titles the summary lists before saying "and N more".
+#: The visible body shares GitHub's 65,536-character comment limit with the
+#: ledger marker, and overflowing it makes `fit_to_comment` drop the ledger's
+#: history to make room — trading state that matters for a list that does not.
+MAX_SUPPRESSED_LISTED = 20
+
+#: A truncation can land inside `&amp;`, leaving `&am` to render as literal
+#: text. Matches only an unterminated entity at the very end.
+_PARTIAL_ENTITY = re.compile(r"&[a-z]{0,4}$")
+
+
+def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """One line, bounded, and inert as HTML.
+
+    Three things, because a finding title is model output derived from a diff
+    an attacker wrote, and it lands in the middle of Markdown:
+
+    - **One line.** A newline inside ``**bold**`` ends the emphasis, and inside
+      a list starts a new item mid-sentence.
+    - **Bounded.** The schema asks for 80 characters; a run that returned a
+      paragraph would make the summary unreadable.
+    - **HTML-escaped.** Several sections are wrapped in ``<details>``, and
+      GitHub renders raw HTML in comments. A title containing ``</details>``
+      closes the block early and spills the rest of the summary out of it.
+      Escaping is invisible to the reader: ``&lt;`` renders as ``<``.
+
+    The ampersand goes first or ``<`` would become ``&amp;lt;``.
+
+    Escaping happens *before* truncation, and that order is a correction: the
+    other way round, a title of 160 ampersands passed the length check and then
+    grew to 800 characters. Twenty-five of those is a fifth of GitHub's comment
+    budget spent on nothing. The cost is that a cut can land inside an escape
+    sequence, which ``_bound`` repairs.
+    """
+    return _bound(
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;"),
+        limit,
+    )
+
+
+def _bound(escaped: str, limit: int) -> str:
+    """Cut to ``limit`` without leaving half an escape sequence behind.
+
+    Two ways a naive cut goes wrong, and both were live at some point:
+
+    - Inside ``&amp;``, leaving ``&am`` to render as literal text.
+    - After an odd number of backslashes, so the next character — in a table,
+      the closing pipe — gets escaped and the column disappears.
+
+    The repairs expose each other, which is why this loops rather than
+    applying them in some order. Stripping whitespace can uncover a backslash
+    that was even a moment ago; dropping that backslash can uncover whitespace
+    again. Two attempts to sequence these by hand were each wrong in a
+    different direction, so the rule is now "apply all of them until nothing
+    changes" — which terminates, because every step shortens the string.
+    """
+    if len(escaped) <= limit:
+        return escaped
+
+    cut = escaped[: limit - 1]
+    while True:
+        repaired = _PARTIAL_ENTITY.sub("", cut.rstrip()).rstrip()
+        if (len(repaired) - len(repaired.rstrip("\\"))) % 2:
+            repaired = repaired[:-1]
+        if repaired == cut:
+            return cut + "…"
+        cut = repaired
+
+
+def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    r"""Make a value safe to put between two pipes.
+
+    A security reviewer's titles contain pipes constantly — `cmd | grep`,
+    `a || b`, regex alternation. An unescaped one adds a column, so GitHub
+    shifts every later cell left and the Evidence column, which is the whole
+    argument this table exists to make, shows a fragment of the title instead.
+    A newline is worse: it ends the table and dumps the rest as prose.
+
+    Backslashes go first, and the order is the bug this had on its first
+    attempt: escaping only the pipe turns ``a\|b`` into ``a\\|b``, which
+    Markdown reads as a literal backslash followed by an unescaped pipe — the
+    column break the escaping was for. And ``\|`` is not exotic; it is how you
+    write an escaped pipe in a regular expression, which is a thing findings
+    quote.
+
+    Both breakages were live. Neither shows up in a test that only checks the
+    text appears somewhere in the row.
+
+    The bound is applied after every escape, not by delegating to ``flatten``:
+    doing it there and then escaping here doubled a cell of backslashes or
+    pipes right back over the limit. Escaping is not length-preserving, so the
+    cut has to come last.
+    """
+    escaped = (
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("|", r"\|")
+    )
+    return _bound(escaped, limit)
+
+
 def _row(finding: Finding) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     return (
-        f"| {icon} {finding.severity} | {finding.category} | "
-        f"`{finding.file_path}:{finding.line}` | {finding.title} | "
+        f"| {icon} {cell(finding.severity)} | {cell(finding.category)} | "
+        f"`{cell(finding.file_path)}:{finding.line}` | {cell(finding.title)} | "
         f"{evidence(finding)} |"
     )
 
@@ -259,6 +376,28 @@ def render(report: RunReport) -> str:
             f"{report.suppressed} finding(s) were already reported earlier in "
             f"this pull request and are not repeated here.",
         ]
+        if report.suppressed_titles:
+            # Bounded, because the summary shares GitHub's 65,536-character
+            # limit with the ledger marker. Overflowing it makes
+            # `fit_to_comment` drop the ledger's history to make room for a
+            # list nobody reads, which trades state for noise.
+            shown = report.suppressed_titles[:MAX_SUPPRESSED_LISTED]
+            remainder = len(report.suppressed_titles) - len(shown)
+            lines += [
+                "",
+                "<details>",
+                "<summary>Which ones</summary>",
+                "",
+                *(f"- {flatten(title)}" for title in shown),
+                *([f"- …and {remainder} more"] if remainder else []),
+                "",
+                "Matched to an existing finding by position and wording, not by "
+                "an exact identifier — models do not quote the same defect the "
+                "same way twice. Listed so a wrong match is visible rather than "
+                "silent.",
+                "",
+                "</details>",
+            ]
 
     if report.confirmed:
         lines += [
@@ -301,8 +440,9 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.refuted:
             lines.append(
-                f"- **{finding.title}** (`{finding.file_path}:{finding.line}`) — "
-                f"{finding.verifier_reason or 'no reason given'}"
+                f"- **{flatten(finding.title)}** "
+                f"(`{finding.file_path}:{finding.line}`) — "
+                f"{flatten(finding.verifier_reason, 400) or 'no reason given'}"
             )
         lines += ["", "</details>"]
 
@@ -346,8 +486,8 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.unanchored:
             lines.append(
-                f"- `{finding.file_path}:{finding.line}` — **{finding.title}**: "
-                f"{finding.body}"
+                f"- `{finding.file_path}:{finding.line}` — "
+                f"**{flatten(finding.title)}**: {finding.body}"
             )
 
     if report.summary_only:
@@ -495,7 +635,7 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
     corrupt the file.
     """
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
-    lines = [f"{icon} **{finding.title}**", "", finding.body]
+    lines = [f"{icon} **{flatten(finding.title)}**", "", finding.body]
 
     # Redaction happened at the source, in review.py, not here. There are five
     # places a finding's text reaches a comment — including the ledger, which

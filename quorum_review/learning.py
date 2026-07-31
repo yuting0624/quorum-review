@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .ledger import Ledger, LedgerEntry
+from .report import flatten
 
 #: Below this there is not enough signal to distinguish a pattern from a
 #: one-off, and proposing an edit from two dismissals is noise.
@@ -52,7 +53,7 @@ def dismissed(ledger: Ledger) -> list[LedgerEntry]:
 def render_prompt(skill_name: str, skill_body: str, entries: list[LedgerEntry]) -> str:
     """Ask a model to turn dismissals into a concrete criteria edit."""
     cases = "\n\n".join(
-        f"- **{entry.title}** (`{entry.file_path}`, {entry.severity} "
+        f"- **{flatten(entry.title)}** (`{entry.file_path}`, {entry.severity} "
         f"{entry.category})\n  Dismissed because: {entry.wontfix_reason}"
         for entry in entries
     )
@@ -103,7 +104,7 @@ Rather than silence each one separately, here is a proposed edit to \
 <summary>The dismissals this is based on</summary>
 
 {chr(10).join(
-    f"- **{entry.title}** — {entry.wontfix_reason}"
+    f"- **{flatten(entry.title)}** — {flatten(entry.wontfix_reason or '', 300)}"
     for entry in proposal.dismissals
 )}
 
