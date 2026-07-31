@@ -14,7 +14,21 @@ inputs:
     required: false
     default: vertex
   skill:
-    description: Review criteria to load from skills/<name>/SKILL.md.
+    description: >-
+      Which review criteria to use. A bare name is a built-in
+      (security-review, code-quality-review). Anything with a slash or ending
+      in .md is a path in *your* repository, so your own standards do not
+      require forking this one:
+
+        skill: .github/quorum/backend.md
+
+      Several can be combined, comma- or newline-separated, and are
+      concatenated. Up to four, 20,000 characters each — they are prepended to
+      every scan prompt, and a model given pages of policy starts reporting
+      policy violations rather than defects.
+
+      Criteria are instructions to the model, so they are read from the base
+      branch for a pull request from a fork.
     required: false
     default: security-review
   primary-model:
@@ -108,16 +122,134 @@ inputs:
       pull request is how a reviewer gets muted.
     required: false
     default: low
+  max-inline-comments:
+    description: >-
+      How many findings get their own comment in the diff view. Separate from
+      inline-severity, which decides *which* ones: a change that introduces
+      forty high-severity findings clears any threshold and still buries the
+      pull request.
+
+      The most severe get the comments. The rest stay in the summary table and
+      are named there as not commented — none is dropped.
+    required: false
+    default: "25"
   max-verified-findings:
     description: >-
       Cap on how many unresolved findings reach a second opinion, highest
       severity first. Ignored when verification is off.
     required: false
     default: "20"
+  workspace-path:
+    description: >-
+      Where the code under review is checked out, when that is not the
+      workspace root. Needed for fork reviews, where the fork's code goes in a
+      subdirectory so that nothing from it can be mistaken for this
+      repository's own files. See examples/review-fork.yml.
+    required: false
+    default: ""
+  fork-label:
+    description: >-
+      Label that authorises reviewing a pull request from a fork. The action
+      also checks that whoever applied it has write access — labelling is
+      available to triage collaborators, so the label alone is not
+      authorisation. Fork pull requests without it are skipped, not failed.
+    required: false
+    default: "quorum: review"
+  max-diff-characters:
+    description: >-
+      Cap on the whole diff sent for review, on top of the 20,000-character
+      per-file limit. A dependency bump can touch four hundred files that each
+      pass the per-file limit comfortably. Files that do not fit are named in
+      the summary and the run is marked degraded — they are not quietly
+      reviewed as if they had been.
+    required: false
+    default: "400000"
+  max-tokens:
+    description: >-
+      Ceiling on tokens one review may spend, across both models. 0 (the
+      default) is no ceiling.
+
+      In tokens rather than money, for the same reason the summary reports
+      tokens: prices differ by model, platform and contract, so a currency
+      figure computed here would be a guess wearing the costume of a fact.
+
+      It binds where cost scales with *findings* rather than with the diff —
+      verification, which is one call each. A scan is a single call sized by
+      the diff, so max-diff-characters is what bounds that. A review that
+      reaches the ceiling stops verifying and says so; findings are demoted to
+      advisory, never discarded.
+    required: false
+    default: "0"
+  fail-on:
+    description: >-
+      Exit non-zero when a finding at or above this severity is posted, so the
+      action can be a required check: critical, high, medium, or low. Default
+      'never' always exits 0. Advisory and refuted findings never gate — the
+      reviewer declined to stand behind them.
+    required: false
+    default: never
+  fail-on-degraded:
+    description: >-
+      Also fail when the review could not run properly — a model down, files
+      over the diff budget. Off by default, and that default is a judgement
+      call: a required check that passes because the reviewer was broken is
+      worse than no check, but blocking every merge in the organisation because
+      one Vertex region is having a bad afternoon is its own outage.
+    required: false
+    default: "false"
+  sarif-file:
+    description: >-
+      Write the findings here as SARIF, for
+      github/codeql-action/upload-sarif. They then appear in the Security tab,
+      deduplicated across runs and tracked open-to-fixed, which is where an
+      organisation's triage already looks — a pull request comment is not a
+      queue and nothing counts it.
+
+      Only findings the reviewer stands behind are written. Advisory and
+      refuted ones stay in the summary comment: the Security tab is a queue
+      someone is expected to empty, and a queue full of maybes is not emptied.
+
+      Empty (the default) writes nothing.
+    required: false
+    default: ""
   dry-run:
     description: Print the summary instead of posting it.
     required: false
     default: "false"
+
+outputs:
+  findings:
+    description: Findings posted as real — confirmed plus, if verification is off, unchecked.
+    value: ${{ steps.review.outputs.findings }}
+  critical:
+    description: How many of them are critical.
+    value: ${{ steps.review.outputs.critical }}
+  high:
+    description: How many are high.
+    value: ${{ steps.review.outputs.high }}
+  medium:
+    description: How many are medium.
+    value: ${{ steps.review.outputs.medium }}
+  low:
+    description: How many are low.
+    value: ${{ steps.review.outputs.low }}
+  advisory:
+    description: Findings the second opinion could not settle either way.
+    value: ${{ steps.review.outputs.advisory }}
+  refuted:
+    description: Findings the second opinion rejected.
+    value: ${{ steps.review.outputs.refuted }}
+  resolved:
+    description: Previously open findings this run no longer reports.
+    value: ${{ steps.review.outputs.resolved }}
+  degraded:
+    description: >-
+      'true' when the review saw less than it was configured to see. Branch on
+      this before treating a clean result as a clean result.
+    value: ${{ steps.review.outputs.degraded }}
+  repo-access:
+    description: Whether the models could read past the diff, and why not if they could not.
+    value: ${{ steps.review.outputs['repo-access'] }}
 
 runs:
   using: composite
@@ -132,6 +264,7 @@ runs:
       run: python -m pip install --quiet "${{ github.action_path }}"
 
     - name: Review
+      id: review
       shell: bash
       working-directory: ${{ github.action_path }}
       env:
@@ -149,7 +282,15 @@ runs:
         QUORUM_REPO_ACCESS: ${{ inputs.repo-access }}
         QUORUM_VERIFY_TOOL_CALLS: ${{ inputs.verify-tool-calls }}
         QUORUM_INLINE_SEVERITY: ${{ inputs.inline-severity }}
+        QUORUM_MAX_INLINE_COMMENTS: ${{ inputs.max-inline-comments }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
+        QUORUM_WORKSPACE: ${{ inputs.workspace-path }}
+        QUORUM_FORK_LABEL: ${{ inputs.fork-label }}
+        QUORUM_MAX_DIFF_CHARS: ${{ inputs.max-diff-characters }}
+        QUORUM_MAX_TOKENS: ${{ inputs.max-tokens }}
+        QUORUM_FAIL_ON: ${{ inputs.fail-on }}
+        QUORUM_FAIL_ON_DEGRADED: ${{ inputs.fail-on-degraded }}
+        QUORUM_SARIF_FILE: ${{ inputs.sarif-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         QUORUM_PR_NUMBER: ${{ inputs.pr-number }}
       run: |

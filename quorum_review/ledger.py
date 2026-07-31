@@ -47,6 +47,14 @@ _MARKER = re.compile(
 COMMENT_CHAR_LIMIT = 65_536
 COMPRESS_ABOVE = 4_096
 
+#: Consecutive runs that must fail to re-raise a finding before it is called
+#: fixed. One is not enough: on a pull request whose code had not changed,
+#: two findings dropped out of one run and returned in the next. Two is the
+#: smallest number that distinguishes "the models disagreed with themselves"
+#: from "the code changed", and it costs at most one extra review of latency
+#: before a genuine fix is acknowledged.
+MISSES_BEFORE_FIXED = 2
+
 def _report_of(finding: Finding) -> Report:
     return Report(
         finding.file_path, finding.line, finding.code_snippet, finding.title
@@ -65,9 +73,9 @@ def compute_finding_id(file_path: str, code_snippet: str) -> str:
     bug identically twice. ``Ledger.find_match`` falls back to positional
     matching for that reason — see ``matching.same_defect``.
 
-    Known limitation: a renamed file yields a different ID and does not match
-    positionally either, so the finding is treated as new. Documented in the
-    README.
+    A rename changes the ID, and defeats positional matching too. That is
+    handled before matching rather than here — see ``Ledger.follow_renames``,
+    which reads the moves out of the diff and takes the entries with them.
     """
     digest = hashlib.sha256()
     digest.update(file_path.encode("utf-8"))
@@ -97,6 +105,9 @@ class LedgerEntry:
     review_comment_id: int | None = None
     review_thread_id: str | None = None
     status: str = "open"  # open | fixed | wontfix
+    #: Consecutive runs that examined this file and did not re-raise the
+    #: finding. Reset the moment it is seen again. See ``Ledger.missed``.
+    misses: int = 0
     first_seen_sha: str = ""
     resolved_sha: str | None = None
     wontfix_reason: str | None = None
@@ -136,8 +147,6 @@ class Ledger:
 
     pr_number: int
     last_reviewed_sha: str = ""
-    interaction_id: str = ""
-    environment_id: str = ""
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -186,6 +195,35 @@ class Ledger:
             for finding in findings
         )
 
+    def follow_renames(self, moves: dict[str, str]) -> list[tuple[str, str]]:
+        """Move tracked findings to where their file went. Returns what moved.
+
+        A rename is the one change that breaks content-addressed identity: the
+        snippet is unchanged, but the path is half of the hash and all of the
+        positional match. Without this a refactor produces a page of
+        resolutions and a page of identical fresh findings, which is the worst
+        possible output for a change that altered no behaviour.
+
+        The ID is recomputed from the new path so that suppression keeps
+        working on the next run, and the entry is re-keyed to match. A collision
+        with something already tracked at the destination means the same defect
+        arrived by two routes; the existing entry wins, since it is the one the
+        posted comment points at.
+        """
+        moved: list[tuple[str, str]] = []
+        for entry in list(self.entries.values()):
+            destination = moves.get(entry.file_path)
+            if destination is None:
+                continue
+
+            old_id = entry.finding_id
+            entry.file_path = destination
+            entry.finding_id = compute_finding_id(destination, entry.snippet)
+            self.entries.pop(old_id, None)
+            self.entries.setdefault(entry.finding_id, entry)
+            moved.append((old_id, entry.finding_id))
+        return moved
+
     def record(self, entry: LedgerEntry) -> None:
         """Store an entry, folding it into an existing one for the same defect.
 
@@ -227,6 +265,35 @@ class Ledger:
             entry.status = "fixed"
             entry.resolved_sha = head_sha
 
+    def missed(self, finding_id: str, head_sha: str) -> bool:
+        """Record that a run examined this file and did not re-raise the finding.
+
+        Returns True once it has happened enough times to call the defect
+        fixed. One miss is not enough, and this is not a hypothetical: on a
+        pull request whose code had not changed at all, two findings dropped
+        out of one run and came back in the next. Models are not perfectly
+        repeatable, and a single scan disagreeing with the previous one is
+        ordinary.
+
+        Closing on the first miss was tolerable while the consequence was a
+        line in a summary comment. It stopped being tolerable once the ledger
+        started driving code scanning, where a finding that closes and reopens
+        every other run is an alert that flaps — and a flapping alert is worse
+        than a stale one, because people learn to ignore the whole feed rather
+        than one entry.
+        """
+        entry = self.entries.get(finding_id)
+        if entry is None or entry.status != "open":
+            return False
+
+        entry.misses += 1
+        if entry.misses < MISSES_BEFORE_FIXED:
+            return False
+
+        entry.status = "fixed"
+        entry.resolved_sha = head_sha
+        return True
+
     # -- serialisation -----------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
@@ -234,8 +301,6 @@ class Ledger:
             "schema_version": self.schema_version,
             "pr_number": self.pr_number,
             "last_reviewed_sha": self.last_reviewed_sha,
-            "interaction_id": self.interaction_id,
-            "environment_id": self.environment_id,
             "findings": [entry.to_dict() for entry in self.entries.values()],
         }
 
@@ -244,8 +309,6 @@ class Ledger:
         ledger = cls(
             pr_number=int(raw.get("pr_number", 0)),
             last_reviewed_sha=str(raw.get("last_reviewed_sha", "")),
-            interaction_id=str(raw.get("interaction_id", "")),
-            environment_id=str(raw.get("environment_id", "")),
             schema_version=int(raw.get("schema_version", SCHEMA_VERSION)),
         )
         for item in raw.get("findings", []) or []:

@@ -62,6 +62,11 @@ class Finding:
     verifier_reason: str = ""
     verifier_model: str = ""
 
+    #: Kinds of credential removed from this finding's text before posting, if
+    #: any. Named in the comment so a reader knows something was taken out — a
+    #: finding that quotes `[redacted]` with no explanation reads like a bug.
+    redacted: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -99,10 +104,24 @@ class PRContext:
     #: incremental diff were not looked at, and must not be read as resolved.
     incremental: bool = False
 
+    #: The exclusion patterns actually in force, resolved once when the diff
+    #: was selected. Carried here so the models' file tools apply the same set
+    #: rather than re-reading ``.quorumignore`` from the checkout.
+    #:
+    #: Re-reading it would undo the fork protection: the checkout *is* the
+    #: branch under review, so the head's copy would govern the tools even
+    #: when the base's copy governs the diff. Two reads of the same policy
+    #: file, resolved at two different refs, is a gap someone has to notice.
+    exclude_patterns: list[str] = field(default_factory=list)
+
 
 @dataclass
 class Skill:
-    """Review criteria — the verbatim contents of ``skills/<name>/SKILL.md``."""
+    """Review criteria, verbatim.
+
+    Either a built-in from ``quorum_review/skills/<name>/SKILL.md`` or a file
+    in the repository under review. Several can be concatenated.
+    """
 
     name: str
     content: str

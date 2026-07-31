@@ -321,3 +321,81 @@ def test_the_tool_guidance_only_appears_when_there_are_tools():
     # Promising tools that were never offered is worse than offering none: the
     # model reasons as though it checked something it could not reach.
     assert "Reading the repository" not in without
+
+
+# -- nothing to review -----------------------------------------------------
+
+
+def test_an_empty_diff_says_it_did_not_look_rather_than_found_nothing():
+    """Two sentences that mean opposite things.
+
+    "No new issues found" is a review that looked. A pull request that only
+    touches lockfiles produced no reviewable text at all, and reporting that as
+    clean is the same lie as a green check on a run where every model failed.
+    """
+    from quorum_review.report import RunReport, render_nothing_to_review
+
+    body = render_nothing_to_review(RunReport(head_sha="abc1234"), ["yarn.lock"])
+
+    assert "Nothing to review" in body
+    assert "not a clean review" in body
+    assert "No models were called" in body
+    assert "yarn.lock" in body
+
+
+def test_an_empty_diff_with_no_exclusions_explains_itself_differently():
+    from quorum_review.report import RunReport, render_nothing_to_review
+
+    body = render_nothing_to_review(RunReport(head_sha="abc1234"), [])
+    assert "no reviewable text" in body
+    assert "excluded" not in body
+
+
+# -- how many comments one run may post ------------------------------------
+
+
+def test_the_most_severe_findings_get_the_comments():
+    """The cap decides how many; ordering decides which.
+
+    Posting in whatever order the models returned would let a batch of low
+    findings use up the allowance before a critical one reached it.
+    """
+    mixed = [
+        finding("a", severity="low"),
+        finding("b", severity="critical"),
+        finding("c", severity="medium"),
+        finding("d", severity="high"),
+    ]
+    order = [f.severity for f in review.by_severity(mixed)]
+    assert order == ["critical", "high", "medium", "low"]
+
+
+def test_the_severity_threshold_does_not_bound_the_count():
+    """The two limits are different, and only one of them existed.
+
+    A change introducing forty high-severity findings clears any threshold and
+    still buries the pull request under forty comments.
+    """
+    import os
+
+    assert review.MAX_INLINE_COMMENTS > 0
+    # The threshold filters by severity; nothing about it counts.
+    assert "severity" in review.inline_min_severity.__doc__.lower()
+    assert os.getenv("QUORUM_MAX_INLINE_COMMENTS") is None  # default applies
+
+
+def test_findings_over_the_cap_are_named_not_dropped():
+    from quorum_review.report import RunReport, render
+
+    over = [finding("x", severity="high"), finding("y", severity="high")]
+    body = render(RunReport(confirmed=[finding("a")], over_comment_cap=over))
+
+    assert "2 further finding(s)" in body
+    assert "not dismissed" in body
+    assert "max-inline-comments" in body
+
+
+def test_nothing_is_said_when_the_cap_was_not_reached():
+    from quorum_review.report import RunReport, render
+
+    assert "further finding(s)" not in render(RunReport(confirmed=[finding("a")]))

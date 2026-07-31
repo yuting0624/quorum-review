@@ -131,22 +131,63 @@ disagreements — usually less than one scan plus a judgement on everything.
 
 ## 📊 Measured
 
-Ten seeded bugs and three decoys that look dangerous but are correct. Three runs
-per configuration. Full method and answer key:
-[`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
+A fixed pull request with ten seeded bugs, three decoys that look dangerous but
+are correct, and two bugs that **cannot be decided from the diff** — their
+correctness depends on a validator and a permission registry the pull request
+never touches. Three runs per configuration. Full method, answer key and raw
+findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
-| Scanning | Found (mean of 3) | Stability | False positives |
+**Which model scans decides what the review can find:**
+
+| Scanning | Found (mean of 3) | Stability |
+|---|---|---|
+| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** |
+| `claude-opus-5` alone | 10.0 / 10 | all 3/3 |
+| **both, independently** | **10.0 / 10** | **all 3/3** |
+
+**Reading past the diff decides whether it can be right about them:**
+
+| | Seeded bugs | Diff-undecidable bugs | Decoys flagged |
 |---|---|---|---|
-| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** | 0 |
-| `claude-opus-5` alone | 10.0 / 10 | all 3/3 | 0 |
-| **both, independently** | **10.0 / 10** | **all 3/3** | **0** |
+| diff only | 10 / 10 | **0 / 2**, every run | 0 |
+| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
 
-No configuration was fooled by any decoy in any run. Live from Actions: 13
-findings posted, **0% re-report rate** on an unchanged pull request.
+Both configurations also found real bugs nobody planted — and one of those,
+a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
+repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
+on an unchanged pull request.
 
-> **Read this narrowly.** One fixture, three runs, written by the same person who
-> wrote the reviewer. Enough to justify the dual-scan design; not enough to rank
-> the models.
+<details>
+<summary><b>It found two real security bugs in the commit that gave it repository access</b></summary>
+
+Neither was visible in the diff. Both required reading files the change did not
+touch, which is the capability being tested.
+
+**The fork guard admitted forks.** The workflow condition `head.repo.fork != true`
+reads a field that is `null` on `issue_comment` events — that payload has no
+`pull_request` object at all — and `null != true` is true. So `@quorum /review`
+on a fork's pull request satisfied a condition written to exclude forks. The
+reviewer had to read `.github/workflows/review.yml` against `review.py` to see
+it.
+
+**One policy file, read at two different refs.** `.quorumignore` is read at the
+base branch for an untrusted head, so a fork cannot exclude its own files from
+review — except that the file tools read it *again* from the checkout, which is
+the head. The base's copy governed the diff while the head's copy governed the
+tools. That needed `github_client.py` read against `workspace.py`.
+
+Both are fixed, with regression tests naming the mechanism. The relevant point
+is not that the tool is clever — it is that a diff-only reviewer had already
+looked at these same lines and said nothing, because neither bug is *in* a line.
+
+</details>
+
+> **Read this narrowly.** One fixture, written by the same person who wrote the
+> reviewer. Two rounds of results had to be thrown away when the models turned
+> out to be reading the answer key — [both contamination sources are documented
+> rather than quietly fixed](benchmark/seeded-bugs/README.md#two-contamination-sources-both-found-by-giving-the-models-access),
+> and one of them was found by the reviewer itself. Enough to justify the design;
+> not enough to rank the models.
 
 ## 🚀 Install
 
@@ -172,10 +213,13 @@ steps:
 enabled in Vertex AI Model Garden** — skip that and every Claude call returns 404
 while the Gemini half keeps working, which is a confusing way to find out.
 Full setup, including Workload Identity Federation: **[docs/setup-vertex.md](docs/setup-vertex.md)**.
+How to read the output, what it costs, and what to do when it breaks:
+**[docs/operations.md](docs/operations.md)**.
 
 Complete workflows: [`review-vertex.yml`](examples/review-vertex.yml) ·
 [`review-vertex-app.yml`](examples/review-vertex-app.yml) (GitHub App token) ·
-[`review-apikey.yml`](examples/review-apikey.yml) (no Google Cloud).
+[`review-apikey.yml`](examples/review-apikey.yml) (no Google Cloud) ·
+[`review-fork.yml`](examples/review-fork.yml) (fork pull requests).
 
 ## 💬 Talking to it
 
@@ -196,15 +240,22 @@ finding.
 | Input | Default | Notes |
 |---|---|---|
 | `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
-| `skill` | `security-review` | also ships `code-quality-review`; add your own under `skills/` |
+| `skill` | `security-review` | a built-in name, or a path to criteria in your own repository; several combine |
 | `primary-model` | a Gemini model | **confirm against your project** — `python -m quorum_review.review --list-models` |
 | `verifier-model` | `claude-opus-5` | both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
 | `repo-access` | `on` | read-only tools over the checkout, so a finding that turns on code outside the diff can be settled instead of guessed. Needs `actions/checkout` |
+| `fail-on` | `never` | `critical`/`high`/`medium`/`low` — exit non-zero so the action can be a required check |
+| `fail-on-degraded` | `false` | also fail when the reviewer could not run properly. See below |
+| `max-diff-characters` | `400000` | whole-diff budget; files that do not fit are named, never quietly skipped |
+| `max-tokens` | `0` (none) | ceiling on what one review may spend, across both models |
+| `fork-label` | `quorum: review` | label that authorises reviewing a pull request from a fork |
+| `sarif-file` | — | write findings as SARIF for code scanning |
 | `incremental` | `on` | re-reviews only what changed since the last review |
 | `exclude` | — | extra paths to skip, on top of the built-in defaults |
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
+| `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
 | `claude-vertex-region` | `global` | try `us-east5` if your entitlement is region-scoped |
@@ -218,6 +269,141 @@ finding.
 | **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | best recall, usually cheaper than the row above |
 
 The default is not the most expensive option — easy to assume, and wrong.
+
+`max-tokens` puts a ceiling on one review, which is the question a platform team
+asks before enabling something on two hundred repositories. In tokens rather
+than money, for the same reason the summary reports tokens: prices differ by
+model, platform and contract, so a currency figure computed here would be a
+guess wearing the costume of a fact.
+
+It binds where cost scales with *findings* rather than with the diff — a scan is
+one call sized by the diff, verification is one call each. A review that reaches
+the ceiling stops verifying and says so in the summary; findings are demoted to
+advisory, never dropped.
+
+### 🚦 Making it a required check
+
+`fail-on` turns the reviewer into something a branch protection rule can depend
+on. Findings the reviewer declined to stand behind — advisory, refuted — never
+gate; blocking on those would teach people the verdicts mean nothing.
+
+```yaml
+  - uses: yuting0624/quorum-review@v1
+    id: review
+    with:
+      google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      fail-on: critical
+
+  - if: steps.review.outputs.degraded == 'true'
+    run: echo "reviewed with less than full context — do not read a clean result as clean"
+```
+
+Outputs: `findings`, `critical`, `high`, `medium`, `low`, `advisory`, `refuted`,
+`resolved`, `degraded`, `repo-access`. The review also lands in the Actions job
+summary, so it is readable even when posting to the pull request fails.
+
+`fail-on-degraded` is separate, and off by default. Both defaults are judgement
+calls worth stating: a required check that passes because the reviewer was
+broken is worse than no check, but one that blocks every merge in the
+organisation because a Vertex region is having a bad afternoon is its own
+outage. Two policies, two switches.
+
+### 📋 Your criteria, not mine
+
+The built-in criteria are a starting point, not a standard. Point `skill` at a
+file in **your** repository and the review asks what your security review asks:
+
+```yaml
+    with:
+      skill: security-review, .github/quorum/backend.md
+```
+
+A bare name is a built-in; anything with a slash or ending in `.md` is read from
+the repository being reviewed. Up to four, concatenated. Criteria are
+instructions to the model, so for a pull request from a fork they come from the
+base branch — a branch does not get to choose the standard it is judged against.
+
+### 🔎 In the Security tab, not just the pull request
+
+A pull request comment is read once by whoever is looking at that pull request.
+It is not a queue, it has no owner, and nothing counts it. `sarif-file` writes
+the findings for `github/codeql-action/upload-sarif`, and they then appear in
+code scanning — deduplicated across runs by content, tracked open-to-fixed, and
+routed through the triage process you already have.
+
+```yaml
+    with:
+      sarif-file: quorum.sarif
+```
+```yaml
+  - if: always() && hashFiles('quorum.sarif') != ''
+    uses: github/codeql-action/upload-sarif@v3
+    with: { sarif_file: quorum.sarif, category: quorum-review }
+```
+
+Only findings the reviewer stands behind are uploaded. Advisory and refuted ones
+stay in the comment: the Security tab is a queue someone is expected to empty,
+and a queue full of maybes is not emptied.
+
+Two things that are easy to get wrong, both learnt by having the upload
+rejected:
+
+- The SARIF carries the **whole open state from the ledger**, not what this run
+  newly reported. Code scanning treats an upload as a replacement, so a
+  re-review that finds nothing new — the common case, by design — would
+  otherwise mark every earlier alert fixed.
+- The upload needs `security-events: write` **and** `actions: read`, and code
+  scanning has to be enabled on the repository at all: free on public ones, part
+  of GitHub Advanced Security on private ones. The example marks the step
+  `continue-on-error` for exactly that reason — a red check every run for a
+  feature you have not bought is how the whole workflow gets deleted.
+
+### 🏢 Rolling it out across an organisation
+
+Copying the workflow into fifty repositories means copying the trigger
+conditions too — and this project has already had to fix two security bugs in
+those conditions. Neither fix would have reached a repository that copied the
+file in January.
+
+So they live in one place. Fork this repository, then each repository needs:
+
+```yaml
+# .github/workflows/review.yml
+name: quorum-review
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+jobs:
+  review:
+    uses: your-org/quorum-review/.github/workflows/reusable.yml@v1
+    secrets: inherit
+    with:
+      fail-on: critical      # optional
+```
+
+`on:` has to be in the caller — GitHub resolves triggers from the calling
+workflow, so a reusable one cannot decide when it runs. Everything else,
+including `action-ref` for pinning to a commit SHA and `runs-on` for a
+self-hosted runner, is an input.
+
+`synchronize` is worth adding once you have `incremental: on`: a re-review reads
+the range since the last one and the ledger suppresses what was already
+reported, so the marginal cost of a push is about the size of that push.
+
+### 🍴 Pull requests from forks
+
+Supported, gated on a label, in a separate workflow:
+[`review-fork.yml`](examples/review-fork.yml). Read the comments at the top
+before copying it — `pull_request_target` is the trigger people get compromised
+by, and the reason this use is safe is that **nothing from the fork is ever
+executed**. Add a dependency-install step and that stops being true.
+
+Two conditions, both re-checked by the action rather than trusted to the
+workflow's `if:` — the label, and write access for whoever applied it.
 
 ## 🏷️ Post as your own GitHub App
 
@@ -306,8 +492,7 @@ Details, including the operational guidance: [docs/security.md](docs/security.md
 - **Diff-only context.** Findings that need to compare a change against code the
   diff does not touch — a constant documented in one file and changed in
   another — are out of reach.
-- **Forks are unsupported.** They get a read-only token and no secrets.
-- **A renamed file yields new findings.** Identity derives from the path.
+- **A file renamed *and* edited beyond recognition yields new findings.** Renames themselves are followed; git's own similarity detection decides what counts as one.
 - **Two instances of one pattern, described identically, collapse into one.**
 - **"No longer reported" does not mean fixed** — it can also mean the scan did
   not raise it this time. The summary says only what is known.
@@ -333,8 +518,16 @@ quorum_review/
   dismissal.py               retiring a false positive
   learning.py                dismissals → proposed criteria change
   github_client.py           REST + the GraphQL needed to resolve threads
-skills/                      review criteria, pluggable
+  workspace.py               the read-only tools the models use on the checkout
+  criteria.py                built-in and repository-supplied review criteria
+  redaction.py               keeping a finding from republishing the secret
+  forks.py                   who may have their fork reviewed, and on whose say-so
+  actions.py                 exit code, outputs, job summary
+  sarif.py                   findings for the Security tab
+  budget.py                  a ceiling on what one review may spend
+  skills/                    built-in criteria, shipped inside the package
 benchmark/                   seeded-bug fixture + repeated-measurement harness
+  runs/                      raw findings behind the recorded numbers
 scripts/create_app.py        GitHub App manifest flow
 ```
 

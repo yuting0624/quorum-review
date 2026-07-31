@@ -10,9 +10,11 @@ different strengths of evidence, and the comment says which is which.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from . import redaction
 from .schema import SEVERITIES, SEVERITY_RANK, Finding, ModelUsage
 
 SEVERITY_ICON = {
@@ -36,6 +38,10 @@ class RunReport:
 
     scanned: int = 0
     suppressed: int = 0
+    #: Titles of the findings suppressed as already reported. Matching is
+    #: positional and by title overlap rather than exact, so it can be wrong;
+    #: a count alone leaves a reader no way to notice that it was.
+    suppressed_titles: list[str] = field(default_factory=list)
     agreed: list[Finding] = field(default_factory=list)
     confirmed: list[Finding] = field(default_factory=list)
     unverified: list[Finding] = field(default_factory=list)
@@ -44,8 +50,20 @@ class RunReport:
     resolved: list[str] = field(default_factory=list)
     unanchored: list[Finding] = field(default_factory=list)
     summary_only: list[Finding] = field(default_factory=list)
+    #: Findings that cleared the severity threshold but arrived after the run
+    #: had already posted its allowance of inline comments. Listed in the
+    #: summary rather than dropped.
+    over_comment_cap: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
+    #: Files the whole-diff budget left out entirely. Separate from
+    #: `trimmed_files` because they mean different things to a reader: a
+    #: trimmed file was partly reviewed, a dropped one was never looked at.
+    dropped_files: list[str] = field(default_factory=list)
+    #: ``{old path: new path}`` for files this change moves. Reported because a
+    #: reader seeing findings appear at a path they did not edit deserves to
+    #: know the reviewer followed a rename rather than invented them.
+    renamed_files: dict[str, str] = field(default_factory=dict)
     usage: dict[str, ModelUsage] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     incremental: bool = False
@@ -58,6 +76,8 @@ class RunReport:
     #: access to — "no guard anywhere" means one thing from a reviewer that
     #: searched the repository and another from one that saw eleven files.
     repo_access: str = ""
+    #: Spend against the configured ceiling, when there is one.
+    budget_note: str = ""
     tool_calls: int = 0
     files_read: list[str] = field(default_factory=list)
 
@@ -71,19 +91,131 @@ def evidence(finding: Finding) -> str:
     """
     if finding.agreed:
         return "both models, independently"
-    reporter = finding.reported_by[0] if finding.reported_by else "?"
+    reporter = cell(finding.reported_by[0]) if finding.reported_by else "?"
     if finding.verifier_model:
-        return f"`{reporter}`, agreed by `{finding.verifier_model}`"
+        return f"`{reporter}`, agreed by `{cell(finding.verifier_model)}`"
     if finding.reported_by:
         return f"`{reporter}`, unchecked"
     return "unknown"
 
 
+#: A title longer than this is not a title. The schema asks for 80 characters
+#: and models mostly comply, but a run that produces a paragraph would make one
+#: row unreadable and push the rest of the table off the screen.
+MAX_CELL_CHARS = 160
+
+#: How many suppressed titles the summary lists before saying "and N more".
+#: The visible body shares GitHub's 65,536-character comment limit with the
+#: ledger marker, and overflowing it makes `fit_to_comment` drop the ledger's
+#: history to make room — trading state that matters for a list that does not.
+MAX_SUPPRESSED_LISTED = 20
+
+#: A truncation can land inside `&amp;`, leaving `&am` to render as literal
+#: text. Matches only an unterminated entity at the very end.
+_PARTIAL_ENTITY = re.compile(r"&[a-z]{0,4}$")
+
+
+def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """One line, bounded, and inert as HTML.
+
+    Three things, because a finding title is model output derived from a diff
+    an attacker wrote, and it lands in the middle of Markdown:
+
+    - **One line.** A newline inside ``**bold**`` ends the emphasis, and inside
+      a list starts a new item mid-sentence.
+    - **Bounded.** The schema asks for 80 characters; a run that returned a
+      paragraph would make the summary unreadable.
+    - **HTML-escaped.** Several sections are wrapped in ``<details>``, and
+      GitHub renders raw HTML in comments. A title containing ``</details>``
+      closes the block early and spills the rest of the summary out of it.
+      Escaping is invisible to the reader: ``&lt;`` renders as ``<``.
+
+    The ampersand goes first or ``<`` would become ``&amp;lt;``.
+
+    Escaping happens *before* truncation, and that order is a correction: the
+    other way round, a title of 160 ampersands passed the length check and then
+    grew to 800 characters. Twenty-five of those is a fifth of GitHub's comment
+    budget spent on nothing. The cost is that a cut can land inside an escape
+    sequence, which ``_bound`` repairs.
+    """
+    return _bound(
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;"),
+        limit,
+    )
+
+
+def _bound(escaped: str, limit: int) -> str:
+    """Cut to ``limit`` without leaving half an escape sequence behind.
+
+    Two ways a naive cut goes wrong, and both were live at some point:
+
+    - Inside ``&amp;``, leaving ``&am`` to render as literal text.
+    - After an odd number of backslashes, so the next character — in a table,
+      the closing pipe — gets escaped and the column disappears.
+
+    The repairs expose each other, which is why this loops rather than
+    applying them in some order. Stripping whitespace can uncover a backslash
+    that was even a moment ago; dropping that backslash can uncover whitespace
+    again. Two attempts to sequence these by hand were each wrong in a
+    different direction, so the rule is now "apply all of them until nothing
+    changes" — which terminates, because every step shortens the string.
+    """
+    if len(escaped) <= limit:
+        return escaped
+
+    cut = escaped[: limit - 1]
+    while True:
+        repaired = _PARTIAL_ENTITY.sub("", cut.rstrip()).rstrip()
+        if (len(repaired) - len(repaired.rstrip("\\"))) % 2:
+            repaired = repaired[:-1]
+        if repaired == cut:
+            return cut + "…"
+        cut = repaired
+
+
+def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    r"""Make a value safe to put between two pipes.
+
+    A security reviewer's titles contain pipes constantly — `cmd | grep`,
+    `a || b`, regex alternation. An unescaped one adds a column, so GitHub
+    shifts every later cell left and the Evidence column, which is the whole
+    argument this table exists to make, shows a fragment of the title instead.
+    A newline is worse: it ends the table and dumps the rest as prose.
+
+    Backslashes go first, and the order is the bug this had on its first
+    attempt: escaping only the pipe turns ``a\|b`` into ``a\\|b``, which
+    Markdown reads as a literal backslash followed by an unescaped pipe — the
+    column break the escaping was for. And ``\|`` is not exotic; it is how you
+    write an escaped pipe in a regular expression, which is a thing findings
+    quote.
+
+    Both breakages were live. Neither shows up in a test that only checks the
+    text appears somewhere in the row.
+
+    The bound is applied after every escape, not by delegating to ``flatten``:
+    doing it there and then escaping here doubled a cell of backslashes or
+    pipes right back over the limit. Escaping is not length-preserving, so the
+    cut has to come last.
+    """
+    escaped = (
+        " ".join((text or "").split())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\\", "\\\\")
+        .replace("|", r"\|")
+    )
+    return _bound(escaped, limit)
+
+
 def _row(finding: Finding) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     return (
-        f"| {icon} {finding.severity} | {finding.category} | "
-        f"`{finding.file_path}:{finding.line}` | {finding.title} | "
+        f"| {icon} {cell(finding.severity)} | {cell(finding.category)} | "
+        f"`{cell(finding.file_path)}:{finding.line}` | {cell(finding.title)} | "
         f"{evidence(finding)} |"
     )
 
@@ -244,6 +376,28 @@ def render(report: RunReport) -> str:
             f"{report.suppressed} finding(s) were already reported earlier in "
             f"this pull request and are not repeated here.",
         ]
+        if report.suppressed_titles:
+            # Bounded, because the summary shares GitHub's 65,536-character
+            # limit with the ledger marker. Overflowing it makes
+            # `fit_to_comment` drop the ledger's history to make room for a
+            # list nobody reads, which trades state for noise.
+            shown = report.suppressed_titles[:MAX_SUPPRESSED_LISTED]
+            remainder = len(report.suppressed_titles) - len(shown)
+            lines += [
+                "",
+                "<details>",
+                "<summary>Which ones</summary>",
+                "",
+                *(f"- {flatten(title)}" for title in shown),
+                *([f"- …and {remainder} more"] if remainder else []),
+                "",
+                "Matched to an existing finding by position and wording, not by "
+                "an exact identifier — models do not quote the same defect the "
+                "same way twice. Listed so a wrong match is visible rather than "
+                "silent.",
+                "",
+                "</details>",
+            ]
 
     if report.confirmed:
         lines += [
@@ -286,8 +440,9 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.refuted:
             lines.append(
-                f"- **{finding.title}** (`{finding.file_path}:{finding.line}`) — "
-                f"{finding.verifier_reason or 'no reason given'}"
+                f"- **{flatten(finding.title)}** "
+                f"(`{finding.file_path}:{finding.line}`) — "
+                f"{flatten(finding.verifier_reason, 400) or 'no reason given'}"
             )
         lines += ["", "</details>"]
 
@@ -301,9 +456,12 @@ def render(report: RunReport) -> str:
             "",
             "### No longer reported",
             "",
-            "Previously flagged and not raised by this review — either fixed, or "
-            "not re-detected. These are no longer suppressed, so they will "
-            "reappear if a later review finds them again.",
+            "Not raised by the last two reviews of these files. Two, rather "
+            "than one, because models are not perfectly repeatable and a "
+            "single scan disagreeing with the previous one is ordinary — "
+            "closing on the first miss made findings flap. Still not a "
+            "guarantee of a fix: they will reappear if a later review finds "
+            "them again.",
             "",
         ]
         lines += [f"- {title}" for title in report.resolved]
@@ -328,8 +486,8 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.unanchored:
             lines.append(
-                f"- `{finding.file_path}:{finding.line}` — **{finding.title}**: "
-                f"{finding.body}"
+                f"- `{finding.file_path}:{finding.line}` — "
+                f"**{flatten(finding.title)}**: {finding.body}"
             )
 
     if report.summary_only:
@@ -340,11 +498,47 @@ def render(report: RunReport) -> str:
             f"threshold.</sub>",
         ]
 
+    if report.over_comment_cap:
+        lines += [
+            "",
+            f"> ℹ️ **{len(report.over_comment_cap)} further finding(s) are in "
+            f"the table above but were not commented inline.** This run had "
+            f"already used its allowance of inline comments; a pull request "
+            f"buried under them is one nobody reads. They are not dismissed, "
+            f"and the most severe findings got the comments. Raise "
+            f"`max-inline-comments`, or split the change.",
+        ]
+
     if report.trimmed_files:
         lines += [
             "",
             "> Too large to send whole, so only partly reviewed: "
             + ", ".join(f"`{path}`" for path in report.trimmed_files),
+        ]
+
+    if report.dropped_files:
+        shown = ", ".join(f"`{p}`" for p in report.dropped_files[:10])
+        if len(report.dropped_files) > 10:
+            shown += f", and {len(report.dropped_files) - 10} more"
+        lines += [
+            "",
+            f"> ⚠️ **{len(report.dropped_files)} file(s) were not reviewed.** "
+            f"The diff exceeded the size budget, and these did not fit: {shown}. "
+            f"Nothing below is a statement about them. Split the pull request, "
+            f"or raise `max-diff-characters`.",
+        ]
+
+    if report.renamed_files:
+        moves = ", ".join(
+            f"`{old}` → `{new}`" for old, new in list(report.renamed_files.items())[:5]
+        )
+        if len(report.renamed_files) > 5:
+            moves += f", and {len(report.renamed_files) - 5} more"
+        lines += [
+            "",
+            f"<sub>Followed {len(report.renamed_files)} rename(s) — {moves} — so "
+            f"findings already tracked in those files were not closed and "
+            f"re-opened.</sub>",
         ]
 
     if report.skipped_files:
@@ -357,7 +551,15 @@ def render(report: RunReport) -> str:
         or report.resolved
         or report.suppressed
     ):
-        lines += ["", "No new issues found in this diff."]
+        # Deliberately not "looks good": the reviewer read a bounded slice of
+        # one change, and a clean result on a diff that was cut short is not
+        # the same statement as a clean result on all of it.
+        lines += [
+            "",
+            "No new issues found in the diff that was reviewed."
+            if report.dropped_files
+            else "No new issues found in this diff.",
+        ]
 
     lines += ["", "---", "", *_footer(report)]
     return "\n".join(lines)
@@ -372,6 +574,19 @@ def _skipped_note(paths: list[str]) -> str:
         f"({len(paths)} file(s)): {shown}{more}. Adjust with the `exclude` "
         f"input or a `.quorumignore` file.</sub>"
     )
+
+
+def _version() -> str:
+    """Which reviewer produced this.
+
+    Findings outlive the run that made them — in a comment, in the Security tab,
+    in someone's quarterly report — and "why did it say that in March" is not
+    answerable without knowing what was running in March. The models are already
+    named; this is the other half.
+    """
+    from . import __version__
+
+    return __version__
 
 
 def _footer(report: RunReport) -> list[str]:
@@ -396,9 +611,14 @@ def _footer(report: RunReport) -> list[str]:
         lines += ["<details>", "<summary>Usage</summary>", ""]
         lines += [*rows, "", "</details>", ""]
 
+    if report.budget_note:
+        lines.append(f"<sub>Token ceiling: {report.budget_note}.</sub>")
+        lines.append("")
+
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
     lines.append(
-        f"<sub>Reviewed `{report.head_sha[:7]}` · models "
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
+        f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
         + f"{elapsed} · quorum-review — a reference implementation, not a "
         "supported product.</sub>"
@@ -415,8 +635,12 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
     corrupt the file.
     """
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
-    lines = [f"{icon} **{finding.title}**", "", finding.body]
+    lines = [f"{icon} **{flatten(finding.title)}**", "", finding.body]
 
+    # Redaction happened at the source, in review.py, not here. There are five
+    # places a finding's text reaches a comment — including the ledger, which
+    # lives inside the summary — and doing it per site works until someone adds
+    # the sixth.
     if with_suggestion and finding.fix_replacement:
         lines += ["", "```suggestion", finding.fix_replacement.rstrip("\n"), "```"]
 
@@ -445,8 +669,48 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
             "</details>",
         ]
 
+    if finding.redacted:
+        lines += ["", redaction.note(finding.redacted)]
+
     lines += [
         "",
         f"<sub>`{finding.category}` · id `{finding.finding_id}`</sub>",
+    ]
+    return "\n".join(lines)
+
+
+def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
+    """The summary for a pull request with no reviewable diff.
+
+    Reachable more often than it sounds — a change that only touches lockfiles
+    or generated code, or an incremental re-review whose new commits are all
+    excluded. It gets its own rendering rather than the ordinary "no new issues
+    found", because those two sentences mean opposite things: one is a review
+    that looked and found nothing, the other is a review that did not look.
+    """
+    lines = ["## Quorum review", ""]
+
+    if skipped:
+        lines.append(
+            f"Nothing to review: all {len(skipped)} changed file(s) are "
+            f"excluded as generated, vendored, or configured out."
+        )
+        lines += ["", _skipped_note(skipped)]
+    else:
+        lines.append(
+            "Nothing to review: this change contains no reviewable text. "
+            "That is usually a binary-only or empty diff."
+        )
+
+    lines += [
+        "",
+        "No models were called. **This is not a clean review** — nothing was "
+        "examined.",
+        "",
+        "---",
+        "",
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
+        f"`{_version()}` · quorum-review — a reference implementation, not a "
+        f"supported product.</sub>",
     ]
     return "\n".join(lines)

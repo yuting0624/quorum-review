@@ -34,7 +34,7 @@ system prompt — which comes first — states that content inside those tags is
 data to review, never instructions. The model is additionally told to report
 embedded instructions as a `security` finding rather than act on them.
 
-See `BASE_INSTRUCTIONS` in [`quorum_review/schema.py`](../src/schema.py).
+See `BASE_INSTRUCTIONS` in [`quorum_review/schema.py`](../quorum_review/schema.py).
 
 This is a mitigation, not a guarantee. Prompt injection is not a solved problem
 and instruction-hierarchy prompting can be defeated. The controls below assume
@@ -109,6 +109,34 @@ There is no long-lived secret in the repository at all — that property comes
 from Workload Identity Federation, not from anything this code does. Nothing to
 leak from a workflow log, nothing to find in the git history later.
 
+### The reviewer does not republish the secret it found
+
+A finding about a hardcoded credential quotes the credential — that is what
+makes it legible. It also means the reviewer takes a value out of a diff and
+puts it in a pull request comment, which is more visible, harder to remove, and
+on a public repository indexed. The comment also outlives its source: force-push
+the branch and the diff is gone while the comment stays.
+
+So credential shapes are removed from every finding before it renders, records,
+or posts — [`redaction.py`](../quorum_review/redaction.py). Three details:
+
+- **Once, at the source.** Five places put a finding's text in front of a
+  reader, and one of them is the ledger, which lives inside the summary
+  comment. Redacting per rendering site works until someone adds the sixth.
+- **A suggestion is dropped, not redacted.** It is applied verbatim by a click,
+  so a redacted one would write the placeholder into the file.
+- **The comment says what was removed**, by kind, and tells the author to
+  rotate it. A finding that quotes `[redacted]` with no explanation reads like
+  a bug in the reviewer.
+
+The pattern list is short by design. Every entry matches a token format issued
+by a service, where the full value is worth nothing to a reader. Anything that
+would require guessing whether a string is sensitive is left alone: a reviewer
+that mangles ordinary code gets switched off, and then it protects nothing.
+
+This is not a secret scanner. It reduces what the reviewer itself spreads; it
+does not tell you whether your repository has secrets in it.
+
 ### The reviewer cannot write to the repository
 
 The workflow requests `contents: read`. There is no code path that pushes a
@@ -128,12 +156,36 @@ quota until someone notices.
 
 Do not remove that condition.
 
-### Forks are unsupported
+### Forks are reviewed only after a maintainer authorises it
 
-`GITHUB_TOKEN` is read-only on pull requests from forks, so posting fails.
-`pull_request_target` would fix that by running with write access in the context
-of the base repository — while reviewing untrusted code. That is not a trade
-worth making, so forks stay unsupported.
+`GITHUB_TOKEN` is read-only on pull requests from forks, so an ordinary
+`pull_request` run cannot post and cannot reach Vertex — it fails noisily on
+every outside contribution. `pull_request_target` fixes that by running in the
+base repository's context, with write access and secrets, while the code under
+review belongs to someone else.
+
+Every published attack on that trigger has the same shape: **the workflow checks
+out the fork's code and then executes something from it** — `npm ci`, a build
+step, a test run, a linter that loads a config file from the tree. This action
+never does. It is installed from its own published copy, and the fork's code is
+read as text by tools that cannot write or execute.
+
+Two conditions authorise a run, and both are enforced in
+[`forks.py`](../quorum_review/forks.py) rather than only in the workflow's `if:`
+— a YAML condition is one careless edit away from being wrong, and nothing tests
+it:
+
+1. The pull request carries the review label.
+2. Whoever applied it has write access, checked against the API. Labelling is
+   available to triage collaborators, so the label alone is not authorisation,
+   for the same reason `author_association` is not.
+
+A fork's `.quorumignore` is also ignored in favour of the base branch's. It can
+only remove files from review, which makes it one commit from an empty review
+that still reports success.
+
+If none of that is acceptable in your environment, do not deploy
+`examples/review-fork.yml`. Same-repository pull requests do not need it.
 
 ### Bounded input and cost
 

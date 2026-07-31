@@ -57,6 +57,68 @@ C1 is the one that matters most. "Is this input validated upstream?" is the
 commonest cause of false positives in code review, and it is exactly the
 question a diff cannot answer.
 
+### What they measured
+
+| Configuration | Seeded, scanned | Seeded, survived | C2 + C3 | C1 flagged (false positive) |
+|---|---|---|---|---|
+| diff only | 10.0 / 10 | 10.0 / 10 | **0 / 2, in every run** | never |
+| repository readable | 10.0 / 10 | 9.7 / 10 | **2 / 2, in every run** | never |
+
+Three runs each, both scanning models, second opinion on, same pull request,
+same commit. Raw findings in [`../runs/`](../runs).
+
+**The gap is the whole result.** Both context-dependent bugs went from never
+found to always found. Neither is subtle once you can see the other file —
+`"document.report"` is missing from `REQUIRED_SCOPES`, and `audit.record` takes
+`(action, user_id, doc_id)` while the call passes `(user, action, doc_id)`. They
+are simply undecidable from the diff, and the diff-only reviewer was correct to
+stay quiet about them. It just could not do the job.
+
+**One more real bug appeared, and only with access.** `export_document` performs
+no `document.export` scope check. Reported in 2 of 3 runs with the repository
+readable, and in **0 of 3** without it — the same shape of finding as C2, and
+one nobody had planted.
+
+**The false-positive half of the hypothesis was not tested.** C1 was designed to
+catch a reviewer guessing that an unvalidated-looking `os.path.join` is
+traversal. Neither configuration ever flagged it, so the decoy discriminated
+nothing. The likely reason is that the call reads
+`validators.safe_export_name(filename)`, and a name that says `safe_` is already
+most of the answer. A stronger version of this case would give the validator a
+neutral name — `normalise`, say — so that reading it is the only way to know.
+Until then, "no false positives" here is a weaker claim than it looks.
+
+**Verification became slightly more willing to subtract.** Survived dropped to
+9.7 because B8 was refuted in one run, which is the finding the fixture is
+[known to be ambiguous about](#caveat-on-b8). Three tool calls into the
+repository is three more chances to build an argument, and the argument against
+B8 is a good one. This is the stage doing its job in a case where its job is
+debatable.
+
+### Two contamination sources, both found by giving the models access
+
+Neither was visible while the reviewer could only read the diff, and both
+invalidated every measurement taken before they were fixed.
+
+1. **The answer key was readable.** This file lists every bug by file, and
+   `tests/test_fixture_integrity.py` asserts each one. Both live on `main`
+   specifically so they stay out of PR #1's diff — sufficient right up until
+   the models could open them, which they did, in several runs. Now excluded
+   via [`.quorumignore`](../../.quorumignore), with a test.
+
+2. **The pull request body announced the answer.** It said the branch contained
+   "ten deliberately seeded defects and three constructs that look dangerous but
+   are correct", and linked to this file. Every measurement in this document's
+   history was therefore taken by a reviewer that had been told how many bugs to
+   find and how many decoys to avoid. The body now says only "do not merge".
+
+   The model found this one itself, in run 1 of the first clean measurement:
+   *"PR description contains reviewer-directed instructions (prompt injection)."*
+   Which is exactly right, and not a false positive.
+
+The numbers above are from after both fixes. Earlier figures in this file were
+taken under (2) and are marked where they appear.
+
 ### Caveat on B8
 
 B8 is weaker than intended and the fixture, not the reviewer, is at fault. The
@@ -99,6 +161,13 @@ false positive.**
 Measured against PR #1, project `data-agent-bq`, Vertex `global`, skill
 `security-review`, models `gemini-3.6-flash` and `claude-opus-5`. Three runs per
 configuration, via `python -m benchmark.measure`.
+
+> ⚠️ **Everything in this section predates the contamination fixes described
+> above.** These runs were made while the pull request body told the reviewer
+> there were ten bugs and three decoys. The seeded-bug counts and the
+> false-positive count are both flattered by that, and the comparisons between
+> *configurations* are the part still worth reading — every row was contaminated
+> identically. Re-running the single-scanner rows cleanly is on the list below.
 
 | Scanning | Second opinion | Seeded found, mean of 3 | Per-bug stability | Unseeded real | False positives |
 |---|---|---|---|---|---|
@@ -229,10 +298,13 @@ ledger. They only appeared once the thing actually posted twice.
 
 ## Still to measure
 
-- **The context-dependent cases (C1–C3).** Added after the measurements below,
-  so those numbers do not include them. Measuring the gap they expose is what
-  justifies — or does not justify — letting the models read files outside the
-  diff.
+- **The single-scanner rows, cleanly.** They were taken before the pull request
+  body stopped announcing the answer. The dual-scan-versus-single comparison
+  probably survives — the contamination applied equally to both — but the
+  absolute numbers do not.
+- **A decoy that actually discriminates.** C1 was never flagged by either
+  configuration, so it measured nothing. Rename `safe_export_name` to something
+  neutral and the case starts asking the question it was written to ask.
 - Re-review after genuinely fixing some seeded bugs. The 0% above proves nothing
   is re-posted on an unchanged PR; it does not prove a real fix is recognised as
   one. Note also that one finding appeared under "no longer reported" purely

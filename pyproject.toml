@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quorum-review"
-version = "0.1.0"
+version = "1.0.0"
 description = "Cross-model pull request review on Google Cloud."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +26,13 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 # repository, so the package name matches the directory rather than the project.
 [tool.setuptools]
 packages = ["quorum_review", "quorum_review.providers"]
+
+# The built-in criteria are behaviour, not documentation: without them a
+# `skill: security-review` resolves to nothing. They are inside the package so
+# that an installed copy has them, rather than relying on the process happening
+# to be running from a checkout.
+[tool.setuptools.package-data]
+quorum_review = ["skills/*/SKILL.md"]
 
 [tool.ruff]
 line-length = 90

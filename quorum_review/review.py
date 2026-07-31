@@ -15,11 +15,22 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import pathlib
 import sys
 import time
 
-from . import consensus, conversation, dismissal, learning
+from . import (
+    actions,
+    budget,
+    consensus,
+    conversation,
+    criteria,
+    diffs,
+    dismissal,
+    forks,
+    learning,
+    redaction,
+    sarif,
+)
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
@@ -39,8 +50,6 @@ VERIFY_CONCURRENCY = int(os.getenv("VERIFY_CONCURRENCY", "4"))
 
 #: Whole-run ceiling. A hung model call must not hold an Actions runner open.
 TIMEOUT_SECONDS = int(os.getenv("QUORUM_TIMEOUT_SECONDS", "1200"))
-
-SKILLS_ROOT = pathlib.Path(__file__).resolve().parent.parent / "skills"
 
 _OFF = {"off", "0", "false", "no"}
 
@@ -74,9 +83,22 @@ def scan_with_all_models() -> bool:
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
+#: Inline comments one run may post. The severity threshold decides *which*
+#: findings interrupt a reader in the diff view; this decides how many. They are
+#: different limits and only one of them was here: a change that introduces
+#: forty high-severity findings passes any threshold and buries the pull
+#: request. The rest are listed in the summary, worst first, and none is lost.
+MAX_INLINE_COMMENTS = int(os.getenv("QUORUM_MAX_INLINE_COMMENTS", "25"))
+
 #: Tool calls one verification may make. Far below a scan's budget: a verifier
 #: is settling one specific claim, and it is called once per finding.
 VERIFY_TOOL_CALLS = int(os.getenv("QUORUM_VERIFY_TOOL_CALLS", "6"))
+
+#: What one verification is assumed to cost, when a token ceiling is set. Held
+#: back before each call rather than checked against zero, so the ceiling holds
+#: instead of being discovered to have been exceeded afterwards. Deliberately
+#: generous: a verifier with tools re-sends the conversation on every turn.
+VERIFY_TOKEN_RESERVE = int(os.getenv("QUORUM_VERIFY_TOKEN_RESERVE", "40000"))
 
 
 def inline_min_severity() -> str:
@@ -91,11 +113,8 @@ def inline_min_severity() -> str:
 
 
 def load_skill(name: str) -> Skill:
-    path = SKILLS_ROOT / name / "SKILL.md"
-    if not path.exists():
-        available = ", ".join(sorted(p.name for p in SKILLS_ROOT.iterdir() if p.is_dir()))
-        raise FileNotFoundError(f"unknown skill {name!r}; available: {available}")
-    return Skill(name=name, content=path.read_text(encoding="utf-8"))
+    """Built-in criteria only. See ``criteria.resolve`` for the general case."""
+    return criteria.load_builtin(name)
 
 
 def dedupe(findings: list[Finding]) -> list[Finding]:
@@ -163,6 +182,7 @@ async def verify_all(
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
     unavailable: list[str] = []
     budgets = workspaces or [None] * len(findings)
+    usage = getattr(provider, "usage", {})
 
     async def one(finding: Finding, toolbox: Workspace | None) -> Finding:
         reviewer = consensus.reviewer_for(finding, models)
@@ -172,6 +192,21 @@ async def verify_all(
             return finding
 
         async with semaphore:
+            # Checked inside the semaphore, so the running total includes the
+            # calls that have already returned. Verification is the part of a
+            # review that scales with findings rather than with the diff — one
+            # call each, up to twenty — which makes it the part a ceiling has
+            # to bind on.
+            if budget.exhausted(usage, reserve=VERIFY_TOKEN_RESERVE):
+                finding.verdict = "uncertain"
+                finding.verifier_reason = (
+                    f"not verified: this review reached its token ceiling "
+                    f"({budget.note(usage)}). Raise `max-tokens`, or lower "
+                    f"`max-verified-findings` so the budget goes to the most "
+                    f"severe findings."
+                )
+                return finding
+
             try:
                 verdict = await provider.verify(reviewer, finding, ctx, toolbox=toolbox)
             except ProviderUnavailable as error:
@@ -231,7 +266,8 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
         )
         return 0
 
-    skill = load_skill(skill_name)
+    pull = await github.pull_request(number)
+    skill = await criteria.resolve(skill_name, github, pull["head"]["sha"])
     provider = build_provider()
     body = await provider.respond(
         provider.models[0],
@@ -355,14 +391,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
     if conversation.is_question(event):
         async with GitHubClient() as github:
             ledger, _ = await github.load_ledger(number)
-            ctx, _skipped, _trimmed = await github.load_context(
+            ctx, _skipped, _trimmed, _dropped = await github.load_context(
                 number, exclude_input=os.getenv("QUORUM_EXCLUDE", "")
             )
             return await conversation.handle(
                 github, build_provider(), ctx, ledger, event
             )
-
-    skill = load_skill(skill_name)
 
     provider = build_provider()
     models = list(provider.models)
@@ -372,11 +406,33 @@ async def run(skill_name: str, dry_run: bool) -> int:
     started = time.monotonic()
 
     async with GitHubClient() as github:
+        # Forks are re-checked here even though the workflow already gated on
+        # the label. A workflow condition is one careless edit away from being
+        # wrong, and under `pull_request_target` the consequence of being wrong
+        # is a run with write access authorised by a stranger.
+        from_fork = await forks.is_fork(github, number, event)
+        if from_fork:
+            refusal = await forks.refusal(github, number, event)
+            if refusal:
+                print(f"::notice title=Not reviewed::{refusal}")
+                print(f"skipped: {refusal}", file=sys.stderr)
+                return 0
+
+        # Criteria are instructions to the model, so an untrusted head must
+        # not choose its own — the base branch's copy governs a fork, exactly
+        # as it does for `.quorumignore`.
+        pull = await github.pull_request(number)
+        criteria_ref = pull["base"]["sha"] if from_fork else pull["head"]["sha"]
+        skill = await criteria.resolve(skill_name, github, criteria_ref)
+
         ledger, sticky = await github.load_ledger(number)
-        ctx, skipped_files, trimmed = await github.load_context(
+        ctx, skipped_files, trimmed, dropped = await github.load_context(
             number,
             exclude_input=os.getenv("QUORUM_EXCLUDE", ""),
             since_sha=ledger.last_reviewed_sha if incremental_enabled() else "",
+            # A fork's `.quorumignore` would let the branch under review decide
+            # what does not get reviewed.
+            trust_head_config=not from_fork,
         )
 
         report = report_mod.RunReport(
@@ -384,14 +440,43 @@ async def run(skill_name: str, dry_run: bool) -> int:
             scanning_models=scanning,
             verification_on=verify_wanted,
             trimmed_files=trimmed,
+            dropped_files=dropped,
             skipped_files=skipped_files,
             incremental=ctx.incremental,
             since_sha=ctx.base_sha if ctx.incremental else "",
             head_sha=ctx.head_sha,
         )
 
+        # Before anything is matched against the ledger. A renamed file breaks
+        # content-addressed identity — the snippet is unchanged but the path is
+        # half of the hash — so without this a refactor closes every finding in
+        # the file and immediately re-reports all of them at the new path.
+        report.renamed_files = diffs.renames(ctx.diff)
+        if report.renamed_files:
+            ledger.follow_renames(report.renamed_files)
+
+        # Nothing to look at. Reachable more often than it sounds: a pull
+        # request that only touches lockfiles or generated code, or an
+        # incremental re-review whose new commits are all excluded. Scanning
+        # anyway costs two model calls to be told there is nothing there, on
+        # every push, forever.
+        if not ctx.diff.strip():
+            report.repo_access = "off: nothing to review"
+            report.usage = dict(provider.usage)
+            report.elapsed_seconds = time.monotonic() - started
+            body = report_mod.render_nothing_to_review(report, skipped_files)
+            if dry_run:
+                print(body)
+                return _finish(report)
+            marker = ledger_mod.fit_to_comment(ledger, body)
+            await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)
+            actions.write_job_summary(body)
+            return _finish(report)
+
         # -- independent scans ------------------------------------------------
-        scan_budgets = workspace_mod.build(len(scanning), workspace_mod.MAX_CALLS)
+        scan_budgets = workspace_mod.build(
+            len(scanning), workspace_mod.MAX_CALLS, ctx.exclude_patterns
+        )
         root = next((w.root for w in scan_budgets if w is not None), None)
         if root is not None and not workspace_mod.checkout_has_commit(root, ctx.head_sha):
             # The checkout is not this pull request — an issue_comment run gets
@@ -421,27 +506,41 @@ async def run(skill_name: str, dry_run: bool) -> int:
             raise ProviderUnavailable(f"every scanning model failed: {failures}")
 
         findings = dedupe(ledger_mod.assign_ids(consensus.merge(scans)))
+
+        # Before anything renders, records, or posts. A finding about a
+        # hardcoded credential quotes the credential, and republishing it in a
+        # comment makes it more visible and longer-lived than the diff it came
+        # from — a force-push removes the diff and leaves the comment.
+        #
+        # Note the order: after assign_ids, so the identity that suppresses a
+        # re-report is derived from the real snippet and stays stable whether
+        # or not a value was removed for display.
+        for finding in findings:
+            finding.redacted = redaction.sanitise(finding)
         report.scanned = len(findings)
         report.per_model_counts = {
             model: len(scan) for model, scan in zip(scanning, scans, strict=False)
         }
 
-        # Anything previously open that this scan no longer reports is treated
-        # as fixed. Scans are not perfectly repeatable, so a finding can drop
-        # out because the models missed it rather than because it was fixed —
-        # accepted for now, since re-detection later simply reopens it.
+        # A previously open finding that this scan does not re-raise is a
+        # candidate for being fixed, not a fixed one. Scans are not perfectly
+        # repeatable — observed on a pull request whose code had not changed at
+        # all, where two findings dropped out of one run and came back in the
+        # next — so it takes consecutive misses. See `Ledger.missed`.
         #
         # Only files this run actually looked at are eligible. On an
         # incremental review the diff covers just the new commits, so a finding
-        # in an untouched file was never examined — closing it would report a
-        # fix that nobody made.
+        # in an untouched file was never examined — counting that as a miss
+        # would close it after two pushes to unrelated files.
         reviewed = set(ctx.changed_files)
         newly_closed: list[ledger_mod.LedgerEntry] = []
         for entry in list(ledger.entries.values()):
             if entry.status != "open" or entry.file_path not in reviewed:
                 continue
-            if not ledger.still_present(entry, findings):
-                ledger.mark_fixed(entry.finding_id, ctx.head_sha)
+            if ledger.still_present(entry, findings):
+                entry.misses = 0
+                continue
+            if ledger.missed(entry.finding_id, ctx.head_sha):
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
                 newly_closed.append(entry)
 
@@ -450,6 +549,13 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # differently between runs, so ID equality alone lets duplicates
         # through — which is exactly what happened the first time this ran.
         fresh = [f for f in findings if not ledger.is_suppressed(f)]
+        # What was suppressed, not just how many. Matching is positional and
+        # by title overlap, so it can be wrong — and a summary that reports a
+        # count gives a reader no way to notice. Collapsed, because the point
+        # of suppression is that these are not worth reading twice.
+        report.suppressed_titles = [
+            f.title for f in findings if f not in fresh
+        ]
         report.suppressed = len(findings) - len(fresh)
 
         # -- consensus, then verify only what is unresolved --------------------
@@ -463,7 +569,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
             skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
             verify_budgets = (
-                workspace_mod.build(len(to_verify), VERIFY_TOOL_CALLS)
+                workspace_mod.build(
+                    len(to_verify), VERIFY_TOOL_CALLS, ctx.exclude_patterns
+                )
                 if any(w is not None for w in scan_budgets)
                 else [None] * len(to_verify)
             )
@@ -484,6 +592,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
         else:
             verified = unresolved
 
+        # Again, because a verifier's prose is written after the first pass and
+        # quoting the offending value back is exactly what a good explanation
+        # of a hardcoded-credential finding does.
+        for finding in verified + skipped:
+            finding.redacted += redaction.sanitise(finding)
+
         for finding in agreed:
             report.confirmed.append(finding)
 
@@ -503,10 +617,15 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         if dry_run:
             print(report_mod.render(report))
-            return 0
+            return _finish(report)
 
         threshold = SEVERITY_RANK[inline_min_severity()]
-        for finding in report.confirmed + report.unverified:
+        # Worst first, because the cap below decides what gets a comment and
+        # what only gets a table row. Posting in whatever order the models
+        # returned would let a batch of low-severity findings use up the
+        # allowance before a critical one reaches it.
+        posted_inline = 0
+        for finding in by_severity(report.confirmed + report.unverified):
             entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
 
             # Below the threshold the finding is recorded and listed in the
@@ -516,9 +635,20 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 ledger.record(entry)
                 continue
 
+            # The severity threshold does not bound the *count*, and this file
+            # already argues that a dozen simultaneous comments is how a
+            # reviewer gets muted. A change that introduces forty high-severity
+            # findings needs a conversation, not forty comments.
+            if posted_inline >= MAX_INLINE_COMMENTS:
+                report.over_comment_cap.append(finding)
+                ledger.record(entry)
+                continue
+
             comment_id = await post_finding(github, number, ctx.head_sha, finding)
             if comment_id is None:
                 report.unanchored.append(finding)
+            else:
+                posted_inline += 1
             entry.review_comment_id = comment_id
             ledger.record(entry)
 
@@ -543,12 +673,71 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         ledger.last_reviewed_sha = ctx.head_sha
         report.usage = dict(provider.usage)
+        report.budget_note = budget.note(provider.usage)
         report.elapsed_seconds = time.monotonic() - started
         body = report_mod.render(report)
         marker = ledger_mod.fit_to_comment(ledger, body)
         await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)
+        actions.write_job_summary(body)
+        _write_sarif(report, ledger)
 
-    return 0
+    return _finish(report)
+
+
+def _write_sarif(report: report_mod.RunReport, ledger: ledger_mod.Ledger) -> None:
+    """Write the findings where an organisation's existing triage can see them.
+
+    A pull request comment is read once by whoever is looking at that pull
+    request. It is not a queue, has no owner, and nothing counts it. Uploading
+    this to code scanning puts the findings in the Security tab, where they
+    dedupe across runs and go through the same process as everything else.
+
+    The ledger rather than this run's output, because code scanning treats an
+    upload as a replacement. A re-review that reports nothing new — which the
+    ledger exists to make the common case — would otherwise close every alert
+    the earlier reviews had raised.
+    """
+    path = os.getenv("QUORUM_SARIF_FILE", "").strip()
+    if not path:
+        return
+
+    log = sarif.build(
+        sarif.open_findings(ledger), list(report.models), report.head_sha
+    )
+    # Checked here rather than left to the uploader. Code scanning rejects a
+    # log wholesale for a schema violation, so one bad field loses every
+    # finding — and the failure surfaces two steps later, in someone else's
+    # action, as "not valid SARIF".
+    issues = sarif.problems(log)
+    if issues:
+        for issue in issues:
+            print(f"::warning title=SARIF not written::{issue}")
+        return
+
+    try:
+        import json
+        import pathlib
+
+        pathlib.Path(path).write_text(json.dumps(log, indent=2), encoding="utf-8")
+    except OSError as error:  # noqa: BLE001 - cosmetic; never fail a run for it
+        print(f"note: could not write {path}: {error}", file=sys.stderr)
+
+
+def _finish(report: report_mod.RunReport) -> int:
+    """Publish the run to the workflow, and decide whether to fail the check.
+
+    Kept out of ``run`` so the exit code has one origin. A reviewer that can
+    only comment is something people read when they remember to; a reviewer
+    that can fail a required check is part of the process.
+    """
+    actions.annotate(report)
+    actions.write_outputs(report)
+
+    message = actions.gate_message(report)
+    if message:
+        print(f"::error title=quorum-review::{message}")
+        print(f"error: {message}", file=sys.stderr)
+    return actions.exit_code(report)
 
 
 def list_models() -> int:
@@ -596,11 +785,24 @@ def main(argv: list[str] | None = None) -> int:
             asyncio.wait_for(run(args.skill, args.dry_run), timeout=TIMEOUT_SECONDS)
         )
     except TimeoutError:
-        print(f"review timed out after {TIMEOUT_SECONDS}s", file=sys.stderr)
-        return 1
+        return _abort(f"review timed out after {TIMEOUT_SECONDS}s")
     except (GitHubError, ProviderUnavailable, FileNotFoundError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+        return _abort(str(error))
+
+
+def _abort(message: str) -> int:
+    """Fail loudly, and still leave a workflow something to branch on.
+
+    A run that crashes writes no outputs, so a later step guarding on
+    ``degraded == 'true'`` sees an empty string and reads it as false — a
+    reviewer that died looks exactly like a reviewer that found nothing. The
+    step will have failed, but `if: always()` steps and required checks
+    configured on a *different* job both need the signal, not the exit code.
+    """
+    print(f"::error title=quorum-review::{message}")
+    print(f"error: {message}", file=sys.stderr)
+    actions.write_outputs(report_mod.RunReport(scan_failures=[message]))
+    return 1
 
 
 if __name__ == "__main__":

@@ -16,6 +16,17 @@ name: quorum-review
 
 on:
   pull_request:
+    # Add `synchronize` to review every push, not just the first. It is not the
+    # default only because it is your money: with `incremental: on` a re-review
+    # reads the range since the last one rather than the whole pull request, and
+    # the ledger suppresses anything already reported, so the marginal cost of a
+    # push is roughly the size of that push. On a branch that gets twenty
+    # commits, that is the difference between reviewing it once and reviewing
+    # what actually changed.
+    #
+    # There is no feedback loop to worry about here — this action never pushes.
+    # The `concurrency` block below cancels a superseded run, so a rapid series
+    # of pushes costs one review rather than one per commit.
     types: [opened, reopened]
   issue_comment:
     types: [created]
@@ -44,10 +55,21 @@ concurrency:
 #
 # Note that `permissions:` only governs GITHUB_TOKEN. If you switch to a GitHub
 # App token, the effective permissions are the App installation's instead.
+# `security-events: write` and `actions: read` are only for the SARIF upload at
+# the end. `actions: read` is what codeql-action needs to read the workflow run
+# on a private repository; without it the upload fails with "Resource not
+# accessible by integration".
+#
+# Note also that uploading to code scanning on a *private* repository requires
+# GitHub Advanced Security. It is free on public ones. Drop the upload step and
+# these two permissions if neither applies — the findings are still in the pull
+# request and the job summary.
 permissions:
   contents: read
   id-token: write
   pull-requests: write
+  security-events: write
+  actions: read
 
 jobs:
   review:
@@ -56,10 +78,11 @@ jobs:
     #
     # Three conditions here are load-bearing:
     #
-    # - Forks are excluded. They get a read-only token and no access to
-    #   secrets, so the run could only fail — noisily, on every contribution.
-    #   `pull_request_target` would fix that by giving write access to a run
-    #   that reviews untrusted code, which is not a trade worth making.
+    # - Forks are excluded here. They get a read-only token and no secrets, so
+    #   this workflow could only fail on them — noisily, on every outside
+    #   contribution. Reviewing them needs `pull_request_target`, which is a
+    #   different trust model and belongs in its own file: see
+    #   examples/review-fork.yml, and read its header before deploying it.
     #
     # - The Bot check prevents a loop: without it the comments this action
     #   posts re-trigger the workflow, which posts more comments.
@@ -79,6 +102,7 @@ jobs:
                  github.event.comment.author_association)) ||
        (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
+        github.event.issue.state == 'open' &&
         (contains(github.event.comment.body, '@quorum /review') ||
          contains(github.event.comment.body, '@quorum /criteria')) &&
         github.event.comment.user.type != 'Bot' &&
@@ -102,12 +126,27 @@ jobs:
       # Pin third-party actions to a commit rather than a tag when the token
       # in scope matters to you: a tag can be moved to point at new code.
       - uses: actions/checkout@v4
+        id: merge-ref
+        continue-on-error: true
         with:
           ref: >-
             refs/pull/${{ github.event.pull_request.number
               || github.event.issue.number
               || github.event.inputs.pr }}/merge
           fetch-depth: 2
+
+      # `/merge` does not exist for a pull request with conflicts, or for one
+      # that has been closed. `/head` does, and a review of a conflicted branch
+      # is still worth having.
+      - uses: actions/checkout@v4
+        if: steps.merge-ref.outcome == 'failure'
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}/head
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -116,9 +155,34 @@ jobs:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 
       - name: Review
-        uses: ./
+        id: review
+        uses: yuting0624/quorum-review@v1
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          # A bare name is a built-in. A path is read from *your* repository,
+          # so your own standards do not require forking this one:
+          #   skill: security-review, .github/quorum/backend.md
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
+          sarif-file: quorum.sarif
+          # Uncomment to make this a required check. Advisory and refuted
+          # findings never gate — the reviewer declined to stand behind them.
+          # fail-on: critical
+
+      # Puts the findings in the Security tab, where they dedupe across runs,
+      # track open-to-fixed, and go through the triage the organisation already
+      # has. `always()` so a failed gate still uploads what it failed on.
+      - name: Upload to code scanning
+        if: always() && hashFiles('quorum.sarif') != ''
+        # Does not fail the job. Code scanning is a repository feature — free on
+        # public repositories, part of GitHub Advanced Security on private ones —
+        # and a red check every run for a feature the organisation has not bought
+        # would get the whole workflow removed. The findings are on the pull
+        # request and in the job summary either way; this step only adds a second
+        # home for them.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: quorum.sarif
+          category: quorum-review
