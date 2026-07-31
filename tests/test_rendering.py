@@ -359,6 +359,9 @@ def test_the_repair_leaves_an_even_run_alone():
     from quorum_review.report import _bound
 
     backslash = chr(92)
-    probe = ("x" * 150) + (backslash * 4) + "  zzzz"
+    # Long enough that the cut actually happens, with the run just inside it.
+    probe = ("x" * 153) + (backslash * 4) + "   " + ("z" * 40)
     body = _bound(probe, 160).removesuffix("…")
+
+    assert len(probe) > 160
     assert body.endswith(backslash * 4)
