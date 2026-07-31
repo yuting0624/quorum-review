@@ -321,3 +321,31 @@ def test_the_tool_guidance_only_appears_when_there_are_tools():
     # Promising tools that were never offered is worse than offering none: the
     # model reasons as though it checked something it could not reach.
     assert "Reading the repository" not in without
+
+
+# -- nothing to review -----------------------------------------------------
+
+
+def test_an_empty_diff_says_it_did_not_look_rather_than_found_nothing():
+    """Two sentences that mean opposite things.
+
+    "No new issues found" is a review that looked. A pull request that only
+    touches lockfiles produced no reviewable text at all, and reporting that as
+    clean is the same lie as a green check on a run where every model failed.
+    """
+    from quorum_review.report import RunReport, render_nothing_to_review
+
+    body = render_nothing_to_review(RunReport(head_sha="abc1234"), ["yarn.lock"])
+
+    assert "Nothing to review" in body
+    assert "not a clean review" in body
+    assert "No models were called" in body
+    assert "yarn.lock" in body
+
+
+def test_an_empty_diff_with_no_exclusions_explains_itself_differently():
+    from quorum_review.report import RunReport, render_nothing_to_review
+
+    body = render_nothing_to_review(RunReport(head_sha="abc1234"), [])
+    assert "no reviewable text" in body
+    assert "excluded" not in body

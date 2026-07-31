@@ -439,6 +439,24 @@ async def run(skill_name: str, dry_run: bool) -> int:
             head_sha=ctx.head_sha,
         )
 
+        # Nothing to look at. Reachable more often than it sounds: a pull
+        # request that only touches lockfiles or generated code, or an
+        # incremental re-review whose new commits are all excluded. Scanning
+        # anyway costs two model calls to be told there is nothing there, on
+        # every push, forever.
+        if not ctx.diff.strip():
+            report.repo_access = "off: nothing to review"
+            report.usage = dict(provider.usage)
+            report.elapsed_seconds = time.monotonic() - started
+            body = report_mod.render_nothing_to_review(report, skipped_files)
+            if dry_run:
+                print(body)
+                return _finish(report)
+            marker = ledger_mod.fit_to_comment(ledger, body)
+            await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)
+            actions.write_job_summary(body)
+            return _finish(report)
+
         # -- independent scans ------------------------------------------------
         scan_budgets = workspace_mod.build(
             len(scanning), workspace_mod.MAX_CALLS, ctx.exclude_patterns
@@ -725,11 +743,24 @@ def main(argv: list[str] | None = None) -> int:
             asyncio.wait_for(run(args.skill, args.dry_run), timeout=TIMEOUT_SECONDS)
         )
     except TimeoutError:
-        print(f"review timed out after {TIMEOUT_SECONDS}s", file=sys.stderr)
-        return 1
+        return _abort(f"review timed out after {TIMEOUT_SECONDS}s")
     except (GitHubError, ProviderUnavailable, FileNotFoundError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+        return _abort(str(error))
+
+
+def _abort(message: str) -> int:
+    """Fail loudly, and still leave a workflow something to branch on.
+
+    A run that crashes writes no outputs, so a later step guarding on
+    ``degraded == 'true'`` sees an empty string and reads it as false — a
+    reviewer that died looks exactly like a reviewer that found nothing. The
+    step will have failed, but `if: always()` steps and required checks
+    configured on a *different* job both need the signal, not the exit code.
+    """
+    print(f"::error title=quorum-review::{message}")
+    print(f"error: {message}", file=sys.stderr)
+    actions.write_outputs(report_mod.RunReport(scan_failures=[message]))
+    return 1
 
 
 if __name__ == "__main__":

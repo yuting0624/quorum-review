@@ -6,8 +6,11 @@ Phase 0 needs REST only. Collapsing resolved threads requires GraphQL
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import sys
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +23,55 @@ from .schema import PRContext
 
 API_ROOT = os.getenv("GITHUB_API_URL", "https://api.github.com")
 _TIMEOUT = httpx.Timeout(30.0, read=60.0)
+
+#: Attempts per request. Small: a review has a whole-run timeout, and burning
+#: it against a rate limit that is not clearing helps nobody.
+HTTP_ATTEMPTS = 4
+
+#: Statuses worth asking again about. 403 is here because GitHub returns it for
+#: the secondary rate limit as well as for a genuine permission failure, so the
+#: body has to be read to tell them apart.
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_SECONDARY_LIMIT = ("secondary rate limit", "abuse detection", "please wait a few")
+
+
+def _worth_retrying(response: httpx.Response) -> bool:
+    if response.status_code in _RETRY_STATUSES:
+        return True
+    if response.status_code != 403:
+        return False
+    # A permission failure returns the same status as a throttle. Retrying a
+    # permission failure four times just delays the error by half a minute.
+    body = response.text.lower()
+    if any(hint in body for hint in _SECONDARY_LIMIT):
+        return True
+    return response.headers.get("x-ratelimit-remaining") == "0"
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """The server's own instruction, in seconds, or 0 when it did not give one.
+
+    Preferred over any backoff we could invent: GitHub knows when the window
+    opens and we do not.
+    """
+    header = response.headers.get("retry-after", "").strip()
+    if header:
+        try:
+            return max(0.0, float(header))
+        except ValueError:
+            return 0.0
+
+    reset = response.headers.get("x-ratelimit-reset", "").strip()
+    if reset and response.headers.get("x-ratelimit-remaining") == "0":
+        try:
+            return max(0.0, float(reset) - time.time())
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _backoff(attempt: int) -> float:
+    return float(2**attempt)
 
 
 class GitHubError(RuntimeError):
@@ -110,10 +162,47 @@ class GitHubClient:
     async def __aexit__(self, *_exc: object) -> None:
         await self._http.aclose()
 
+    # -- transport ----------------------------------------------------------
+
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """One HTTP call, retried when GitHub says to come back later.
+
+        A review posts one comment per finding, which is exactly the shape
+        GitHub's secondary rate limit exists to slow down: a burst of writes
+        from one actor. Hitting it without a retry loses the remaining
+        findings, and the run still reports success — a partial review that
+        reads as a complete one, which is the failure mode this project keeps
+        coming back to.
+
+        The server's own ``Retry-After`` is preferred over a guess. GitHub
+        sends it on secondary limits, and it knows when the window opens.
+        """
+        for attempt in range(1, HTTP_ATTEMPTS + 1):
+            try:
+                response = await self._http.request(method, path, **kwargs)
+            except httpx.TransportError as error:
+                if attempt == HTTP_ATTEMPTS:
+                    raise GitHubError(f"{method} {path} -> {error}") from error
+                await asyncio.sleep(_backoff(attempt))
+                continue
+
+            if attempt == HTTP_ATTEMPTS or not _worth_retrying(response):
+                return response
+
+            delay = _retry_after(response) or _backoff(attempt)
+            print(
+                f"note: {method} {path} -> {response.status_code}; "
+                f"retrying in {delay:.0f}s ({attempt}/{HTTP_ATTEMPTS})",
+                file=sys.stderr,
+            )
+            await asyncio.sleep(delay)
+
+        raise AssertionError("unreachable")  # pragma: no cover
+
     # -- reads -------------------------------------------------------------
 
     async def _get(self, path: str, **kwargs: Any) -> httpx.Response:
-        response = await self._http.get(path, **kwargs)
+        response = await self._send("GET", path, **kwargs)
         if response.status_code >= 400:
             raise GitHubError(
                 f"GET {path} -> {response.status_code}: {response.text[:400]}"
@@ -257,7 +346,8 @@ class GitHubClient:
         event the caller's checkout would be the default branch anyway, not the
         pull request.
         """
-        response = await self._http.get(
+        response = await self._send(
+            "GET",
             f"/repos/{self.owner}/{self.repo}/contents/{path}",
             params={"ref": ref},
             headers={"Accept": "application/vnd.github.raw"},
@@ -336,12 +426,14 @@ class GitHubClient:
         accumulating a column of stale bot comments.
         """
         if sticky is None:
-            response = await self._http.post(
+            response = await self._send(
+                "POST",
                 f"/repos/{self.owner}/{self.repo}/issues/{number}/comments",
                 json={"body": body},
             )
         else:
-            response = await self._http.patch(
+            response = await self._send(
+                "PATCH",
                 f"/repos/{self.owner}/{self.repo}/issues/comments/{sticky.comment_id}",
                 json={"body": body},
             )
@@ -355,7 +447,8 @@ class GitHubClient:
 
     async def post_issue_comment(self, number: int, body: str) -> int:
         """Add a standalone comment, separate from the sticky summary."""
-        response = await self._http.post(
+        response = await self._send(
+            "POST",
             f"/repos/{self.owner}/{self.repo}/issues/{number}/comments",
             json={"body": body},
         )
@@ -395,7 +488,10 @@ class GitHubClient:
             payload["start_line"] = start_line
             payload["start_side"] = "RIGHT"
 
-        response = await self._http.post(
+        response = await self._send(
+
+            "POST",
+
             f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments", json=payload
         )
         if response.status_code == 422:
@@ -414,7 +510,8 @@ class GitHubClient:
     # why this small amount of it exists rather than a second API layer.
 
     async def _graphql(self, query: str, **variables: Any) -> dict[str, Any]:
-        response = await self._http.post(
+        response = await self._send(
+            "POST",
             "/graphql", json={"query": query, "variables": variables}
         )
         if response.status_code >= 400:
@@ -488,7 +585,8 @@ class GitHubClient:
 
     async def reply_to_comment(self, number: int, comment_id: int, body: str) -> None:
         """Reply inside an existing review thread rather than starting a new one."""
-        response = await self._http.post(
+        response = await self._send(
+            "POST",
             f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments/{comment_id}/replies",
             json={"body": body},
         )

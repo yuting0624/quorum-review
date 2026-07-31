@@ -241,3 +241,31 @@ def test_a_failed_scan_is_annotated_even_when_it_does_not_gate(capsys):
     assert review._finish(RunReport(scan_failures=["model-a: 503"])) == 0
     out = capsys.readouterr().out
     assert "::warning title=Scanning model failed::model-a: 503" in out
+
+
+def test_a_crashed_run_still_publishes_that_it_failed(monkeypatch, tmp_path):
+    """A run that writes no outputs looks like a run that found nothing.
+
+    A later step guarding on `degraded == 'true'` sees an empty string and
+    reads it as false. The step itself failed, but `if: always()` steps and
+    checks configured on a different job need the signal, not the exit code.
+    """
+    from quorum_review import review
+
+    out = tmp_path / "out.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+
+    assert review._abort("every scanning model failed") == 1
+
+    written = dict(
+        line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines()
+    )
+    assert written["degraded"] == "true"
+    assert written["findings"] == "0"
+
+
+def test_an_abort_is_annotated(capsys):
+    from quorum_review import review
+
+    review._abort("Claude is not entitled in Model Garden")
+    assert "::error title=quorum-review::" in capsys.readouterr().out

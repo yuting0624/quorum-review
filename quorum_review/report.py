@@ -502,3 +502,40 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
         f"<sub>`{finding.category}` · id `{finding.finding_id}`</sub>",
     ]
     return "\n".join(lines)
+
+
+def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
+    """The summary for a pull request with no reviewable diff.
+
+    Reachable more often than it sounds — a change that only touches lockfiles
+    or generated code, or an incremental re-review whose new commits are all
+    excluded. It gets its own rendering rather than the ordinary "no new issues
+    found", because those two sentences mean opposite things: one is a review
+    that looked and found nothing, the other is a review that did not look.
+    """
+    lines = ["## Quorum review", ""]
+
+    if skipped:
+        lines.append(
+            f"Nothing to review: all {len(skipped)} changed file(s) are "
+            f"excluded as generated, vendored, or configured out."
+        )
+        lines += ["", _skipped_note(skipped)]
+    else:
+        lines.append(
+            "Nothing to review: this change contains no reviewable text. "
+            "That is usually a binary-only or empty diff."
+        )
+
+    lines += [
+        "",
+        "No models were called. **This is not a clean review** — nothing was "
+        "examined.",
+        "",
+        "---",
+        "",
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
+        f"`{_version()}` · quorum-review — a reference implementation, not a "
+        f"supported product.</sub>",
+    ]
+    return "\n".join(lines)
