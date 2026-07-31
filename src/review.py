@@ -207,7 +207,22 @@ def list_models() -> int:
     return 0
 
 
+def _use_utf8_output() -> None:
+    """Make stdout and stderr UTF-8 regardless of the console's default.
+
+    Findings quote source code and can be written in any language, and the
+    summary uses typographic punctuation. On a console with a legacy codepage
+    — cp932 on a Japanese Windows install, for instance — printing that raises
+    UnicodeEncodeError and takes down a review that had already succeeded.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _use_utf8_output()
     parser = argparse.ArgumentParser(prog="quorum-review")
     parser.add_argument("--skill", default=os.getenv("REVIEW_SKILL", "security-review"))
     parser.add_argument(
