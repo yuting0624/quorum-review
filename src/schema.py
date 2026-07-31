@@ -39,13 +39,24 @@ class Finding:
     code_snippet: str
 
     finding_id: str = ""
+
+    #: Every model that reported this finding **independently**, without having
+    #: seen the others' output. Two entries means the models agreed without
+    #: being able to influence each other, which is stronger evidence than any
+    #: single model's confidence — and it is why an agreed finding needs no
+    #: verification pass.
+    reported_by: list[str] = field(default_factory=list)
+
     verdict: str = ""
     verifier_reason: str = ""
     verifier_model: str = ""
-    primary_model: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    @property
+    def agreed(self) -> bool:
+        return len(self.reported_by) > 1
 
 
 @dataclass
@@ -284,7 +295,7 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     raise ValueError(f"could not parse as JSON: {text[:200]!r}")
 
 
-def findings_from_payload(payload: dict[str, Any], primary_model: str) -> list[Finding]:
+def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
     """Convert a parsed payload into findings, dropping anything off-schema.
 
     Malformed entries are discarded silently so that an extra key or an
@@ -307,7 +318,7 @@ def findings_from_payload(payload: dict[str, Any], primary_model: str) -> list[F
                 title=str(item["title"]),
                 body=str(item["body"]),
                 code_snippet=str(item["code_snippet"]),
-                primary_model=primary_model,
+                reported_by=[model],
             )
         except (KeyError, TypeError, ValueError):
             continue

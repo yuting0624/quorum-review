@@ -24,6 +24,7 @@ import asyncio
 import os
 import sys
 
+from src import consensus
 from src import ledger as ledger_mod
 from src import review as review_mod
 from src.github_client import GitHubClient
@@ -117,18 +118,35 @@ def fmt(result: dict[str, object]) -> str:
     return " | ".join(parts)
 
 
-async def one_run(provider, ctx: PRContext, skill, verify: bool) -> tuple[list, list]:
-    """Return (primary findings, findings surviving verification)."""
-    findings = review_mod.dedupe(ledger_mod.assign_ids(await provider.scan(ctx, skill)))
-    if not verify:
+async def one_run(
+    provider, ctx: PRContext, skill, scanners: list[str], verify: bool
+) -> tuple[list, list]:
+    """Return (everything the scans reported, everything that survived).
+
+    Both halves are reported because they answer different questions: the first
+    is the recall ceiling the scanning models set, and the second is what a
+    human would actually see.
+    """
+    scans, failures = await review_mod.scan_all(provider, scanners, ctx, skill)
+    for failure in failures:
+        print(f"    ! scan failed: {failure}", file=sys.stderr)
+
+    findings = review_mod.dedupe(ledger_mod.assign_ids(consensus.merge(scans)))
+    agreed, unresolved = consensus.split(findings)
+
+    if not verify or not unresolved:
         return findings, findings
 
-    ranked = review_mod.by_severity(findings)[: review_mod.MAX_VERIFIED_FINDINGS]
-    verified, error = await review_mod.verify_all(provider, ranked, ctx)
+    ranked = review_mod.by_severity(unresolved)[: review_mod.MAX_VERIFIED_FINDINGS]
+    verified, error = await review_mod.verify_all(
+        provider, ranked, list(provider.models), ctx
+    )
     if error:
         print(f"    ! verifier unavailable: {error}", file=sys.stderr)
         return findings, findings
-    return findings, [f for f in verified if f.verdict == "confirmed"]
+
+    survived = agreed + [f for f in verified if f.verdict == "confirmed"]
+    return findings, survived
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -139,6 +157,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     provider = build_provider()
     skill = review_mod.load_skill(args.skill)
+    scanners = list(provider.models) if args.scan_both else list(provider.models)[:1]
 
     # Fetch the pull request once; every run reviews byte-identical input.
     async with GitHubClient() as github:
@@ -146,41 +165,39 @@ async def main_async(args: argparse.Namespace) -> int:
     if trimmed:
         print(f"warning: files truncated before review: {trimmed}", file=sys.stderr)
 
-    print(f"primary  : {provider.primary_model}")
-    print(f"verifier : {provider.verifier_model if args.verify else '(disabled)'}")
+    print(f"models   : {', '.join(provider.models)}")
+    print(f"scanning : {', '.join(scanners)}")
+    print(f"verify   : {'on' if args.verify else 'off'}")
     print(f"skill    : {skill.name}   pr: #{args.pr}   runs: {args.runs}\n")
 
-    primary_hits: list[set] = []
+    scan_hits: list[set] = []
     final_hits: list[set] = []
 
     for index in range(1, args.runs + 1):
-        primary, survived = await one_run(provider, ctx, skill, args.verify)
-        p_score, f_score = score(primary), score(survived)
-        primary_hits.append(p_score["seeded"])  # type: ignore[arg-type]
+        reported, survived = await one_run(provider, ctx, skill, scanners, args.verify)
+        p_score, f_score = score(reported), score(survived)
+        scan_hits.append(p_score["seeded"])  # type: ignore[arg-type]
         final_hits.append(f_score["seeded"])  # type: ignore[arg-type]
 
         print(f"run {index}")
-        print(f"  primary  ({p_score['total']:2d} findings): {fmt(p_score)}")
+        print(f"  scanned  ({p_score['total']:2d} findings): {fmt(p_score)}")
         if args.verify:
-            print(f"  verified ({f_score['total']:2d} findings): {fmt(f_score)}")
+            print(f"  survived ({f_score['total']:2d} findings): {fmt(f_score)}")
         for item in p_score["unclassified"]:  # type: ignore[union-attr]
             print(f"    ? unclassified: {item}")
 
     # Stability across runs is the number worth reporting: a bug found once in
     # three is not the same result as a bug found three times in three.
-    print("\nper-bug hit rate across runs (primary / after verification)")
+    print("\nper-bug hit rate across runs (scanned / survived)")
     for key in sorted(SEEDED, key=lambda k: int(k[1:])):
-        p = sum(key in hits for hits in primary_hits)
+        p = sum(key in hits for hits in scan_hits)
         f = sum(key in hits for hits in final_hits)
         flag = "" if p == args.runs else ("  <- unstable" if p else "  <- never found")
         print(f"  {key:<4} {p}/{args.runs}  {f}/{args.runs}{flag}")
 
-    mean_p = sum(len(h) for h in primary_hits) / args.runs
+    mean_p = sum(len(h) for h in scan_hits) / args.runs
     mean_f = sum(len(h) for h in final_hits) / args.runs
-    print(
-        f"\nmean seeded found: primary {mean_p:.1f}/10, "
-        f"after verification {mean_f:.1f}/10"
-    )
+    print(f"\nmean seeded found: scanned {mean_p:.1f}/10, survived {mean_f:.1f}/10")
     return 0
 
 
@@ -195,7 +212,13 @@ def main() -> int:
         "--no-verify",
         dest="verify",
         action="store_false",
-        help="primary model only, to measure the recall ceiling on its own",
+        help="skip the second opinion on findings only one model reported",
+    )
+    parser.add_argument(
+        "--single-scan",
+        dest="scan_both",
+        action="store_false",
+        help="only the first model scans, to measure one model's recall ceiling",
     )
     args = parser.parse_args()
 

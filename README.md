@@ -2,9 +2,10 @@
 
 **Cross-model pull request review on Google Cloud.**
 
-Two models review your pull request. One scans the diff broadly; the other
-re-examines each finding independently and throws out the ones that do not hold.
-Only what survives gets posted.
+Two models review your pull request. Each reads the diff without seeing the
+other's output. Where they agree independently, that is the result. Where only
+one of them found something, the other is asked to judge it. Only what survives
+gets posted.
 
 The interesting part is not the review. It is that both models run on **a single
 Google Cloud credential**, federated from GitHub Actions, with no long-lived
@@ -49,31 +50,53 @@ GitHub event (pull_request, or an @quorum /review comment)
   │
   └─ quorum-review
        ├─ read the PR diff, and the ledger from the previous run
-       ├─ primary scan     Gemini on Vertex — cast a wide net, favour recall
-       ├─ verification     Claude on Vertex — one call per finding, favour precision
-       └─ post             confirmed inline · uncertain as advisory · refuted discarded
+       │
+       ├─ scan   Gemini on Vertex  ─┐  independently, neither sees the other
+       ├─ scan   Claude on Vertex  ─┤
+       │                            ▼
+       ├─ merge   both reported it → agreed, no further call
+       │          one reported it  → the other model judges it
+       │
+       └─ post   confirmed inline · uncertain as advisory · refuted discarded
 ```
 
 Both models authenticate off the same Application Default Credentials. That is
 the entire point of the repository.
 
-### Three things worth knowing about the two stages
+### Why both models scan
 
-**The verifier never sees the reporter's reasoning.** It gets the location, the
+**A second opinion can only judge findings that were reported.** It is never
+shown a bug the first model missed, so with one model scanning, that model's
+blind spots are the whole reviewer's blind spots — no verifier, however strong,
+can raise recall.
+
+We measured exactly that. `gemini-3.6-flash` missed the same seeded TOCTOU bug
+in three runs out of three; pairing it with `claude-opus-5` did not help,
+because Claude was never asked about it. Having both models scan fixes it,
+because recall becomes the union rather than one model's ceiling.
+
+### Agreement is evidence, and it is free
+
+When two models that could not see each other's output report the same defect,
+that is a stronger signal than either one's self-reported confidence — and it
+costs nothing extra to obtain. Those findings skip verification entirely.
+
+Only the disagreements get a second call, which makes the arrangement *cheaper*
+than verifying everything: on a diff where the models mostly agree, you pay for
+two scans and a handful of judgements instead of one scan and one judgement per
+finding.
+
+### The judge never sees the reporter's reasoning
+
+A finding that only one model raised is sent to the other with the location, the
 code, and the one-line claim — not the argument, not the severity rating, not
-which model produced it. Hand a model someone else's rationale and it agrees
-with it; the stage stops filtering anything. See `prompts.verify_user`.
+who reported it. Hand a model someone else's rationale and it agrees with it;
+the stage stops filtering anything. See `prompts.verify_user`.
 
-**Verification raises precision and can never raise recall.** The verifier only
-judges findings the primary already reported, so a bug the primary missed is
-never put in front of it. **The primary model sets a hard ceiling on what the
-pipeline can find.** If you are missing bugs, change the primary; a stronger
-verifier cannot help. Conversely, verification can remove a true positive — in
-our measurements it did.
-
-**Verification also blunts prompt injection.** A diff crafted to talk the primary
-model out of reporting something still has to get past a second model that never
-saw the manipulated session.
+This also blunts prompt injection: a diff crafted to talk one model out of
+reporting something still has to get past a second model that never saw the
+manipulated session — and that second model is now scanning too, not just
+reacting.
 
 ### Findings are tracked by content, not by line
 
@@ -118,16 +141,23 @@ Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
 | `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` instead |
 | `skill` | `security-review` | Also ships `code-quality-review`; add your own under `skills/` |
 | `primary-model` | a Gemini model | **Confirm this against your project** — see below |
-| `verifier-model` | `claude-opus-5` | |
-| `verification` | `on` | `off` runs the primary model only — half the cost, more false positives |
+| `verifier-model` | `claude-opus-5` | Both models scan; the names only decide which runs alone under `scan: single` |
+| `scan` | `both` | `single` uses one model — cheaper, but caps recall at that model's |
+| `verification` | `on` | `off` skips the second opinion on findings only one model raised |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `claude-vertex-region` | `global` | Try `us-east5` if your entitlement is region-scoped |
-| `max-verified-findings` | `20` | One model call per finding; ignored when verification is off |
+| `max-verified-findings` | `20` | Cap on second opinions; ignored when verification is off |
 
-**Start with one model if cost matters.** `verification: off` posts what the
-primary model finds, and the summary says plainly that nothing was
-double-checked. Turn it on when the false-positive rate starts costing more
-attention than the second model costs money.
+**Cost tiers.** Roughly, per review:
+
+| Setting | Model calls | Trade |
+|---|---|---|
+| `scan: single`, `verification: off` | 1 | Cheapest. One model's recall, unfiltered |
+| `scan: single`, `verification: on` | 1 + N | Filters false positives, still capped recall |
+| `scan: both`, `verification: on` (default) | 2 + disagreements | Best recall. Usually cheaper than the row above |
+
+The default is not the most expensive option, which is easy to assume and wrong:
+agreement between the two scans removes most of the per-finding calls.
 
 **Swapping the roles is configuration, not code.** Set `primary-model` to a
 Claude ID and `verifier-model` to a Gemini ID and the pipeline reverses —

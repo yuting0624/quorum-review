@@ -46,18 +46,26 @@ inputs:
     description: Token used to read the diff and post comments.
     required: false
     default: ${{ github.token }}
+  scan:
+    description: >-
+      'both' has each model read the diff independently and merges the results.
+      'single' uses only primary-model. Scanning with both is what raises
+      recall — a second opinion can only judge findings that were reported, so
+      one model scanning alone caps what the review can ever find.
+    required: false
+    default: both
   verification:
     description: >-
-      'on' runs the second model over each finding. 'off' posts the primary
-      model's findings unchecked — cheaper, but expect more false positives.
-      Verification is the expensive half: one call per finding, against the
-      scan's single call.
+      'on' asks the other model to judge any finding only one model reported.
+      Findings both models reported independently are already agreed and cost
+      no extra call. 'off' posts everything unchecked — cheaper, more false
+      positives.
     required: false
     default: "on"
   max-verified-findings:
     description: >-
-      Cap on how many findings reach the verifier, highest severity first.
-      Ignored when verification is off.
+      Cap on how many unresolved findings reach a second opinion, highest
+      severity first. Ignored when verification is off.
     required: false
     default: "20"
   dry-run:
@@ -88,6 +96,7 @@ runs:
         REVIEW_LANGUAGE: ${{ inputs.review-language }}
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
         CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
+        QUORUM_SCAN: ${{ inputs.scan }}
         QUORUM_VERIFICATION: ${{ inputs.verification }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
         GITHUB_TOKEN: ${{ inputs.github-token }}

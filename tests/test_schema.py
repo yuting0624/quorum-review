@@ -62,7 +62,7 @@ def test_findings_from_payload_drops_off_schema_entries():
     }
     findings = schema.findings_from_payload(payload, "test-model")
     assert [f.file_path for f in findings] == ["a.py"]
-    assert findings[0].primary_model == "test-model"
+    assert findings[0].reported_by == ["test-model"]
 
 
 def test_findings_from_payload_tolerates_a_missing_key():
