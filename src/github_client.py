@@ -15,7 +15,7 @@ import httpx
 
 from . import diffs
 from .ledger import MARKER_PREFIX, Ledger, decode_marker
-from .pathfilter import PathFilter
+from .pathfilter import IGNORE_FILE, PathFilter
 from .schema import PRContext
 
 API_ROOT = os.getenv("GITHUB_API_URL", "https://api.github.com")
@@ -147,7 +147,8 @@ class GitHubClient:
     async def load_context(
         self,
         number: int,
-        path_filter: PathFilter | None = None,
+        exclude_input: str = "",
+        use_default_excludes: bool = True,
         since_sha: str = "",
     ) -> tuple[PRContext, list[str], list[str]]:
         """Fetch everything a provider needs.
@@ -163,6 +164,15 @@ class GitHubClient:
         pull = (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
         head_sha = pull["head"]["sha"]
 
+        # Read .quorumignore at the pull request's head, not the default
+        # branch, so a pull request that adds or edits it takes effect on
+        # itself rather than only after merging.
+        path_filter = PathFilter.build(
+            exclude_input=exclude_input,
+            ignore_file_contents=await self.read_file(IGNORE_FILE, head_sha),
+            use_defaults=use_default_excludes,
+        )
+
         raw_diff = ""
         incremental = False
         if since_sha and since_sha != head_sha:
@@ -173,7 +183,6 @@ class GitHubClient:
         if not incremental:
             raw_diff = await self._pull_diff(number)
 
-        path_filter = path_filter or PathFilter()
         selected, skipped = diffs.select(raw_diff, lambda p: not path_filter.excluded(p))
         diff, trimmed = diffs.truncate(selected)
 
@@ -190,6 +199,29 @@ class GitHubClient:
             incremental=incremental,
         )
         return ctx, skipped, trimmed
+
+    async def read_file(self, path: str, ref: str) -> str:
+        """Read one file from the repository at a given ref, or "" if absent.
+
+        Used for ``.quorumignore``. Reading it from disk would not work: this
+        runs as a composite action, so the working directory is the action's own
+        checkout rather than the repository under review — and on a comment
+        event the caller's checkout would be the default branch anyway, not the
+        pull request.
+        """
+        response = await self._http.get(
+            f"/repos/{self.owner}/{self.repo}/contents/{path}",
+            params={"ref": ref},
+            headers={"Accept": "application/vnd.github.raw"},
+        )
+        if response.status_code == 404:
+            return ""
+        if response.status_code >= 400:
+            raise GitHubError(
+                f"could not read {path} at {ref} -> "
+                f"{response.status_code}: {response.text[:200]}"
+            )
+        return response.text
 
     async def find_sticky_comment(self, number: int) -> StickyComment | None:
         """Locate our own summary comment by its ledger marker."""

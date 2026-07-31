@@ -28,7 +28,6 @@ from src import consensus
 from src import ledger as ledger_mod
 from src import review as review_mod
 from src.github_client import GitHubClient
-from src.pathfilter import PathFilter
 from src.providers import build_provider
 from src.schema import Finding, PRContext
 
@@ -165,7 +164,7 @@ async def main_async(args: argparse.Namespace) -> int:
         # No path filter: the fixture is the whole point, and the defaults
         # would be free to decide part of it is not worth reviewing.
         ctx, _skipped, trimmed = await github.load_context(
-            args.pr, PathFilter(use_defaults=False)
+            args.pr, use_default_excludes=False
         )
     if trimmed:
         print(f"warning: files truncated before review: {trimmed}", file=sys.stderr)

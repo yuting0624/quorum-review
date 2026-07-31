@@ -144,13 +144,21 @@ class PathFilter:
     def build(
         cls,
         exclude_input: str = "",
-        root: str | pathlib.Path = ".",
+        ignore_file_contents: str = "",
+        root: str | pathlib.Path | None = None,
         use_defaults: bool = True,
     ) -> PathFilter:
-        return cls(
-            parse_patterns(exclude_input) + read_ignore_file(root),
-            use_defaults=use_defaults,
-        )
+        """Combine the action input, a ``.quorumignore``, and the defaults.
+
+        ``ignore_file_contents`` is passed in because in Actions the file is
+        fetched from the API rather than read from disk — the action's working
+        directory is its own checkout, not the repository under review.
+        ``root`` is the local-development path.
+        """
+        patterns = parse_patterns(exclude_input) + parse_patterns(ignore_file_contents)
+        if root is not None:
+            patterns += read_ignore_file(root)
+        return cls(patterns, use_defaults=use_defaults)
 
     def excluded(self, path: str) -> bool:
         return any(matches(path, pattern) for pattern in self.patterns)

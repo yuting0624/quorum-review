@@ -23,7 +23,6 @@ from . import consensus, dismissal
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
-from .pathfilter import PathFilter
 from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
@@ -262,13 +261,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
     verify_wanted = verification_enabled() and len(models) > 1
 
     started = time.monotonic()
-    path_filter = PathFilter.build(os.getenv("QUORUM_EXCLUDE", ""))
 
     async with GitHubClient() as github:
         ledger, sticky = await github.load_ledger(number)
         ctx, skipped_files, trimmed = await github.load_context(
             number,
-            path_filter,
+            exclude_input=os.getenv("QUORUM_EXCLUDE", ""),
             since_sha=ledger.last_reviewed_sha if incremental_enabled() else "",
         )
 
