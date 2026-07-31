@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..schema import Finding, PRContext, Skill, Verdict
+from ..schema import Finding, ModelUsage, PRContext, Skill, Verdict
 
 
 class ProviderUnavailable(Exception):
@@ -40,6 +40,10 @@ class ReviewProvider(Protocol):
     #: The models available, in configured order. The first is the one used
     #: when only a single scan is requested.
     models: list[str]
+
+    #: Tokens and calls consumed so far, keyed by model. Reported in the
+    #: summary so an adopter can see what a review actually costs them.
+    usage: dict[str, ModelUsage]
 
     async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
         """Scan the whole PR once and return candidate findings. Favour recall.

@@ -52,6 +52,14 @@ inputs:
       workflow_dispatch, which carries no pull request in its payload.
     required: false
     default: ""
+  exclude:
+    description: >-
+      Extra paths to leave unreviewed, as gitignore-style globs, one per line
+      or comma-separated. Added to a built-in list covering lockfiles, vendored
+      code, build output, and generated sources. A .quorumignore file at the
+      repository root is read as well.
+    required: false
+    default: ""
   scan:
     description: >-
       'both' has each model read the diff independently and merges the results.
@@ -102,6 +110,7 @@ runs:
         REVIEW_LANGUAGE: ${{ inputs.review-language }}
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
         CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
+        QUORUM_EXCLUDE: ${{ inputs.exclude }}
         QUORUM_SCAN: ${{ inputs.scan }}
         QUORUM_VERIFICATION: ${{ inputs.verification }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}

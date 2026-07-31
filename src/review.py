@@ -17,11 +17,13 @@ import asyncio
 import os
 import pathlib
 import sys
+import time
 
 from . import consensus
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
+from .pathfilter import PathFilter
 from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
@@ -166,15 +168,19 @@ async def run(skill_name: str, dry_run: bool) -> int:
     scanning = models if scan_with_all_models() else models[:1]
     verify_wanted = verification_enabled() and len(models) > 1
 
+    started = time.monotonic()
+    path_filter = PathFilter.build(os.getenv("QUORUM_EXCLUDE", ""))
+
     async with GitHubClient() as github:
         ledger, sticky = await github.load_ledger(number)
-        ctx, trimmed = await github.load_context(number)
+        ctx, skipped_files, trimmed = await github.load_context(number, path_filter)
 
         report = report_mod.RunReport(
             models=models,
             scanning_models=scanning,
             verification_on=verify_wanted,
             trimmed_files=trimmed,
+            skipped_files=skipped_files,
             head_sha=ctx.head_sha,
         )
 
@@ -244,6 +250,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 report.advisory.append(finding)
 
         # -- write back --------------------------------------------------------
+        report.usage = dict(provider.usage)
+        report.elapsed_seconds = time.monotonic() - started
+
         if dry_run:
             print(report_mod.render(report))
             return 0
@@ -278,6 +287,8 @@ async def run(skill_name: str, dry_run: bool) -> int:
             ledger.record(ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha))
 
         ledger.last_reviewed_sha = ctx.head_sha
+        report.usage = dict(provider.usage)
+        report.elapsed_seconds = time.monotonic() - started
         body = report_mod.render(report)
         marker = ledger_mod.fit_to_comment(ledger, body)
         await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)

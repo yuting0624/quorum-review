@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .schema import Finding
+from .schema import Finding, ModelUsage
 
 SEVERITY_ICON = {
     "critical": "🔴",
@@ -43,6 +43,9 @@ class RunReport:
     resolved: list[str] = field(default_factory=list)
     unanchored: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
+    skipped_files: list[str] = field(default_factory=list)
+    usage: dict[str, ModelUsage] = field(default_factory=dict)
+    elapsed_seconds: float = 0.0
     head_sha: str = ""
 
 
@@ -229,9 +232,12 @@ def render(report: RunReport) -> str:
     if report.trimmed_files:
         lines += [
             "",
-            "> Some files were truncated or skipped before review: "
+            "> Too large to send whole, so only partly reviewed: "
             + ", ".join(f"`{path}`" for path in report.trimmed_files),
         ]
+
+    if report.skipped_files:
+        lines += ["", _skipped_note(report.skipped_files)]
 
     if not (
         report.confirmed
@@ -242,17 +248,51 @@ def render(report: RunReport) -> str:
     ):
         lines += ["", "No new issues found in this diff."]
 
-    lines += [
-        "",
-        "---",
-        "",
+    lines += ["", "---", "", *_footer(report)]
+    return "\n".join(lines)
+
+
+def _skipped_note(paths: list[str]) -> str:
+    """Say what was not reviewed, without burying the findings under a list."""
+    shown = ", ".join(f"`{path}`" for path in paths[:8])
+    more = f" and {len(paths) - 8} more" if len(paths) > 8 else ""
+    return (
+        f"<sub>Not reviewed — generated, vendored, or excluded "
+        f"({len(paths)} file(s)): {shown}{more}. Adjust with the `exclude` "
+        f"input or a `.quorumignore` file.</sub>"
+    )
+
+
+def _footer(report: RunReport) -> list[str]:
+    """Provenance and cost.
+
+    Tokens and call counts rather than a monetary figure: prices differ by
+    model, platform, and contract, so a number computed here would be a guess
+    wearing the costume of a fact.
+    """
+    lines = []
+
+    if report.usage:
+        rows = [
+            "| Model | Calls | Input | Cached input | Output |",
+            "|---|--:|--:|--:|--:|",
+        ]
+        for model, used in report.usage.items():
+            rows.append(
+                f"| `{model}` | {used.calls} | {used.input_tokens:,} | "
+                f"{used.cached_input_tokens:,} | {used.output_tokens:,} |"
+            )
+        lines += ["<details>", "<summary>Usage</summary>", ""]
+        lines += [*rows, "", "</details>", ""]
+
+    elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
+    lines.append(
         f"<sub>Reviewed `{report.head_sha[:7]}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
-        + " · quorum-review — a reference implementation, not a supported "
-        "product.</sub>",
-    ]
-
-    return "\n".join(lines)
+        + f"{elapsed} · quorum-review — a reference implementation, not a "
+        "supported product.</sub>"
+    )
+    return lines
 
 
 def render_inline(finding: Finding) -> str:

@@ -23,6 +23,7 @@ from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
     Finding,
+    ModelUsage,
     PRContext,
     Skill,
     Verdict,
@@ -69,6 +70,7 @@ class _Engine(Protocol):
     """A single model behind a uniform 'return JSON matching this schema' call."""
 
     model: str
+    usage: ModelUsage
 
     async def complete(
         self,
@@ -102,6 +104,7 @@ class _GeminiEngine:
         from google import genai
 
         self.model = model
+        self.usage = ModelUsage()
         # vertexai=True is what routes this at Vertex rather than AI Studio.
         # Credentials come from ADC, which on Actions is the WIF-issued token.
         self._client = genai.Client(vertexai=True, project=project, location=location)
@@ -132,6 +135,12 @@ class _GeminiEngine:
         except Exception as error:  # noqa: BLE001 - reclassified below
             raise _as_unavailable(self.model, error) from error
 
+        meta = getattr(response, "usage_metadata", None)
+        self.usage.add(
+            input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+            cached_input_tokens=getattr(meta, "cached_content_token_count", 0) or 0,
+        )
         return response.text or ""
 
 
@@ -147,6 +156,7 @@ class _ClaudeEngine:
         from anthropic import AsyncAnthropicVertex
 
         self.model = model
+        self.usage = ModelUsage()
         self._client = AsyncAnthropicVertex(project_id=project, region=region)
 
     async def complete(
@@ -182,6 +192,13 @@ class _ClaudeEngine:
                 message = await stream.get_final_message()
         except Exception as error:  # noqa: BLE001 - reclassified below
             raise _as_unavailable(self.model, error) from error
+
+        used = message.usage
+        self.usage.add(
+            input_tokens=getattr(used, "input_tokens", 0) or 0,
+            output_tokens=getattr(used, "output_tokens", 0) or 0,
+            cached_input_tokens=getattr(used, "cache_read_input_tokens", 0) or 0,
+        )
 
         if message.stop_reason == "refusal":
             raise ValueError(f"{self.model} declined the request")
@@ -219,6 +236,11 @@ class VertexProvider:
 
         self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._engines: dict[str, _Engine] = {}
+
+    @property
+    def usage(self) -> dict[str, ModelUsage]:
+        """Per-model token and call counts, for models actually used."""
+        return {model: engine.usage for model, engine in self._engines.items()}
 
     def _engine(self, model: str) -> _Engine:
         """Resolve a model ID to an engine, constructing it on first use.

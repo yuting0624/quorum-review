@@ -15,6 +15,7 @@ import httpx
 
 from . import diffs
 from .ledger import MARKER_PREFIX, Ledger, decode_marker
+from .pathfilter import PathFilter
 from .schema import PRContext
 
 API_ROOT = os.getenv("GITHUB_API_URL", "https://api.github.com")
@@ -111,8 +112,15 @@ class GitHubClient:
             )
         return response
 
-    async def load_context(self, number: int) -> tuple[PRContext, list[str]]:
-        """Fetch everything a provider needs, plus the list of trimmed files."""
+    async def load_context(
+        self, number: int, path_filter: PathFilter | None = None
+    ) -> tuple[PRContext, list[str], list[str]]:
+        """Fetch everything a provider needs.
+
+        Returns the context, the files skipped as not worth reviewing, and the
+        files that were too large to send whole. Both lists are surfaced in the
+        summary — a partial review must never read as a complete one.
+        """
         pull = (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
 
         raw_diff = (
@@ -122,7 +130,9 @@ class GitHubClient:
             )
         ).text
 
-        diff, trimmed = diffs.truncate(raw_diff)
+        path_filter = path_filter or PathFilter()
+        selected, skipped = diffs.select(raw_diff, lambda p: not path_filter.excluded(p))
+        diff, trimmed = diffs.truncate(selected)
 
         ctx = PRContext(
             owner=self.owner,
@@ -133,9 +143,9 @@ class GitHubClient:
             title=pull.get("title") or "",
             body=pull.get("body") or "",
             diff=diff,
-            changed_files=sorted(diffs.split_by_file(raw_diff)),
+            changed_files=sorted(diffs.split_by_file(selected)),
         )
-        return ctx, trimmed
+        return ctx, skipped, trimmed
 
     async def find_sticky_comment(self, number: int) -> StickyComment | None:
         """Locate our own summary comment by its ledger marker."""

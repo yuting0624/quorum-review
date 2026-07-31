@@ -19,6 +19,7 @@ from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
     Finding,
+    ModelUsage,
     PRContext,
     Skill,
     Verdict,
@@ -48,6 +49,10 @@ class DirectProvider:
         self.models = [m for m in dict.fromkeys([first, second]) if m]
         self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._clients: dict[str, Any] = {}
+        self.usage: dict[str, ModelUsage] = {}
+
+    def _record(self, model: str, **tokens: int) -> None:
+        self.usage.setdefault(model, ModelUsage()).add(**tokens)
 
     def _gemini(self) -> Any:
         if "gemini" not in self._clients:
@@ -97,6 +102,14 @@ class DirectProvider:
                 messages=[{"role": "user", "content": user}],
             ) as stream:
                 message = await stream.get_final_message()
+            self._record(
+                model,
+                input_tokens=getattr(message.usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(message.usage, "output_tokens", 0) or 0,
+                cached_input_tokens=getattr(
+                    message.usage, "cache_read_input_tokens", 0
+                ) or 0,
+            )
             if message.stop_reason == "refusal":
                 raise ValueError(f"{model} declined the request")
             return "".join(b.text for b in message.content if b.type == "text")
@@ -112,6 +125,12 @@ class DirectProvider:
                 response_schema=for_gemini(schema),
                 max_output_tokens=max_tokens,
             ),
+        )
+        meta = getattr(response, "usage_metadata", None)
+        self._record(
+            model,
+            input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
         )
         return response.text or ""
 

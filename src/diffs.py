@@ -8,6 +8,7 @@ needed and would obscure what the reviewer actually does.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 #: Per-file cap on how much diff text is put into a prompt (PRD §9). Anything
 #: beyond this is dropped with a marker so the model knows it is not seeing
@@ -76,6 +77,22 @@ def truncate(
         kept.append(section)
 
     return "".join(kept), trimmed
+
+
+def select(diff: str, keep: Callable[[str], bool]) -> tuple[str, list[str]]:
+    """Drop whole files from a diff, returning what remains and what went.
+
+    Separate from :func:`truncate` because the two answer different questions —
+    "is this file worth reviewing at all" and "is this file too big to send" —
+    and the summary reports them differently.
+    """
+    sections = split_by_file(diff)
+    if not sections:
+        return diff, []
+
+    kept = [section for path, section in sections.items() if keep(path)]
+    dropped = [path for path in sections if not keep(path)]
+    return "".join(kept), dropped
 
 
 def for_file(diff: str, path: str) -> str:

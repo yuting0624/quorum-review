@@ -92,6 +92,32 @@ class Skill:
     content: str
 
 
+@dataclass
+class ModelUsage:
+    """What one model consumed during a review.
+
+    Reported as tokens and calls, never as money: prices differ per model, per
+    platform, and per contract, so a dollar figure computed here would be a
+    guess presented as a fact. Tokens are what we actually observed.
+    """
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+
+    def add(
+        self,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+    ) -> None:
+        self.calls += 1
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_input_tokens += cached_input_tokens
+
+
 # --------------------------------------------------------------------------
 # JSON Schema
 # --------------------------------------------------------------------------
