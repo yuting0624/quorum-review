@@ -158,3 +158,124 @@ def test_an_ordinary_run_says_nothing_about_recovery():
     from quorum_review.report import RunReport, render
 
     assert "recovered" not in render(RunReport(suppressed=2, suppressed_titles=["a"]))
+
+
+# -- the four findings the reviewer raised on this change -------------------
+
+
+def test_a_closed_finding_is_not_resurrected_as_open():
+    """Worse than a duplicate. A fixed finding rebuilt as open is then
+    *suppressed*, so a genuine regression at that location goes unreported."""
+    comments = [
+        posted(11, "d" * 16),
+        reply(12, 11, "No longer reported as of `abc1234`. It will reappear if..."),
+    ]
+    book = rebuild(7, comments, dismissed=set(), closed={11})
+
+    assert book.entries["d" * 16].status == "fixed"
+    assert not book.is_suppressed(finding("d" * 16))
+
+
+def test_a_dismissal_outranks_a_closure():
+    """One is a decision someone made; the other is an observation."""
+    book = rebuild(7, [posted(11, "e" * 16)], dismissed={11}, closed={11})
+    assert book.entries["e" * 16].status == "wontfix"
+
+
+class FakeGitHub:
+    """Enough of the client to exercise the authorisation check."""
+
+    def __init__(self, comments, writers):
+        self._comments = comments
+        self._writers = set(writers)
+        self.asked: list[str] = []
+
+    async def review_comments(self, number):
+        return self._comments
+
+    async def has_write_access(self, username):
+        self.asked.append(username)
+        return username in self._writers
+
+
+def by(comment_id: int, root: int, author: str, body: str) -> dict:
+    return {
+        "id": comment_id,
+        "in_reply_to_id": root,
+        "user": {"login": author},
+        "body": body,
+    }
+
+
+def rebuild_via_client(comments, writers):
+    import asyncio
+
+    from quorum_review.github_client import GitHubClient
+
+    client = GitHubClient(token="t", repository="o/r")
+    fake = FakeGitHub(comments, writers)
+    client.review_comments = fake.review_comments  # type: ignore[method-assign]
+    client.has_write_access = fake.has_write_access  # type: ignore[method-assign]
+    return asyncio.run(client._rebuild_ledger(7, comments)), fake
+
+
+def test_a_dismissal_from_someone_without_write_access_is_not_honoured():
+    """The hole this recovery opened, reported by the reviewer.
+
+    `dismissal.handle` checks write access before recording one, precisely
+    because `COLLABORATOR` covers read-only and triage collaborators. Reading
+    dismissals back out of a thread has to apply the same check, or recovery
+    becomes a way around it.
+    """
+    comments = [
+        posted(11, "f" * 16),
+        by(12, 11, "drive-by", "@quorum wontfix — trust me"),
+    ]
+    book, fake = rebuild_via_client(comments, writers={"maintainer"})
+
+    assert book.entries["f" * 16].status == "open"
+    assert fake.asked == ["drive-by"]
+
+
+def test_a_dismissal_from_a_maintainer_is_honoured():
+    comments = [
+        posted(11, "1a" * 8),
+        by(12, 11, "maintainer", "@quorum wontfix — guarded by the ORM"),
+    ]
+    book, _ = rebuild_via_client(comments, writers={"maintainer"})
+    assert book.entries["1a" * 8].status == "wontfix"
+
+
+def test_each_author_is_only_asked_about_once():
+    comments = [
+        posted(11, "2b" * 8),
+        posted(21, "3c" * 8, line=40),
+        by(12, 11, "maintainer", "@quorum wontfix — one"),
+        by(22, 21, "maintainer", "@quorum wontfix — two"),
+    ]
+    _book, fake = rebuild_via_client(comments, writers={"maintainer"})
+    assert fake.asked == ["maintainer"]
+
+
+def test_a_rebuilt_ledger_says_so_rather_than_being_guessed_at():
+    """A marker that is present but will not decode looks exactly like one that
+    decoded fine, so the caller cannot infer this."""
+    book, _ = rebuild_via_client([posted(11, "4d" * 8)], writers=set())
+    assert book.was_rebuilt is False  # _rebuild_ledger does not set it
+    book.was_rebuilt = True
+    from quorum_review.ledger import decode_marker, encode_marker
+
+    assert decode_marker(encode_marker(book)).was_rebuilt is False
+
+
+def test_a_footer_that_is_not_a_hex_digest_is_not_a_finding():
+    """Caught by these tests using letters past 'f' as placeholder IDs. Real
+    ones are sha256 prefixes, and anything else is someone imitating the
+    format."""
+    fake = {
+        "id": 50,
+        "path": "a.py",
+        "line": 1,
+        "body": "**x**\n\n<sub>`security` · id `zzzzzzzzzzzzzzzz`</sub>",
+    }
+    assert rebuild(7, [fake], dismissed=set()).entries == {}

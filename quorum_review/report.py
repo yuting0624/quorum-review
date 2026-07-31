@@ -78,15 +78,15 @@ class RunReport:
     repo_access: str = ""
     #: Spend against the configured ceiling, when there is one.
     budget_note: str = ""
-    #: What the checkout was at. Not the same object as the commit under
-    #: review: `refs/pull/N/merge` is recomputed whenever the base branch
-    #: moves, and resolved when the workflow checks out rather than when the
-    #: diff was fetched, so the tree read can be a merge against a newer base.
     #: How many findings were recovered from existing comments because the
     #: summary carrying the ledger had been deleted. Said out loud: a review
     #: that quietly lost its history and rebuilt part of it is not the same
     #: run as one that never lost anything.
     recovered: int = 0
+    #: What the checkout was at. Not the same object as the commit under
+    #: review: `refs/pull/N/merge` is recomputed whenever the base branch
+    #: moves, and resolved when the workflow checks out rather than when the
+    #: diff was fetched, so the tree read can be a merge against a newer base.
     workspace_commit: str = ""
     tool_calls: int = 0
     files_read: list[str] = field(default_factory=list)

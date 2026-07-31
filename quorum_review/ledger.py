@@ -150,6 +150,12 @@ class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
+    #: True when this was reconstructed from comments rather than read from the
+    #: marker. Not serialised — it describes how this instance came to exist,
+    #: not the review. The caller cannot infer it: a marker that is present but
+    #: will not decode looks identical to one that decoded fine.
+    was_rebuilt: bool = field(default=False, compare=False)
+
     # -- lookup ------------------------------------------------------------
 
     def known(self, finding_id: str) -> LedgerEntry | None:
@@ -422,7 +428,19 @@ _FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`
 _TITLE = re.compile(r"^\s*\S*\s*\*\*(?P<title>.+?)\*\*", re.MULTILINE)
 
 
-def rebuild(number: int, comments: list[dict[str, Any]], dismissed: set[int]) -> Ledger:
+#: How the reviewer replies when it stops raising a finding. Recognising it is
+#: what keeps a rebuild from resurrecting a fixed finding as open — which would
+#: then *suppress* a genuine regression at that location, turning a lost
+#: history into a missed bug rather than merely a duplicate comment.
+CLOSED_REPLY = "No longer reported as of"
+
+
+def rebuild(
+    number: int,
+    comments: list[dict[str, Any]],
+    dismissed: set[int],
+    closed: set[int] | None = None,
+) -> Ledger:
     """Reconstruct enough state from the comments the reviewer already posted.
 
     The ledger lives in a hidden marker inside the summary comment, which
@@ -438,10 +456,19 @@ def rebuild(number: int, comments: list[dict[str, Any]], dismissed: set[int]) ->
     anything on the run that produced them.
 
     ``dismissed`` is the set of root comment IDs whose threads contain a
-    dismissal. Recovering those matters more than the rest: a re-raised finding
-    is noise, but a re-raised finding somebody explicitly retired is the
-    reviewer overruling a person.
+    dismissal **by someone with write access** — the caller checks, because the
+    trigger phrase is just text anybody can type and the handler that normally
+    records a dismissal verifies the author against the API. Recovering these
+    matters more than the rest: a re-raised finding is noise, but a re-raised
+    finding somebody explicitly retired is the reviewer overruling a person.
+
+    ``closed`` is the set whose threads the reviewer already replied to saying
+    it no longer raises them. Without it every fixed finding comes back as
+    open, and is then suppressed — so a real regression at that location goes
+    unreported, which is worse than the duplicate this function exists to
+    prevent.
     """
+    closed = closed or set()
     ledger = Ledger.empty(number)
     for comment in comments:
         if comment.get("in_reply_to_id"):
@@ -463,7 +490,7 @@ def rebuild(number: int, comments: list[dict[str, Any]], dismissed: set[int]) ->
             title=title.group("title").strip() if title else "(recovered finding)",
             line=int(comment.get("line") or comment.get("original_line") or 0),
             review_comment_id=comment_id,
-            status="wontfix" if comment_id in dismissed else "open",
+            status=_recovered_status(comment_id, dismissed, closed),
             wontfix_reason=(
                 "recovered from the thread; the original reason was in the "
                 "summary comment that was deleted"
@@ -472,3 +499,10 @@ def rebuild(number: int, comments: list[dict[str, Any]], dismissed: set[int]) ->
             ),
         )
     return ledger
+
+
+def _recovered_status(comment_id: int, dismissed: set[int], closed: set[int]) -> str:
+    """Dismissal wins over closure: it is a decision, the other is an observation."""
+    if comment_id in dismissed:
+        return "wontfix"
+    return "fixed" if comment_id in closed else "open"

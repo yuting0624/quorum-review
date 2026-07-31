@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from . import diffs
-from .ledger import MARKER_PREFIX, Ledger, decode_marker, rebuild
+from .ledger import CLOSED_REPLY, MARKER_PREFIX, Ledger, decode_marker, rebuild
 from .matching import is_dismissal_text
 from .pathfilter import IGNORE_FILE, PathFilter
 from .schema import PRContext
@@ -443,12 +443,44 @@ class GitHubClient:
                 return recovered, sticky
 
         comments = await self.review_comments(number)
-        dismissed = {
-            int(comment["in_reply_to_id"])
-            for comment in comments
-            if comment.get("in_reply_to_id") and is_dismissal_text(comment.get("body"))
-        }
-        return rebuild(number, comments, dismissed), sticky
+        recovered = await self._rebuild_ledger(number, comments)
+        recovered.was_rebuilt = True
+        return recovered, sticky
+
+    async def _rebuild_ledger(
+        self, number: int, comments: list[dict[str, Any]]
+    ) -> Ledger:
+        """Reconstruct state from the threads, checking who said what.
+
+        The dismissal phrase is text anyone able to comment can type, and the
+        handler that normally records a dismissal verifies the author against
+        the API for exactly that reason: ``COLLABORATOR`` covers read-only and
+        triage collaborators. Reading dismissals back out of a thread has to
+        apply the same check, or recovery becomes a way around it.
+        """
+        dismissed: set[int] = set()
+        closed: set[int] = set()
+        permitted: dict[str, bool] = {}
+
+        for comment in comments:
+            root = comment.get("in_reply_to_id")
+            if not root:
+                continue
+            body = comment.get("body") or ""
+
+            if CLOSED_REPLY in body:
+                closed.add(int(root))
+                continue
+            if not is_dismissal_text(body):
+                continue
+
+            author = ((comment.get("user") or {}).get("login") or "").strip()
+            if author not in permitted:
+                permitted[author] = await self.has_write_access(author)
+            if permitted[author]:
+                dismissed.add(int(root))
+
+        return rebuild(number, comments, dismissed, closed)
 
     # -- writes ------------------------------------------------------------
 
