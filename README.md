@@ -247,6 +247,7 @@ finding.
 | `fail-on` | `never` | `critical`/`high`/`medium`/`low` — exit non-zero so the action can be a required check |
 | `fail-on-degraded` | `false` | also fail when the reviewer could not run properly. See below |
 | `max-diff-characters` | `400000` | whole-diff budget; files that do not fit are named, never quietly skipped |
+| `max-tokens` | `0` (none) | ceiling on what one review may spend, across both models |
 | `fork-label` | `quorum: review` | label that authorises reviewing a pull request from a fork |
 | `sarif-file` | — | write findings as SARIF for code scanning |
 | `incremental` | `on` | re-reviews only what changed since the last review |
@@ -265,6 +266,17 @@ finding.
 | **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | best recall, usually cheaper than the row above |
 
 The default is not the most expensive option — easy to assume, and wrong.
+
+`max-tokens` puts a ceiling on one review, which is the question a platform team
+asks before enabling something on two hundred repositories. In tokens rather
+than money, for the same reason the summary reports tokens: prices differ by
+model, platform and contract, so a currency figure computed here would be a
+guess wearing the costume of a fact.
+
+It binds where cost scales with *findings* rather than with the diff — a scan is
+one call sized by the diff, verification is one call each. A review that reaches
+the ceiling stops verifying and says so in the summary; findings are demoted to
+advisory, never dropped.
 
 ### 🚦 Making it a required check
 

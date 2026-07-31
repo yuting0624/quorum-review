@@ -153,6 +153,22 @@ inputs:
       reviewed as if they had been.
     required: false
     default: "400000"
+  max-tokens:
+    description: >-
+      Ceiling on tokens one review may spend, across both models. 0 (the
+      default) is no ceiling.
+
+      In tokens rather than money, for the same reason the summary reports
+      tokens: prices differ by model, platform and contract, so a currency
+      figure computed here would be a guess wearing the costume of a fact.
+
+      It binds where cost scales with *findings* rather than with the diff —
+      verification, which is one call each. A scan is a single call sized by
+      the diff, so max-diff-characters is what bounds that. A review that
+      reaches the ceiling stops verifying and says so; findings are demoted to
+      advisory, never discarded.
+    required: false
+    default: "0"
   fail-on:
     description: >-
       Exit non-zero when a finding at or above this severity is posted, so the
@@ -259,6 +275,7 @@ runs:
         QUORUM_WORKSPACE: ${{ inputs.workspace-path }}
         QUORUM_FORK_LABEL: ${{ inputs.fork-label }}
         QUORUM_MAX_DIFF_CHARS: ${{ inputs.max-diff-characters }}
+        QUORUM_MAX_TOKENS: ${{ inputs.max-tokens }}
         QUORUM_FAIL_ON: ${{ inputs.fail-on }}
         QUORUM_FAIL_ON_DEGRADED: ${{ inputs.fail-on-degraded }}
         QUORUM_SARIF_FILE: ${{ inputs.sarif-file }}

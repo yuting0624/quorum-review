@@ -63,6 +63,8 @@ class RunReport:
     #: access to — "no guard anywhere" means one thing from a reviewer that
     #: searched the repository and another from one that saw eleven files.
     repo_access: str = ""
+    #: Spend against the configured ceiling, when there is one.
+    budget_note: str = ""
     tool_calls: int = 0
     files_read: list[str] = field(default_factory=list)
 
@@ -420,6 +422,10 @@ def _footer(report: RunReport) -> list[str]:
             )
         lines += ["<details>", "<summary>Usage</summary>", ""]
         lines += [*rows, "", "</details>", ""]
+
+    if report.budget_note:
+        lines.append(f"<sub>Token ceiling: {report.budget_note}.</sub>")
+        lines.append("")
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
     lines.append(

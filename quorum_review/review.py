@@ -20,6 +20,7 @@ import time
 
 from . import (
     actions,
+    budget,
     consensus,
     conversation,
     criteria,
@@ -84,6 +85,12 @@ def scan_with_all_models() -> bool:
 #: Tool calls one verification may make. Far below a scan's budget: a verifier
 #: is settling one specific claim, and it is called once per finding.
 VERIFY_TOOL_CALLS = int(os.getenv("QUORUM_VERIFY_TOOL_CALLS", "6"))
+
+#: What one verification is assumed to cost, when a token ceiling is set. Held
+#: back before each call rather than checked against zero, so the ceiling holds
+#: instead of being discovered to have been exceeded afterwards. Deliberately
+#: generous: a verifier with tools re-sends the conversation on every turn.
+VERIFY_TOKEN_RESERVE = int(os.getenv("QUORUM_VERIFY_TOKEN_RESERVE", "40000"))
 
 
 def inline_min_severity() -> str:
@@ -167,6 +174,7 @@ async def verify_all(
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
     unavailable: list[str] = []
     budgets = workspaces or [None] * len(findings)
+    usage = getattr(provider, "usage", {})
 
     async def one(finding: Finding, toolbox: Workspace | None) -> Finding:
         reviewer = consensus.reviewer_for(finding, models)
@@ -176,6 +184,21 @@ async def verify_all(
             return finding
 
         async with semaphore:
+            # Checked inside the semaphore, so the running total includes the
+            # calls that have already returned. Verification is the part of a
+            # review that scales with findings rather than with the diff — one
+            # call each, up to twenty — which makes it the part a ceiling has
+            # to bind on.
+            if budget.exhausted(usage, reserve=VERIFY_TOKEN_RESERVE):
+                finding.verdict = "uncertain"
+                finding.verifier_reason = (
+                    f"not verified: this review reached its token ceiling "
+                    f"({budget.note(usage)}). Raise `max-tokens`, or lower "
+                    f"`max-verified-findings` so the budget goes to the most "
+                    f"severe findings."
+                )
+                return finding
+
             try:
                 verdict = await provider.verify(reviewer, finding, ctx, toolbox=toolbox)
             except ProviderUnavailable as error:
@@ -590,6 +613,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         ledger.last_reviewed_sha = ctx.head_sha
         report.usage = dict(provider.usage)
+        report.budget_note = budget.note(provider.usage)
         report.elapsed_seconds = time.monotonic() - started
         body = report_mod.render(report)
         marker = ledger_mod.fit_to_comment(ledger, body)
