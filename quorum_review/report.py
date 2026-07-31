@@ -78,6 +78,11 @@ class RunReport:
     repo_access: str = ""
     #: Spend against the configured ceiling, when there is one.
     budget_note: str = ""
+    #: How many findings were recovered from existing comments because the
+    #: summary carrying the ledger had been deleted. Said out loud: a review
+    #: that quietly lost its history and rebuilt part of it is not the same
+    #: run as one that never lost anything.
+    recovered: int = 0
     #: What the checkout was at. Not the same object as the commit under
     #: review: `refs/pull/N/merge` is recomputed whenever the base branch
     #: moves, and resolved when the workflow checks out rather than when the
@@ -536,6 +541,16 @@ def render(report: RunReport) -> str:
             f"The diff exceeded the size budget, and these did not fit: {shown}. "
             f"Nothing below is a statement about them. Split the pull request, "
             f"or raise `max-diff-characters`.",
+        ]
+
+    if report.recovered:
+        lines += [
+            "",
+            f"> ℹ️ **The summary comment carrying this review's state had been "
+            f"deleted.** {report.recovered} finding(s) were recovered from the "
+            f"comments still on this pull request, so they are not reported "
+            f"again. What could not be recovered: severity, which model raised "
+            f"each one, and the reason behind any dismissal.",
         ]
 
     if report.renamed_files:

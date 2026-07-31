@@ -20,24 +20,19 @@ This gap was found by the reviewer reviewing its own workflow.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from .github_client import GitHubClient
 from .ledger import LedgerEntry, replace_marker
-
-#: Accepted ways to say it. Japanese included because the reviewer can be
-#: configured to write its findings in Japanese, and a reply should be able to
-#: match the language of the thread it is in.
-TRIGGERS = (
-    "@quorum wontfix",
-    "@quorum false positive",
-    "@quorum 誤検知",
+from .matching import (
+    DISMISSAL_TRIGGERS,
+    is_dismissal_text,
+    without_dismissal_trigger,
 )
 
-_TRIGGER_RE = re.compile(
-    "|".join(re.escape(trigger) for trigger in TRIGGERS), re.IGNORECASE
-)
+#: Re-exported; the phrases live in `matching` so that `github_client` can
+#: recognise one without importing this module, which imports it.
+TRIGGERS = DISMISSAL_TRIGGERS
 
 
 def is_dismissal(event: dict[str, Any]) -> bool:
@@ -50,12 +45,12 @@ def is_dismissal(event: dict[str, Any]) -> bool:
     comment = event.get("comment")
     if not isinstance(comment, dict) or not comment.get("in_reply_to_id"):
         return False
-    return bool(_TRIGGER_RE.search(comment.get("body") or ""))
+    return is_dismissal_text(comment.get("body"))
 
 
 def extract_reason(body: str) -> str:
     """The explanation, with the trigger phrase removed."""
-    return _TRIGGER_RE.sub("", body or "").strip(" \t\r\n:-—") or "no reason given"
+    return without_dismissal_trigger(body)
 
 
 async def handle(github: GitHubClient, event: dict[str, Any], number: int) -> int:

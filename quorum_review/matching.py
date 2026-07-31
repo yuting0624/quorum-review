@@ -29,6 +29,7 @@ term do not qualify.
 from __future__ import annotations
 
 import re
+import string
 from typing import NamedTuple
 
 _COMMENT = re.compile(r"(#|//).*$", re.MULTILINE)
@@ -156,3 +157,34 @@ def same_defect(a: Report, b: Report) -> bool:
     if a.file_path != b.file_path:
         return False
     return _same_position(a, b) or _same_wording(a, b)
+
+
+# -- retiring a finding ----------------------------------------------------
+
+#: Accepted ways to say it. Japanese included because the reviewer can be
+#: configured to write its findings in Japanese, and a reply should be able to
+#: match the language of the thread it is in.
+#:
+#: These live here rather than with the handler that acts on them because two
+#: callers need to recognise one: `dismissal`, handling the event, and
+#: `github_client`, reading a dismissal back out of a thread when the summary
+#: comment that recorded it has been deleted.
+DISMISSAL_TRIGGERS = (
+    "@quorum wontfix",
+    "@quorum false positive",
+    "@quorum 誤検知",
+)
+
+_DISMISSAL_RE = re.compile(
+    "|".join(re.escape(trigger) for trigger in DISMISSAL_TRIGGERS), re.IGNORECASE
+)
+
+
+def is_dismissal_text(body: str | None) -> bool:
+    """Whether this comment body retires a finding."""
+    return bool(_DISMISSAL_RE.search(body or ""))
+
+def without_dismissal_trigger(body: str) -> str:
+    """The explanation, with the trigger phrase removed."""
+    stripped = _DISMISSAL_RE.sub("", body or "").strip(string.whitespace + ":-—")
+    return stripped or "no reason given"

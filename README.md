@@ -505,6 +505,9 @@ Details, including the operational guidance: [docs/security.md](docs/security.md
   another — are out of reach.
 - **A file renamed *and* edited beyond recognition yields new findings.** Renames themselves are followed; git's own similarity detection decides what counts as one.
 - **Two instances of one pattern, described identically, collapse into one.**
+- **Deleting the summary comment loses some state.** Findings and dismissals
+  are recovered from the comments still on the pull request; severity, which
+  model raised each one, and dismissal reasons are not.
 - **"No longer reported" does not mean fixed** — it can also mean the scan did
   not raise it this time. The summary says only what is known.
 - **`issue_comment` workflows run from the default branch.** Editing the workflow
