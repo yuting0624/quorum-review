@@ -103,9 +103,12 @@ reacting.
 **Dismiss a false positive** by replying `@quorum wontfix — <why>` to the review
 comment. It is not reported again, and the reason is kept.
 
-**Resolved findings close themselves.** When a finding stops being reported, its
-thread gets a reply and is collapsed. A wall of open comments for problems that
-are gone is how a reviewer teaches people to ignore it.
+**Resolved findings close themselves** — given a token that is allowed to.
+When a finding stops being reported its thread gets a reply, and is collapsed
+if possible. The default `GITHUB_TOKEN` **cannot** resolve review threads,
+whatever `permissions:` says, so out of the box the reply appears and the
+thread stays open; the summary says so when that happens. Pass a GitHub App
+token via `github-token` to get the collapse.
 
 **Fixes arrive as suggestions when they are safe.** Only when the model can
 replace the anchored lines completely — a partial fix someone clicks apply on is

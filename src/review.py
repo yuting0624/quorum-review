@@ -205,42 +205,57 @@ async def close_threads(
     number: int,
     entries: list[ledger_mod.LedgerEntry],
     head_sha: str,
-) -> None:
+) -> bool:
     """Reply to and collapse the threads of findings that are no longer raised.
 
     Leaving them open is the failure mode this project was built partly in
     reaction to: a reviewer that keeps a wall of resolved comments open teaches
-    people to stop reading it. Best effort — a thread that cannot be collapsed
-    is not worth failing an otherwise good review over.
+    people to stop reading it.
+
+    Returns True when collapsing was refused. The default ``GITHUB_TOKEN``
+    cannot call ``resolveReviewThread`` — GitHub forbids it for the Actions app
+    whatever `permissions:` says — so this is an ordinary configuration state,
+    not a bug, and the summary explains it rather than the logs swallowing it.
+    The reply is still posted either way.
     """
     anchored = [entry for entry in entries if entry.review_comment_id]
     if not anchored:
-        return
+        return False
 
     try:
         threads = await github.review_threads(number)
     except GitHubError as error:
         print(f"warning: could not read review threads: {error}", file=sys.stderr)
-        return
+        return False
 
+    forbidden = False
     for entry in anchored:
-        thread = threads.get(int(entry.review_comment_id or 0))
+        comment_id = int(entry.review_comment_id or 0)
+        thread = threads.get(comment_id)
         if thread is None or thread.is_resolved:
             continue
+
         try:
             await github.reply_to_comment(
                 number,
-                int(entry.review_comment_id),  # type: ignore[arg-type]
-                f"No longer reported as of `{head_sha[:7]}` — resolving this "
-                f"thread. It will reappear if a later review finds it again.",
+                comment_id,
+                f"No longer reported as of `{head_sha[:7]}`. It will reappear "
+                f"if a later review finds it again.",
             )
+        except GitHubError as error:
+            print(f"warning: could not reply to {comment_id}: {error}", file=sys.stderr)
+            continue
+
+        if forbidden:
+            continue  # the token cannot resolve; do not ask N more times
+        try:
             await github.resolve_thread(thread.thread_id)
         except GitHubError as error:
-            print(
-                f"warning: could not resolve the thread for {entry.finding_id}: "
-                f"{error}",
-                file=sys.stderr,
-            )
+            forbidden = True
+            print(f"note: threads cannot be collapsed by this token: {error}",
+                  file=sys.stderr)
+
+    return forbidden
 
 
 async def run(skill_name: str, dry_run: bool) -> int:
@@ -382,7 +397,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
             f for f in report.unverified if f.finding_id not in unanchored_ids
         ]
 
-        await close_threads(github, number, newly_closed, ctx.head_sha)
+        report.threads_not_collapsible = await close_threads(
+            github, number, newly_closed, ctx.head_sha
+        )
 
         # Refuted findings are still recorded: keeping them stops the next run
         # from re-proposing something already dismissed.

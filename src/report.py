@@ -48,6 +48,7 @@ class RunReport:
     elapsed_seconds: float = 0.0
     incremental: bool = False
     since_sha: str = ""
+    threads_not_collapsible: bool = False
     head_sha: str = ""
 
 
@@ -226,6 +227,15 @@ def render(report: RunReport) -> str:
             "",
         ]
         lines += [f"- {title}" for title in report.resolved]
+
+        if report.threads_not_collapsible:
+            lines += [
+                "",
+                "> ℹ️ Their threads were replied to but left open: the default "
+                "`GITHUB_TOKEN` is not allowed to resolve review threads, "
+                "whatever `permissions:` says. Supply a GitHub App token via "
+                "`github-token` to have them collapse automatically.",
+            ]
 
     if report.unanchored:
         lines += [
