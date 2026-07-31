@@ -34,16 +34,37 @@ class StickyComment:
 
 
 def read_event() -> dict[str, Any]:
-    """Load the workflow event payload written by the Actions runner."""
+    """Load the workflow event payload written by the Actions runner.
+
+    Absent when the pull request is named explicitly, so that a manual run does
+    not need a synthesised payload.
+    """
     path = os.getenv("GITHUB_EVENT_PATH")
     if not path or not os.path.exists(path):
-        raise GitHubError("GITHUB_EVENT_PATH is not set; this must run inside Actions")
+        if os.getenv("QUORUM_PR_NUMBER", "").strip():
+            return {}
+        raise GitHubError(
+            "GITHUB_EVENT_PATH is not set; run inside Actions, "
+            "or set QUORUM_PR_NUMBER to review a specific pull request"
+        )
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def pr_number_from_event(event: dict[str, Any]) -> int:
-    """Find the PR number for either a pull_request or a comment event."""
+    """Find the PR number for a pull_request or comment event.
+
+    ``QUORUM_PR_NUMBER`` overrides the event, which is what makes
+    ``workflow_dispatch`` and local re-runs possible: those carry no pull
+    request in their payload.
+    """
+    override = os.getenv("QUORUM_PR_NUMBER", "").strip()
+    if override:
+        try:
+            return int(override)
+        except ValueError:
+            raise GitHubError(f"QUORUM_PR_NUMBER is not a number: {override!r}") from None
+
     if "pull_request" in event and isinstance(event["pull_request"], dict):
         return int(event["pull_request"]["number"])
     issue = event.get("issue")

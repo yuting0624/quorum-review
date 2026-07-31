@@ -125,7 +125,7 @@ steps:
   - uses: google-github-actions/auth@v2
     with:
       workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-      service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+      project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
   - uses: your-org/quorum-review@main
     with:
       google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}

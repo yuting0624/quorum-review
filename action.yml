@@ -46,6 +46,12 @@ inputs:
     description: Token used to read the diff and post comments.
     required: false
     default: ${{ github.token }}
+  pr-number:
+    description: >-
+      Pull request to review. Normally inferred from the event; set this for
+      workflow_dispatch, which carries no pull request in its payload.
+    required: false
+    default: ""
   scan:
     description: >-
       'both' has each model read the diff independently and merges the results.
@@ -100,9 +106,10 @@ runs:
         QUORUM_VERIFICATION: ${{ inputs.verification }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        QUORUM_PR_NUMBER: ${{ inputs.pr-number }}
       run: |
         # Empty inputs must not shadow a default set inside the code.
-        for name in PRIMARY_MODEL VERIFIER_MODEL REVIEW_LANGUAGE; do
+        for name in PRIMARY_MODEL VERIFIER_MODEL REVIEW_LANGUAGE QUORUM_PR_NUMBER; do
           if [ -z "${!name}" ]; then unset "$name"; fi
         done
         python -m src.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
