@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
+import pathlib
 import sys
 
 from quorum_review import consensus
@@ -37,7 +39,10 @@ from quorum_review.schema import Finding, PRContext
 # specific enough to separate the several bugs that share a file.
 SEEDED = {
     "B1": ("app/search.py", ("sql inject", "sql-inject")),
-    "B2": ("app/export.py", ("traversal",)),
+    # "traversal" alone once scored a hit as a miss: the finding was titled
+    # "Export filename joined into a path without validation (arbitrary file
+    # write)", which is the same bug named after its consequence.
+    "B2": ("app/export.py", ("traversal", "arbitrary file", "basename")),
     "B3": ("app/sharing.py", ("constant-time", "constant time", "timing")),
     "B4": ("app/fetcher.py", ("ssrf", "request forgery")),
     "B5": ("app/config.py", ("secret", "fallback", "hardcoded")),
@@ -235,9 +240,11 @@ async def main_async(args: argparse.Namespace) -> int:
 
     scan_hits: list[set] = []
     final_hits: list[set] = []
+    transcript: list[dict[str, object]] = []
 
     for index in range(1, args.runs + 1):
         reported, survived = await one_run(provider, ctx, skill, scanners, args.verify)
+        transcript.append({"reported": _dump(reported), "survived": _dump(survived)})
         p_score, f_score = score(reported), score(survived)
         scan_hits.append(p_score["seeded"])  # type: ignore[arg-type]
         final_hits.append(f_score["seeded"])  # type: ignore[arg-type]
@@ -267,12 +274,75 @@ async def main_async(args: argparse.Namespace) -> int:
     mean_p = sum(len(h) for h in scan_hits) / args.runs
     mean_f = sum(len(h) for h in final_hits) / args.runs
     print(f"\nmean seeded found: scanned {mean_p:.1f}/10, survived {mean_f:.1f}/10")
+
+    if args.save:
+        pathlib.Path(args.save).write_text(
+            json.dumps(transcript, indent=2), encoding="utf-8"
+        )
+        print(f"findings written to {args.save}")
     return 0
+
+
+def _dump(findings: list[Finding]) -> list[dict[str, str]]:
+    return [
+        {"file_path": f.file_path, "title": f.title, "body": f.body} for f in findings
+    ]
+
+
+def rescore(path: str, runs_label: str = "") -> int:
+    """Re-apply the answer key to a saved run.
+
+    Every mis-scored result so far has been a keyword gap rather than a model
+    failure — a finding titled after the consequence instead of the mechanism,
+    or two cases in one file collapsing onto the same ID. Fixing the key then
+    cost a full set of paid runs to re-measure, which is a strong incentive not
+    to fix it. Saving the findings removes that.
+    """
+    transcript = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    scan_hits, final_hits = [], []
+
+    print(f"rescoring {path}{runs_label}\n")
+    for index, entry in enumerate(transcript, start=1):
+        reported = [_load(item) for item in entry["reported"]]
+        survived = [_load(item) for item in entry["survived"]]
+        p_score, f_score = score(reported), score(survived)
+        scan_hits.append(p_score["seeded"])
+        final_hits.append(f_score["seeded"])
+        print(f"run {index}")
+        print(f"  scanned  ({p_score['total']:2d} findings): {fmt(p_score)}")
+        print(f"  survived ({f_score['total']:2d} findings): {fmt(f_score)}")
+        for item in p_score["unclassified"]:  # type: ignore[union-attr]
+            print(f"    ? unclassified: {item}")
+
+    total = len(transcript)
+    print("\nper-bug hit rate across runs (scanned / survived)")
+    for key in sorted(SEEDED, key=lambda k: int(k[1:])):
+        p = sum(key in hits for hits in scan_hits)
+        f = sum(key in hits for hits in final_hits)
+        flag = "" if p == total else ("  <- unstable" if p else "  <- never found")
+        print(f"  {key:<4} {p}/{total}  {f}/{total}{flag}")
+
+    mean_p = sum(len(h) for h in scan_hits) / total
+    mean_f = sum(len(h) for h in final_hits) / total
+    print(f"\nmean seeded found: scanned {mean_p:.1f}/10, survived {mean_f:.1f}/10")
+    return 0
+
+
+def _load(item: dict[str, str]) -> Finding:
+    return Finding(
+        file_path=item["file_path"],
+        line=0,
+        category="security",
+        severity="medium",
+        title=item["title"],
+        body=item["body"],
+        code_snippet="",
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="benchmark.measure")
-    parser.add_argument("--pr", type=int, required=True)
+    parser.add_argument("--pr", type=int, default=0)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--primary", default="")
     parser.add_argument("--verifier", default="")
@@ -281,6 +351,19 @@ def main() -> int:
         "--show",
         action="store_true",
         help="print every finding with the answer-key ID it matched",
+    )
+    parser.add_argument(
+        "--save",
+        default="",
+        help="write every finding to this JSON file so it can be rescored later",
+    )
+    parser.add_argument(
+        "--rescore",
+        default="",
+        help=(
+            "re-apply the answer key to a saved run and exit. Correcting a "
+            "keyword should not cost a paid re-measurement."
+        ),
     )
     parser.add_argument(
         "--workspace",
@@ -309,6 +392,11 @@ def main() -> int:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
+
+    if args.rescore:
+        return rescore(args.rescore)
+    if not args.pr:
+        parser.error("--pr is required unless --rescore is given")
 
     return asyncio.run(main_async(args))
 

@@ -15,3 +15,8 @@
 # reviews PR #1 too, and it would have found the same file.
 benchmark/seeded-bugs/README.md
 tests/test_fixture_integrity.py
+
+# Saved findings from past measurement runs. Committed as the evidence behind
+# the recorded numbers, and hidden for the same reason as the key itself: a
+# transcript naming every bug is an answer key written by the model.
+benchmark/runs/**

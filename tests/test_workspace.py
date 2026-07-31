@@ -274,5 +274,9 @@ def test_the_benchmark_answer_key_is_hidden_from_the_models():
     assert (root / ".quorumignore").is_file()
 
     hidden = Workspace(root, PathFilter.build(root=root))
-    for path in ("benchmark/seeded-bugs/README.md", "tests/test_fixture_integrity.py"):
+    for path in (
+        "benchmark/seeded-bugs/README.md",
+        "tests/test_fixture_integrity.py",
+        "benchmark/runs/anything.json",
+    ):
         assert hidden.run("read_file", {"path": path}).startswith("Error:")
