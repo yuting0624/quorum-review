@@ -55,12 +55,21 @@ concurrency:
 #
 # Note that `permissions:` only governs GITHUB_TOKEN. If you switch to a GitHub
 # App token, the effective permissions are the App installation's instead.
-# `security-events: write` is only for the SARIF upload at the end.
+# `security-events: write` and `actions: read` are only for the SARIF upload at
+# the end. `actions: read` is what codeql-action needs to read the workflow run
+# on a private repository; without it the upload fails with "Resource not
+# accessible by integration".
+#
+# Note also that uploading to code scanning on a *private* repository requires
+# GitHub Advanced Security. It is free on public ones. Drop the upload step and
+# these two permissions if neither applies — the findings are still in the pull
+# request and the job summary.
 permissions:
   contents: read
   id-token: write
   pull-requests: write
   security-events: write
+  actions: read
 
 jobs:
   review:
