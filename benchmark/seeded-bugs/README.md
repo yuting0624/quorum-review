@@ -75,56 +75,66 @@ false positive.**
 
 ## Results
 
-Measured against PR #1 at `cc4b946`, project `data-agent-bq`, Vertex `global`,
-skill `security-review`. One run per configuration.
+Measured against PR #1, project `data-agent-bq`, Vertex `global`, skill
+`security-review`. One run per configuration — see the caution below.
 
-| Date | Configuration | Seeded found (/10) | Unseeded real | False positives | Notes |
-|---|---|---|---|---|---|
-| 2026-08-01 | Primary only — `gemini-3.1-pro-preview` | 9 | 1 (U1) | 0 | Missed B8 |
-| 2026-08-01 | `gemini-3.1-pro-preview` → `claude-opus-5` | 9 | 1 (U1) | 0 | Verifier confirmed all 10, refuted none |
-| 2026-08-01 | Primary only — `claude-opus-5` | 10 | 2 (U1, U2) | 0 | Found B8 |
-| 2026-08-01 | `claude-opus-5` → `gemini-3.1-pro-preview` | 9 | 2 (U1, U2) | 0 | Verifier refuted B8 (see caveat) |
+| Date | Primary | Verifier | Primary found (/10) | Survived verification | Unseeded real | False positives |
+|---|---|---|---|---|---|---|
+| 2026-08-01 | `gemini-3.1-pro-preview` | `claude-opus-5` | 9 (missed B8) | 9 | U1 | 0 |
+| 2026-08-01 | `gemini-3.6-flash` | `claude-opus-5` | 9 (missed B7) | 8 (B8 refuted) | U1 | 0 |
+| 2026-08-01 | `claude-opus-5` | `gemini-3.1-pro-preview` | 10 | 9 (B8 refuted) | U1, U2 | 0 |
+| 2026-08-01 | **`claude-opus-5`** | **`gemini-3.6-flash`** | **10** | **10** | U1 | **0** |
 
-Targets from the PRD were ≥6 of 10 detected and ≤3 false positives per review.
-Both are met in every configuration.
+PRD targets were ≥6 of 10 detected and ≤3 false positives. Every configuration
+clears both, and **no configuration was fooled by any of the three decoys.**
 
 ### What the numbers say
 
-**Claude is the stronger primary on this fixture.** It reported 12 findings to
-Gemini's 10, caught B8 where Gemini did not, and found U2 as well. Neither model
-was fooled by any of the three decoys.
+**Claude is the stronger primary on this fixture, and the margin is not
+marginal.** As primary it found all ten seeded bugs in both runs. Neither Gemini
+model managed better than nine, and they missed different ones —
+`gemini-3.1-pro-preview` missed B8, `gemini-3.6-flash` missed B7 while catching
+B8. Two nines covering different ground is a recall problem, not a tie.
 
-**The verification stage did not remove anything in the forward direction.** With
-Gemini scanning, Claude confirmed all ten findings and refuted none. On this
-fixture the second stage bought no precision, because the first stage produced
-no plausible-but-wrong findings for it to cut. Its measurable contribution here
-was re-scoring severity — it promoted the SQL injection and the swallowed
-authorization check to `critical` and demoted the TOCTOU and timing issues to
-`low`, all without having seen the original ratings.
+**Reversing the roles is also the cheaper shape.** Verification is the stage
+that scales with the number of findings: one model call each. Scanning is a
+single call regardless of diff size. Putting the expensive model on the O(1)
+scan and a Flash model on the O(N) verification inverts the intuition the design
+started from — and here it was both more accurate and cheaper.
 
-**In the reverse direction the verifier removed a true positive.** Gemini
-refuted B8, reasoning that the idempotent append means the default list cannot
-accumulate. Given the caveat above, that reasoning is defensible on impact and
-still wrong on the latent defect. This is the clearest evidence so far that the
-verifier is not free: it can cost recall, and which model does the verifying
-matters.
+**Verification is not free, and B8 is where that shows.** Three of the four runs
+turned on it. `claude-opus-5` and `gemini-3.1-pro-preview` both refuted it, with
+near-identical reasoning: the append is idempotent, so nothing accumulates.
+`gemini-3.6-flash` confirmed it. Given the caveat above, the refutations are
+defensible on impact and wrong on the latent defect — but the point stands
+independently of who is right: **the second stage can and does remove true
+positives.** Which model verifies changes the answer.
+
+**When the verifier removed nothing, it still re-scored severity.** In the runs
+with zero refutations the measurable contribution was re-ranking: the SQL
+injection and the swallowed authorization check were promoted to `critical`, the
+TOCTOU and timing issues demoted to `low`, all without the verifier having seen
+the original ratings.
 
 **Do not over-read any of this.** One fixture, one run per configuration, no
 repetition, and the fixture was written by the same person who wrote the
-reviewer. It is enough to answer "does the arrangement work end to end" and to
-give the role-ordering question a first data point. It is not enough to rank the
-models.
+reviewer. `claude-opus-5` also reported 12 findings in one run and 11 in
+another, so single runs are visibly noisy. This is enough to answer "does the
+arrangement work end to end" and to give the role-ordering question a first data
+point. It is not enough to rank the models.
 
 ### Open questions this raises
 
-- The forward configuration produced no refutations. Is that a property of the
-  fixture, or does the verification stage rarely fire in practice? A fixture with
-  deliberately plausible-but-wrong findings would separate the two.
-- B8 was found only by the `security-review` skill's weaker half. It is a
-  `correctness` defect; running `code-quality-review` should be a fairer test of
-  whether it is reachable at all.
-- Verification cost roughly one model call per finding for zero removals in the
-  forward direction. Worth measuring against the value of the severity re-scoring.
+- Three of four runs produced at most one refutation, and all of them concerned
+  the one finding the fixture is known to be ambiguous about. A fixture with
+  deliberately plausible-but-wrong findings would show whether the verification
+  stage does anything on inputs it was designed for.
+- B7 and B8 are both `correctness` defects being hunted by a `security-review`
+  skill. Running `code-quality-review` would be a fairer test of whether the
+  misses are model capability or prompt scope.
+- Every configuration cost roughly one model call per finding for at most one
+  removal. That is worth pricing against the severity re-scoring, which is real
+  but harder to value.
 
 ### Still to measure
 

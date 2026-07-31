@@ -160,9 +160,8 @@ def render(report: RunReport) -> str:
         "---",
         "",
         f"<sub>Reviewed `{report.head_sha[:7]}` · primary `{report.primary_model}` · "
-        f"verifier `{report.verifier_model or 'none'}` · "
-        f"[quorum-review](https://github.com/quorum-review) — a reference "
-        f"implementation, not a supported product.</sub>",
+        f"verifier `{report.verifier_model or 'none'}` · quorum-review — a "
+        f"reference implementation, not a supported product.</sub>",
     ]
 
     return "\n".join(lines)

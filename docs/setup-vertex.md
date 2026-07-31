@@ -148,7 +148,7 @@ project = os.environ["GOOGLE_CLOUD_PROJECT"]
 async def main():
     gemini = genai.Client(vertexai=True, project=project, location="global")
     reply = await gemini.aio.models.generate_content(
-        model=os.getenv("PRIMARY_MODEL", "gemini-3.1-pro-preview"),
+        model=os.getenv("PRIMARY_MODEL", "gemini-3.6-flash"),
         contents="Reply with the single word: ok",
     )
     print("gemini:", (reply.text or "").strip())

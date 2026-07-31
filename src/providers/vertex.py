@@ -36,10 +36,10 @@ from .base import ProviderUnavailable
 # Defaults. Both are overridable; neither is load-bearing.
 #
 # NOTE ON THE GEMINI DEFAULT: model availability in Model Garden varies by
-# project and by release channel, and the Gemini 3 line still carries `-preview`
-# suffixes. Confirm what your project can actually call before relying on this
-# value — `python -m src.review --list-models` prints the list.
-DEFAULT_PRIMARY_MODEL = "gemini-3.1-pro-preview"
+# project and by release channel, and parts of the Gemini 3 line still carry
+# `-preview` suffixes. Confirm what your project can actually call before
+# relying on this value — `python -m src.review --list-models` prints the list.
+DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 
 # Output budgets. `max_tokens` on Claude caps thinking *plus* response text, and
@@ -265,4 +265,11 @@ class VertexProvider:
         client = genai.Client(
             vertexai=True, project=self._project, location=self._gemini_location
         )
-        return sorted(model.name or "" for model in client.models.list())
+        # The API returns fully qualified names like
+        # `publishers/google/models/gemini-x`; strip the prefix so what is
+        # printed can be pasted straight into PRIMARY_MODEL.
+        return sorted(
+            (model.name or "").rsplit("/", 1)[-1]
+            for model in client.models.list()
+            if model.name
+        )
