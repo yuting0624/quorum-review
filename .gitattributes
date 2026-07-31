@@ -1,0 +1,2 @@
+# The action runs on ubuntu-latest, so normalise everything in the repo to LF.
+* text=auto eol=lf
