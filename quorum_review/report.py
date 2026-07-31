@@ -401,6 +401,19 @@ def _skipped_note(paths: list[str]) -> str:
     )
 
 
+def _version() -> str:
+    """Which reviewer produced this.
+
+    Findings outlive the run that made them — in a comment, in the Security tab,
+    in someone's quarterly report — and "why did it say that in March" is not
+    answerable without knowing what was running in March. The models are already
+    named; this is the other half.
+    """
+    from . import __version__
+
+    return __version__
+
+
 def _footer(report: RunReport) -> list[str]:
     """Provenance and cost.
 
@@ -429,7 +442,8 @@ def _footer(report: RunReport) -> list[str]:
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
     lines.append(
-        f"<sub>Reviewed `{report.head_sha[:7]}` · models "
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
+        f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
         + f"{elapsed} · quorum-review — a reference implementation, not a "
         "supported product.</sub>"

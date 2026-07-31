@@ -61,8 +61,8 @@ Tests need no credentials — model calls are not made in the suite.
 ## If you find a false positive worth fixing
 
 The interesting ones are a signal about the criteria, not about the code.
-`skills/*/SKILL.md` is where they get fixed — a "Do not report" entry is usually
-better than a code change. `@quorum /criteria` on a pull request will draft one
+`quorum_review/skills/*/SKILL.md` is where the built-in ones get fixed — a
+"Do not report" entry is usually better than a code change. `@quorum /criteria` on a pull request will draft one
 from findings that were dismissed there.
 
 ## Security

@@ -17,6 +17,7 @@ import os
 import pathlib
 import sys
 
+from . import __version__
 from .report import RunReport
 from .schema import SEVERITIES, SEVERITY_RANK
 
@@ -24,6 +25,10 @@ from .schema import SEVERITIES, SEVERITY_RANK
 #: gating at all. Deliberately not a boolean: "block on anything at all" and
 #: "block on exploitable-now" are different policies and teams want both.
 FAIL_ON_CHOICES = ("never", *SEVERITIES)
+
+
+def _version() -> str:
+    return __version__
 
 
 def fail_on() -> str:
@@ -152,6 +157,7 @@ def write_outputs(report: RunReport) -> None:
         "dropped": str(len(report.dropped_files)),
         "degraded": "true" if degraded(report) else "false",
         "repo-access": report.repo_access or "off",
+        "version": _version(),
         **{name: str(count) for name, count in counts.items()},
     }
     with pathlib.Path(path).open("a", encoding="utf-8") as handle:

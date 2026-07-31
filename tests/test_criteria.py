@@ -9,6 +9,7 @@ configuration one, and it has the same answer as `.quorumignore`.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 
 import pytest
 
@@ -132,3 +133,45 @@ def test_criteria_at_the_limit_are_allowed():
 def test_too_many_files_are_refused():
     with pytest.raises(ValueError, match="limit is"):
         resolve(", ".join(["security-review"] * (criteria.MAX_CRITERIA_FILES + 1)))
+
+
+# -- where the built-ins live ----------------------------------------------
+
+
+def test_the_builtins_are_inside_the_package():
+    """They used to sit at the repository root, and that worked by accident.
+
+    The action runs `python -m` with the checkout as the working directory, so
+    Python imported the source tree rather than the installed copy and the
+    files happened to be there. An installed `quorum-review` found no built-ins
+    at all — silently, because an empty directory reads as "no criteria" rather
+    than as a broken install. `ci.yml` has a job that installs the package and
+    checks this from a different directory; this is the unit-level half.
+    """
+    import quorum_review
+
+    package = pathlib.Path(quorum_review.__file__).resolve().parent
+    assert criteria._builtin_root() == package / "skills"
+    assert criteria.builtin_names()
+
+
+def test_every_builtin_is_readable():
+    for name in criteria.builtin_names():
+        assert criteria.load_builtin(name).content.strip()
+
+
+def test_the_location_can_be_relocated(monkeypatch, tmp_path):
+    """For anyone vendoring the criteria somewhere else."""
+    (tmp_path / "house-style").mkdir()
+    (tmp_path / "house-style" / "SKILL.md").write_text("# ours", encoding="utf-8")
+    monkeypatch.setenv("QUORUM_SKILLS_ROOT", str(tmp_path))
+
+    assert criteria.builtin_names() == ["house-style"]
+    assert "ours" in criteria.load_builtin("house-style").content
+
+
+def test_a_missing_skills_directory_is_reported_not_crashed(monkeypatch, tmp_path):
+    monkeypatch.setenv("QUORUM_SKILLS_ROOT", str(tmp_path / "nowhere"))
+    assert criteria.builtin_names() == []
+    with pytest.raises(FileNotFoundError):
+        criteria.load_builtin("security-review")

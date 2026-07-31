@@ -14,7 +14,7 @@ So ``skill`` accepts three shapes, and they compose:
     skill: security-review, .github/quorum/backend.md
 
 Anything containing ``/`` or ending in ``.md`` is a repository path. Everything
-else names a directory under this action's ``skills/``.
+else names a built-in, which ship inside the package.
 
 **Which ref repository criteria are read from is a security decision.** Criteria
 are instructions to the model — a far more direct route than the diff, which at
@@ -26,12 +26,30 @@ branch's copy governs, the same rule and the same reason as ``.quorumignore``.
 
 from __future__ import annotations
 
+import os
 import pathlib
 from typing import Any
 
 from .schema import Skill
 
-BUILTIN_ROOT = pathlib.Path(__file__).resolve().parent.parent / "skills"
+
+#: The built-in criteria ship inside the package. They used to sit at the
+#: repository root, which worked only because the action runs `python -m` with
+#: the checkout as the working directory — Python then imports the source tree
+#: rather than the installed copy. An installed `quorum-review` found no
+#: built-ins at all, silently, and the accident was one `cd` away from breaking
+#: the action too.
+#:
+#: ``QUORUM_SKILLS_ROOT`` relocates them, for anyone vendoring the criteria
+#: somewhere else.
+def _builtin_root() -> pathlib.Path:
+    override = os.getenv("QUORUM_SKILLS_ROOT", "").strip()
+    if override:
+        return pathlib.Path(override).resolve()
+    return pathlib.Path(__file__).resolve().parent / "skills"
+
+
+BUILTIN_ROOT = _builtin_root()
 
 #: Cap on one repository-supplied criteria file. It is prepended to every scan
 #: prompt for every model, so its cost is paid on each review forever. Long
@@ -57,13 +75,14 @@ def is_repository_path(name: str) -> bool:
 
 
 def builtin_names() -> list[str]:
-    if not BUILTIN_ROOT.is_dir():
+    root = _builtin_root()
+    if not root.is_dir():
         return []
-    return sorted(p.name for p in BUILTIN_ROOT.iterdir() if p.is_dir())
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 def load_builtin(name: str) -> Skill:
-    path = BUILTIN_ROOT / name / "SKILL.md"
+    path = _builtin_root() / name / "SKILL.md"
     if not path.exists():
         available = ", ".join(builtin_names())
         raise FileNotFoundError(

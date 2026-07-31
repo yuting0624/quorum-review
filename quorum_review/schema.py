@@ -117,7 +117,11 @@ class PRContext:
 
 @dataclass
 class Skill:
-    """Review criteria — the verbatim contents of ``skills/<name>/SKILL.md``."""
+    """Review criteria, verbatim.
+
+    Either a built-in from ``quorum_review/skills/<name>/SKILL.md`` or a file
+    in the repository under review. Several can be concatenated.
+    """
 
     name: str
     content: str

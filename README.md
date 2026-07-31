@@ -213,6 +213,8 @@ steps:
 enabled in Vertex AI Model Garden** — skip that and every Claude call returns 404
 while the Gemini half keeps working, which is a confusing way to find out.
 Full setup, including Workload Identity Federation: **[docs/setup-vertex.md](docs/setup-vertex.md)**.
+How to read the output, what it costs, and what to do when it breaks:
+**[docs/operations.md](docs/operations.md)**.
 
 Complete workflows: [`review-vertex.yml`](examples/review-vertex.yml) ·
 [`review-vertex-app.yml`](examples/review-vertex-app.yml) (GitHub App token) ·
@@ -516,8 +518,16 @@ quorum_review/
   dismissal.py               retiring a false positive
   learning.py                dismissals → proposed criteria change
   github_client.py           REST + the GraphQL needed to resolve threads
-skills/                      review criteria, pluggable
+  workspace.py               the read-only tools the models use on the checkout
+  criteria.py                built-in and repository-supplied review criteria
+  redaction.py               keeping a finding from republishing the secret
+  forks.py                   who may have their fork reviewed, and on whose say-so
+  actions.py                 exit code, outputs, job summary
+  sarif.py                   findings for the Security tab
+  budget.py                  a ceiling on what one review may spend
+  skills/                    built-in criteria, shipped inside the package
 benchmark/                   seeded-bug fixture + repeated-measurement harness
+  runs/                      raw findings behind the recorded numbers
 scripts/create_app.py        GitHub App manifest flow
 ```
 

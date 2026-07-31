@@ -27,6 +27,13 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 [tool.setuptools]
 packages = ["quorum_review", "quorum_review.providers"]
 
+# The built-in criteria are behaviour, not documentation: without them a
+# `skill: security-review` resolves to nothing. They are inside the package so
+# that an installed copy has them, rather than relying on the process happening
+# to be running from a checkout.
+[tool.setuptools.package-data]
+quorum_review = ["skills/*/SKILL.md"]
+
 [tool.ruff]
 line-length = 90
 target-version = "py311"

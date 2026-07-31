@@ -25,3 +25,38 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+  # Everything above runs against the source tree, where Python puts the
+  # checkout on sys.path and every file is present whether or not it is
+  # packaged. That hid a real bug: the built-in criteria lived outside the
+  # package, so an installed copy resolved `skill: security-review` to nothing
+  # — silently, and only for people who installed it rather than running from a
+  # checkout. This job is the one that would have caught it.
+  installed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install as a package
+        run: python -m pip install --quiet .
+
+      - name: It works from somewhere that is not the checkout
+        working-directory: /tmp
+        run: |
+          python - <<'PY'
+          from quorum_review import criteria
+
+          names = criteria.builtin_names()
+          assert names, "an installed copy found no built-in criteria"
+          for name in names:
+              assert criteria.load_builtin(name).content.strip(), name
+          print(f"built-in criteria available: {', '.join(names)}")
+          PY
+
+      - name: The entry point starts
+        working-directory: /tmp
+        run: python -m quorum_review.review --help > /dev/null

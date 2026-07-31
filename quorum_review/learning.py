@@ -95,7 +95,7 @@ def render_comment(proposal: Proposal) -> str:
 
 {len(proposal.dismissals)} findings have been dismissed on this pull request. \
 Rather than silence each one separately, here is a proposed edit to \
-`skills/{proposal.skill}/SKILL.md` so the same findings stop being raised.
+`quorum_review/skills/{proposal.skill}/SKILL.md` so the same findings stop being raised.
 
 {proposal.body}
 

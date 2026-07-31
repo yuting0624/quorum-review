@@ -37,6 +37,7 @@ import json
 import os
 from typing import Any
 
+from . import __version__
 from .schema import Finding
 
 SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
@@ -186,6 +187,10 @@ def build(
         "tool": {
             "driver": {
                 "name": "quorum-review",
+                # Consumers key on this to tell one tool's alerts from another's
+                # and to explain a change in results across a version bump.
+                "version": __version__,
+                "semanticVersion": __version__,
                 "informationUri": "https://github.com/yuting0624/quorum-review",
                 "rules": [_rule(category) for category in categories],
             }
