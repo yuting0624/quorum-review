@@ -35,7 +35,7 @@ from .vertex import (
     VERIFY_MAX_TOKENS,
 )
 
-DEFAULT_PRIMARY_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 
 
@@ -43,8 +43,9 @@ class DirectProvider:
     """Gemini via an AI Studio key, Claude via an Anthropic key."""
 
     def __init__(self) -> None:
-        self.primary_model = os.getenv("PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL).strip()
-        self.verifier_model = os.getenv("VERIFIER_MODEL", DEFAULT_VERIFIER_MODEL).strip()
+        first = os.getenv("PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL).strip()
+        second = os.getenv("VERIFIER_MODEL", DEFAULT_VERIFIER_MODEL).strip()
+        self.models = [m for m in dict.fromkeys([first, second]) if m]
         self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._clients: dict[str, Any] = {}
 
@@ -114,24 +115,24 @@ class DirectProvider:
         )
         return response.text or ""
 
-    async def scan(self, ctx: PRContext, skill: Skill) -> list[Finding]:
+    async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
         raw = await self._complete(
-            model=self.primary_model,
+            model=model,
             system=prompts.scan_system(skill, self.language),
             user=prompts.scan_user(ctx),
             schema=FINDINGS_SCHEMA,
             effort=SCAN_EFFORT,
             max_tokens=SCAN_MAX_TOKENS,
         )
-        return findings_from_payload(parse_json_object(raw), self.primary_model)
+        return findings_from_payload(parse_json_object(raw), model)
 
-    async def verify(self, finding: Finding, ctx: PRContext) -> Verdict:
+    async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
         raw = await self._complete(
-            model=self.verifier_model,
+            model=model,
             system=prompts.verify_system(self.language),
             user=prompts.verify_user(finding, ctx),
             schema=VERDICT_SCHEMA,
             effort=VERIFY_EFFORT,
             max_tokens=VERIFY_MAX_TOKENS,
         )
-        return verdict_from_payload(parse_json_object(raw), self.verifier_model)
+        return verdict_from_payload(parse_json_object(raw), model)

@@ -79,7 +79,7 @@ class LedgerEntry:
     category: str
     severity: str
     title: str
-    primary_model: str = ""
+    reported_by: list[str] = field(default_factory=list)
     verdict: str = ""
     verifier_model: str = ""
     verifier_reason: str = ""
@@ -106,7 +106,7 @@ class LedgerEntry:
             category=finding.category,
             severity=finding.severity,
             title=finding.title,
-            primary_model=finding.primary_model,
+            reported_by=list(finding.reported_by),
             verdict=finding.verdict,
             verifier_model=finding.verifier_model,
             verifier_reason=finding.verifier_reason,

@@ -75,56 +75,101 @@ false positive.**
 
 ## Results
 
-Measured against PR #1 at `cc4b946`, project `data-agent-bq`, Vertex `global`,
-skill `security-review`. One run per configuration.
+Measured against PR #1, project `data-agent-bq`, Vertex `global`, skill
+`security-review`, models `gemini-3.6-flash` and `claude-opus-5`. Three runs per
+configuration, via `python -m benchmark.measure`.
 
-| Date | Configuration | Seeded found (/10) | Unseeded real | False positives | Notes |
+| Scanning | Second opinion | Seeded found, mean of 3 | Per-bug stability | Unseeded real | False positives |
 |---|---|---|---|---|---|
-| 2026-08-01 | Primary only — `gemini-3.1-pro-preview` | 9 | 1 (U1) | 0 | Missed B8 |
-| 2026-08-01 | `gemini-3.1-pro-preview` → `claude-opus-5` | 9 | 1 (U1) | 0 | Verifier confirmed all 10, refuted none |
-| 2026-08-01 | Primary only — `claude-opus-5` | 10 | 2 (U1, U2) | 0 | Found B8 |
-| 2026-08-01 | `claude-opus-5` → `gemini-3.1-pro-preview` | 9 | 2 (U1, U2) | 0 | Verifier refuted B8 (see caveat) |
+| `gemini-3.6-flash` alone | `claude-opus-5` | 9.0 / 10 | B7 **0/3** — never found | — | 0 |
+| `claude-opus-5` alone | `gemini-3.6-flash` | 10.0 / 10 | all 3/3 | U1, U2 | 0 |
+| **both, independently** | on disagreements only | **10.0 / 10** | **all 3/3** | U1, U2, +3 more | **0** |
 
-Targets from the PRD were ≥6 of 10 detected and ≤3 false positives per review.
-Both are met in every configuration.
+PRD targets were ≥6 of 10 detected and ≤3 false positives. Every configuration
+clears both, and **no configuration was fooled by any of the three decoys in any
+run.**
+
+Earlier single runs, kept for the record — these used the previous
+single-scanning design and `gemini-3.1-pro-preview`:
+
+| Primary | Verifier | Found | Survived | Notes |
+|---|---|---|---|---|
+| `gemini-3.1-pro-preview` | `claude-opus-5` | 9 | 9 | missed B8 |
+| `claude-opus-5` | `gemini-3.1-pro-preview` | 10 | 9 | B8 refuted |
+
+### The result that changed the design
+
+`gemini-3.6-flash` missed B7 in **three runs out of three** — not occasionally,
+always. Pairing it with `claude-opus-5` as a verifier did not recover it, and
+could not have: **a second opinion is only ever shown findings that were already
+reported.** Claude was never asked about B7, because nothing had raised it.
+
+That is a recall ceiling set by whichever model scans, and no verifier can lift
+it. The fix was to have both models scan independently and merge, which took the
+same pair from 9.0 to a stable 10.0 with no loss of precision. Findings both
+models reported without seeing each other's output are treated as agreed and
+skip verification, so the change also removed most of the per-finding calls.
+
+The dual-scan configuration also surfaced three real bugs the fixture never
+seeded — an unescaped `LIKE` prefix in `suggest()`, a share purge that deletes
+orphaned rows for every user rather than the target, and an admin delete reached
+through a handler that only checks authentication. Those are wins, but note the
+direction of the bias: they were found because a second model was looking, which
+is the same reason the seeded recall improved.
 
 ### What the numbers say
 
-**Claude is the stronger primary on this fixture.** It reported 12 findings to
-Gemini's 10, caught B8 where Gemini did not, and found U2 as well. Neither model
-was fooled by any of the three decoys.
+**Which single model scans decides what the review can find.**
+`claude-opus-5` scanning alone hit 10/10 in every run; `gemini-3.6-flash`
+scanning alone hit 9/10 in every run and missed the same bug each time. The
+misses are not random noise to be averaged away — they are stable blind spots,
+and the earlier single-run data shows the two Gemini models had *different*
+ones (`gemini-3.1-pro-preview` missed B8, `gemini-3.6-flash` missed B7).
 
-**The verification stage did not remove anything in the forward direction.** With
-Gemini scanning, Claude confirmed all ten findings and refuted none. On this
-fixture the second stage bought no precision, because the first stage produced
-no plausible-but-wrong findings for it to cut. Its measurable contribution here
-was re-scoring severity — it promoted the SQL injection and the swallowed
-authorization check to `critical` and demoted the TOCTOU and timing issues to
-`low`, all without having seen the original ratings.
+**Which is exactly why two scanners beat picking the right one.** Running both
+gave a stable 10/10 without having to know in advance which model is stronger on
+a given codebase. On another repository the ranking could invert; the union does
+not care.
 
-**In the reverse direction the verifier removed a true positive.** Gemini
-refuted B8, reasoning that the idempotent append means the default list cannot
-accumulate. Given the caveat above, that reasoning is defensible on impact and
-still wrong on the latent defect. This is the clearest evidence so far that the
-verifier is not free: it can cost recall, and which model does the verifying
-matters.
+**The second opinion did far less than expected.** Across six runs of the
+single-scanner configurations it refuted **nothing at all**. It removed a
+finding in only two runs out of twelve total, and in both cases the finding was
+B8 — the one the fixture is known to be ambiguous about. On this fixture the
+first model simply did not produce plausible-but-wrong findings for the second
+to cut.
 
-**Do not over-read any of this.** One fixture, one run per configuration, no
-repetition, and the fixture was written by the same person who wrote the
-reviewer. It is enough to answer "does the arrangement work end to end" and to
-give the role-ordering question a first data point. It is not enough to rank the
-models.
+**What it did contribute was severity.** In runs with no refutations the
+measurable effect was re-ranking: SQL injection and the swallowed authorization
+check promoted to `critical`, TOCTOU and the timing issue demoted to `low`, all
+decided without having seen the original ratings.
+
+**Verification can still remove a true positive.** Two models refuted B8 with
+near-identical reasoning — the append is idempotent, so nothing accumulates —
+while a third confirmed it. Given the caveat above the refutations are
+defensible on impact and wrong on the latent defect, but the point holds
+regardless of who is right: the stage subtracts, and it can subtract something
+real.
+
+**Do not over-read any of this.** One fixture, three runs, and it was written by
+the same person who wrote the reviewer. `claude-opus-5` reported 11, 12, and 12
+findings on identical input, so run-to-run variance is real even where the
+seeded-bug numbers look clean. This is enough to justify the dual-scan change
+and to answer the role-ordering question for this fixture. It is not enough to
+rank the models in general.
 
 ### Open questions this raises
 
-- The forward configuration produced no refutations. Is that a property of the
-  fixture, or does the verification stage rarely fire in practice? A fixture with
-  deliberately plausible-but-wrong findings would separate the two.
-- B8 was found only by the `security-review` skill's weaker half. It is a
-  `correctness` defect; running `code-quality-review` should be a fairer test of
-  whether it is reachable at all.
-- Verification cost roughly one model call per finding for zero removals in the
-  forward direction. Worth measuring against the value of the severity re-scoring.
+- The verification stage barely fired. Every removal concerned the one
+  deliberately ambiguous finding. A fixture that seeds *plausible-but-wrong*
+  findings — not just correct-looking decoys — would show whether the stage
+  earns its cost on the inputs it was designed for.
+- B7 and B8 are `correctness` defects being hunted by a `security-review` skill.
+  Running `code-quality-review` would separate model capability from prompt
+  scope as the cause of the single-scanner misses.
+- Dual scanning found three real bugs the fixture never seeded. That is a good
+  sign and an uncontrolled one: nobody looked for them in the single-scanner
+  runs either, so it is not yet evidence that dual scanning finds *more*
+  unseeded bugs, only that it found some.
 
 ### Still to measure
 

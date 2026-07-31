@@ -30,9 +30,10 @@ packages = ["src", "src.providers"]
 [tool.ruff]
 line-length = 90
 target-version = "py311"
-# The benchmark fixture contains deliberately defective code. Linting it would
-# report the very bugs the fixture exists to hide from a linter.
-exclude = ["benchmark"]
+# The fixture contains deliberately defective code; linting it would report the
+# very bugs it exists to hide from a linter. The harness beside it is real code
+# and stays in scope.
+exclude = ["benchmark/seeded-bugs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

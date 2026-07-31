@@ -1,6 +1,13 @@
-"""Orchestrator: ledger -> primary scan -> independent verification -> post.
+"""Orchestrator: independent scans -> consensus -> verify the difference -> post.
 
 Run inside GitHub Actions as ``python -m src.review``.
+
+Both models read the diff without seeing each other's output. Where they agree
+independently, that agreement is the result and no further call is made. Where
+only one reported something, the other is asked to judge it. This is what keeps
+one model's blind spot from becoming the whole reviewer's blind spot —
+verification alone cannot do that, because it never sees a finding that was
+never reported.
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ import os
 import pathlib
 import sys
 
+from . import consensus
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
@@ -18,18 +26,39 @@ from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
 
-#: Verification costs one model call per finding, so it is capped. Findings are
-#: sorted by severity first, which means the cap drops the least important ones.
+#: Verification costs one model call per unresolved finding, so it is capped.
+#: Findings are ranked by severity first, so the cap drops the least important.
 MAX_VERIFIED_FINDINGS = int(os.getenv("MAX_VERIFIED_FINDINGS", "20"))
 
 #: Vertex has no Batches API, so concurrency is the only way to keep the
-#: verification stage from running serially across N findings.
+#: verification stage from running serially.
 VERIFY_CONCURRENCY = int(os.getenv("VERIFY_CONCURRENCY", "4"))
 
 #: Whole-run ceiling. A hung model call must not hold an Actions runner open.
 TIMEOUT_SECONDS = int(os.getenv("QUORUM_TIMEOUT_SECONDS", "1200"))
 
 SKILLS_ROOT = pathlib.Path(__file__).resolve().parent.parent / "skills"
+
+_OFF = {"off", "0", "false", "no"}
+
+
+def verification_enabled() -> bool:
+    """Whether findings only one model reported get a second opinion.
+
+    Read at call time rather than at import so tests and the benchmark harness
+    can flip it.
+    """
+    return os.getenv("QUORUM_VERIFICATION", "on").strip().lower() not in _OFF
+
+
+def scan_with_all_models() -> bool:
+    """Whether every configured model scans, or only the first.
+
+    Scanning with both is what raises recall, and it costs one extra call
+    regardless of diff size — but it does mean paying for two models on every
+    pull request. ``QUORUM_SCAN=single`` is the cheap tier.
+    """
+    return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
 def load_skill(name: str) -> Skill:
@@ -57,22 +86,53 @@ def by_severity(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: SEVERITY_RANK.get(f.severity, 99))
 
 
+async def scan_all(
+    provider: ReviewProvider, models: list[str], ctx: PRContext, skill: Skill
+) -> tuple[list[list[Finding]], list[str]]:
+    """Run every model over the diff concurrently and independently.
+
+    A model that fails does not sink the review: its results are simply absent,
+    and the summary names it so nobody mistakes a degraded run for a clean one.
+    """
+    async def one(model: str) -> list[Finding]:
+        return await provider.scan(model, ctx, skill)
+
+    results = await asyncio.gather(
+        *(one(model) for model in models), return_exceptions=True
+    )
+
+    scans: list[list[Finding]] = []
+    failures: list[str] = []
+    for model, result in zip(models, results, strict=True):
+        if isinstance(result, BaseException):
+            failures.append(f"{model}: {result}")
+        else:
+            scans.append(result)
+    return scans, failures
+
+
 async def verify_all(
-    provider: ReviewProvider, findings: list[Finding], ctx: PRContext
+    provider: ReviewProvider, findings: list[Finding], models: list[str], ctx: PRContext
 ) -> tuple[list[Finding], str]:
-    """Verify each finding independently, in parallel.
+    """Judge each unresolved finding with a model that did not report it.
 
     Returns the findings with verdicts attached, and an error string that is
-    non-empty when the verifier could not run at all. A per-finding failure is
+    non-empty when a verifier could not run at all. A per-finding failure is
     absorbed as ``uncertain`` — one bad call should not sink the review.
     """
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
     unavailable: list[str] = []
 
     async def one(finding: Finding) -> Finding:
+        reviewer = consensus.reviewer_for(finding, models)
+        if reviewer is None:
+            finding.verdict = "confirmed"
+            finding.verifier_reason = "no other model was available to check this"
+            return finding
+
         async with semaphore:
             try:
-                verdict = await provider.verify(finding, ctx)
+                verdict = await provider.verify(reviewer, finding, ctx)
             except ProviderUnavailable as error:
                 unavailable.append(str(error))
                 finding.verdict = "uncertain"
@@ -102,28 +162,40 @@ async def run(skill_name: str, dry_run: bool) -> int:
     skill = load_skill(skill_name)
 
     provider = build_provider()
+    models = list(provider.models)
+    scanning = models if scan_with_all_models() else models[:1]
+    verify_wanted = verification_enabled() and len(models) > 1
 
     async with GitHubClient() as github:
         ledger, sticky = await github.load_ledger(number)
         ctx, trimmed = await github.load_context(number)
 
         report = report_mod.RunReport(
-            primary_model=provider.primary_model,
-            verifier_model=provider.verifier_model,
+            models=models,
+            scanning_models=scanning,
+            verification_on=verify_wanted,
             trimmed_files=trimmed,
             head_sha=ctx.head_sha,
         )
 
-        # -- primary scan --------------------------------------------------
-        findings = dedupe(ledger_mod.assign_ids(await provider.scan(ctx, skill)))
+        # -- independent scans ------------------------------------------------
+        scans, failures = await scan_all(provider, scanning, ctx, skill)
+        report.scan_failures = failures
+        if not scans:
+            raise ProviderUnavailable(f"every scanning model failed: {failures}")
+
+        findings = dedupe(ledger_mod.assign_ids(consensus.merge(scans)))
         report.scanned = len(findings)
+        report.per_model_counts = {
+            model: len(scan) for model, scan in zip(scanning, scans, strict=False)
+        }
 
         current_ids = {finding.finding_id for finding in findings}
 
         # Anything previously open that this scan no longer reports is treated
-        # as fixed. The scan is not perfectly repeatable, so a finding can drop
-        # out because the model missed it rather than because it was fixed —
-        # accepted for Phase 0, since re-detection later simply reopens it.
+        # as fixed. Scans are not perfectly repeatable, so a finding can drop
+        # out because the models missed it rather than because it was fixed —
+        # accepted for now, since re-detection later simply reopens it.
         for entry in list(ledger.entries.values()):
             if entry.status == "open" and entry.finding_id not in current_ids:
                 ledger.mark_fixed(entry.finding_id, ctx.head_sha)
@@ -133,27 +205,36 @@ async def run(skill_name: str, dry_run: bool) -> int:
         fresh = [f for f in findings if not ledger.is_suppressed(f.finding_id)]
         report.suppressed = len(findings) - len(fresh)
 
-        # -- independent verification ---------------------------------------
-        ranked = by_severity(fresh)
-        to_verify = ranked[:MAX_VERIFIED_FINDINGS]
-        skipped = ranked[MAX_VERIFIED_FINDINGS:]
+        # -- consensus, then verify only what is unresolved --------------------
+        agreed, unresolved = consensus.split(fresh)
+        report.agreed = list(agreed)
 
-        verified, verifier_error = await verify_all(provider, to_verify, ctx)
-        if verifier_error:
-            report.verifier_available = False
-            report.verifier_error = verifier_error
+        skipped: list[Finding] = []
+        if verify_wanted and unresolved:
+            ranked = by_severity(unresolved)
+            to_verify = ranked[:MAX_VERIFIED_FINDINGS]
+            skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
-        # Over the cap: never silently dropped, just demoted to advisory.
-        for finding in skipped:
-            finding.verdict = "uncertain"
-            finding.verifier_reason = (
-                f"not verified: only the top {MAX_VERIFIED_FINDINGS} findings "
-                f"by severity are checked"
-            )
+            verified, verifier_error = await verify_all(provider, to_verify, models, ctx)
+            if verifier_error:
+                report.verifier_error = verifier_error
+
+            # Over the cap: never silently dropped, just demoted to advisory.
+            for finding in skipped:
+                finding.verdict = "uncertain"
+                finding.verifier_reason = (
+                    f"not verified: only the top {MAX_VERIFIED_FINDINGS} unresolved "
+                    f"findings by severity are checked"
+                )
+        else:
+            verified = unresolved
+
+        for finding in agreed:
+            report.confirmed.append(finding)
 
         for finding in verified + skipped:
-            if not report.verifier_available:
-                report.confirmed.append(finding)
+            if not verify_wanted:
+                report.unverified.append(finding)
             elif finding.verdict == "confirmed":
                 report.confirmed.append(finding)
             elif finding.verdict == "refuted":
@@ -161,12 +242,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
             else:
                 report.advisory.append(finding)
 
-        # -- write back ------------------------------------------------------
+        # -- write back --------------------------------------------------------
         if dry_run:
             print(report_mod.render(report))
             return 0
 
-        for finding in report.confirmed:
+        for finding in report.confirmed + report.unverified:
             comment_id = await github.post_inline_comment(
                 number=number,
                 commit_sha=ctx.head_sha,
@@ -181,10 +262,13 @@ async def run(skill_name: str, dry_run: bool) -> int:
             ledger.record(entry)
 
         # Unanchored findings are shown in the summary instead, so drop them
-        # from the confirmed table to avoid listing the same thing twice.
+        # from the tables to avoid listing the same thing twice.
         unanchored_ids = {f.finding_id for f in report.unanchored}
         report.confirmed = [
             f for f in report.confirmed if f.finding_id not in unanchored_ids
+        ]
+        report.unverified = [
+            f for f in report.unverified if f.finding_id not in unanchored_ids
         ]
 
         # Refuted findings are still recorded: keeping them stops the next run

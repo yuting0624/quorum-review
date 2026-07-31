@@ -36,10 +36,10 @@ from .base import ProviderUnavailable
 # Defaults. Both are overridable; neither is load-bearing.
 #
 # NOTE ON THE GEMINI DEFAULT: model availability in Model Garden varies by
-# project and by release channel, and the Gemini 3 line still carries `-preview`
-# suffixes. Confirm what your project can actually call before relying on this
-# value — `python -m src.review --list-models` prints the list.
-DEFAULT_PRIMARY_MODEL = "gemini-3.1-pro-preview"
+# project and by release channel, and parts of the Gemini 3 line still carry
+# `-preview` suffixes. Confirm what your project can actually call before
+# relying on this value — `python -m src.review --list-models` prints the list.
+DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 
 # Output budgets. `max_tokens` on Claude caps thinking *plus* response text, and
@@ -194,7 +194,7 @@ class _ClaudeEngine:
 
 
 class VertexProvider:
-    """Runs both stages on Vertex AI off one credential."""
+    """Runs every review model on Vertex AI off one credential."""
 
     def __init__(self) -> None:
         project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
@@ -210,18 +210,21 @@ class VertexProvider:
         self._gemini_location = os.getenv("GOOGLE_CLOUD_LOCATION", "global").strip()
         self._claude_region = os.getenv("CLAUDE_VERTEX_REGION", "global").strip()
 
-        self.primary_model = os.getenv("PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL).strip()
-        self.verifier_model = os.getenv("VERIFIER_MODEL", DEFAULT_VERIFIER_MODEL).strip()
-        self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
+        # Two configured slots, but both models do both jobs. The names are
+        # kept because they are the documented inputs; the order only decides
+        # which one runs alone when a single-model review is requested.
+        first = os.getenv("PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL).strip()
+        second = os.getenv("VERIFIER_MODEL", DEFAULT_VERIFIER_MODEL).strip()
+        self.models = [m for m in dict.fromkeys([first, second]) if m]
 
+        self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._engines: dict[str, _Engine] = {}
 
     def _engine(self, model: str) -> _Engine:
         """Resolve a model ID to an engine, constructing it on first use.
 
-        Dispatching on the ID rather than on the role is what makes the two
-        models swappable: set VERIFIER_MODEL to a Gemini ID and PRIMARY_MODEL to
-        a Claude ID, and the roles reverse with no code change.
+        Dispatching on the ID rather than on the role is what lets any model
+        play any part: the same lookup serves a scan and a verification.
         """
         if model in self._engines:
             return self._engines[model]
@@ -234,25 +237,25 @@ class VertexProvider:
         self._engines[model] = engine
         return engine
 
-    async def scan(self, ctx: PRContext, skill: Skill) -> list[Finding]:
-        raw = await self._engine(self.primary_model).complete(
+    async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
+        raw = await self._engine(model).complete(
             system=prompts.scan_system(skill, self.language),
             user=prompts.scan_user(ctx),
             schema=FINDINGS_SCHEMA,
             effort=SCAN_EFFORT,
             max_tokens=SCAN_MAX_TOKENS,
         )
-        return findings_from_payload(parse_json_object(raw), self.primary_model)
+        return findings_from_payload(parse_json_object(raw), model)
 
-    async def verify(self, finding: Finding, ctx: PRContext) -> Verdict:
-        raw = await self._engine(self.verifier_model).complete(
+    async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
+        raw = await self._engine(model).complete(
             system=prompts.verify_system(self.language),
             user=prompts.verify_user(finding, ctx),
             schema=VERDICT_SCHEMA,
             effort=VERIFY_EFFORT,
             max_tokens=VERIFY_MAX_TOKENS,
         )
-        return verdict_from_payload(parse_json_object(raw), self.verifier_model)
+        return verdict_from_payload(parse_json_object(raw), model)
 
     def list_models(self) -> list[str]:
         """List the Gemini models this project can call.
@@ -265,4 +268,11 @@ class VertexProvider:
         client = genai.Client(
             vertexai=True, project=self._project, location=self._gemini_location
         )
-        return sorted(model.name or "" for model in client.models.list())
+        # The API returns fully qualified names like
+        # `publishers/google/models/gemini-x`; strip the prefix so what is
+        # printed can be pasted straight into PRIMARY_MODEL.
+        return sorted(
+            (model.name or "").rsplit("/", 1)[-1]
+            for model in client.models.list()
+            if model.name
+        )
