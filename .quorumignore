@@ -1,0 +1,17 @@
+# Keep the answer key away from the reviewer.
+#
+# benchmark/seeded-bugs/README.md lists every seeded bug, decoy and
+# context-dependent case by file and line, and tests/test_fixture_integrity.py
+# asserts each one. Both live on main, which is what makes them useful — they
+# stay out of PR #1's diff.
+#
+# That was enough while the models could only read the diff. Once they could
+# read the checkout, they found the answer key and opened it: it turned up in
+# the tool logs of several measurement runs, which is a reviewer being handed
+# the marking scheme. The numbers from those runs were discarded.
+#
+# So the key is excluded here rather than in the measurement harness. The
+# harness is not the only thing that reads this repository — the live workflow
+# reviews PR #1 too, and it would have found the same file.
+benchmark/seeded-bugs/README.md
+tests/test_fixture_integrity.py

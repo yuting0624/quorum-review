@@ -83,6 +83,23 @@ inputs:
       positives.
     required: false
     default: "on"
+  repo-access:
+    description: >-
+      'on' lets the models read files outside the diff with three read-only
+      tools, so a finding that turns on a validator, a permission registry or a
+      function signature can be settled instead of guessed. Requires
+      actions/checkout of the pull request's head; without one the review
+      silently stays diff-only and the summary says so. 'off' reviews the diff
+      alone, which is cheaper and measurably blinder.
+    required: false
+    default: "on"
+  verify-tool-calls:
+    description: >-
+      Tool calls one verification may make, when repo-access is on. Kept well
+      below the scanning budget because a verifier is settling one claim, and
+      is called once per finding.
+    required: false
+    default: "6"
   inline-severity:
     description: >-
       Lowest severity that gets its own comment in the diff view: critical,
@@ -129,6 +146,8 @@ runs:
         QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}
         QUORUM_VERIFICATION: ${{ inputs.verification }}
+        QUORUM_REPO_ACCESS: ${{ inputs.repo-access }}
+        QUORUM_VERIFY_TOOL_CALLS: ${{ inputs.verify-tool-calls }}
         QUORUM_INLINE_SEVERITY: ${{ inputs.inline-severity }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
         GITHUB_TOKEN: ${{ inputs.github-token }}

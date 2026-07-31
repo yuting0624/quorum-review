@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from typing import Any, Protocol
 
-from .. import prompts
+from .. import prompts, workspace
 from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
@@ -32,6 +32,7 @@ from ..schema import (
     parse_json_object,
     verdict_from_payload,
 )
+from ..workspace import Workspace
 from .base import ProviderUnavailable
 
 # Defaults. Both are overridable; neither is load-bearing.
@@ -49,10 +50,19 @@ DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 SCAN_MAX_TOKENS = 32_000
 VERIFY_MAX_TOKENS = 8_000
 
+# A verifier that can read the repository is doing more than rendering a verdict:
+# it decides what would settle the claim, reads it, and then judges. That is
+# several steps sharing one budget, and a truncated verification fails the whole
+# finding — so it gets room, but still nowhere near a scan's.
+VERIFY_WITH_TOOLS_MAX_TOKENS = 16_000
+
 # Verification is a short, well-scoped judgement on one finding, so it does not
-# need deep reasoning. Scanning a whole diff does.
+# need deep reasoning. Scanning a whole diff does. A verifier with tools sits
+# between the two: low effort tends to answer from the diff rather than spend a
+# turn opening the definition that would settle it.
 SCAN_EFFORT = "high"
 VERIFY_EFFORT = "low"
+VERIFY_WITH_TOOLS_EFFORT = "medium"
 
 # Prose answers — a question in a thread, a proposed criteria change. Scoped
 # but open-ended: someone is pushing back and deserves a considered reply
@@ -85,6 +95,7 @@ class _Engine(Protocol):
         schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
+        toolbox: Workspace | None = None,
     ) -> str: ...
 
 
@@ -122,23 +133,95 @@ class _GeminiEngine:
         schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
+        toolbox: Workspace | None = None,
     ) -> str:
         from google.genai import types
 
+        contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=user)])]
+        if toolbox is not None:
+            await self._explore(contents, system, max_tokens, toolbox)
+            contents.append(
+                types.Content(role="user", parts=[types.Part(text=prompts.FINALISE)])
+            )
+
+        response = await self._generate(
+            contents,
+            types.GenerateContentConfig(
+                system_instruction=system,
+                # No schema means a prose answer — used when replying to a
+                # question in a thread rather than reporting findings.
+                response_mime_type="application/json" if schema else "text/plain",
+                # Gemini takes an OpenAPI subset, so the Claude-shaped
+                # schema is reduced here rather than maintained twice.
+                response_schema=for_gemini(schema) if schema else None,
+                max_output_tokens=max_tokens,
+            ),
+        )
+        return response.text or ""
+
+    async def _explore(
+        self, contents: list[Any], system: str, max_tokens: int, toolbox: Workspace
+    ) -> None:
+        """Let the model read the repository before it commits to an answer.
+
+        Gemini rejects a request that carries both ``response_schema`` and
+        function declarations, so exploration and answering cannot be the same
+        call. They are split into two: this loop runs unconstrained, and the
+        caller then asks for the schema-shaped answer on top of the same
+        conversation. Claude does not need the split, but is given it anyway —
+        the whole design rests on the two models being asked the same thing.
+        """
+        from google.genai import types
+
+        tools = [
+            types.Tool(
+                function_declarations=[
+                    types.FunctionDeclaration(
+                        name=spec["name"],
+                        description=spec["description"],
+                        parameters=for_gemini(spec["parameters"]),
+                    )
+                    for spec in workspace.TOOL_SPECS
+                ]
+            )
+        ]
+        config = types.GenerateContentConfig(
+            system_instruction=system, tools=tools, max_output_tokens=max_tokens
+        )
+
+        for _ in range(workspace.MAX_TURNS):
+            response = await self._generate(contents, config)
+            candidate = next(iter(response.candidates or []), None)
+            if candidate is None or candidate.content is None:
+                return
+            contents.append(candidate.content)
+
+            calls = response.function_calls or []
+            if not calls:
+                return
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_function_response(
+                            name=call.name or "",
+                            response={
+                                "output": toolbox.run(
+                                    call.name or "", dict(call.args or {})
+                                )
+                            },
+                        )
+                        for call in calls
+                    ],
+                )
+            )
+            if toolbox.exhausted:
+                return
+
+    async def _generate(self, contents: list[Any], config: Any) -> Any:
         try:
             response = await self._client.aio.models.generate_content(
-                model=self.model,
-                contents=user,
-                config=types.GenerateContentConfig(
-                    system_instruction=system,
-                    # No schema means a prose answer — used when replying to a
-                    # question in a thread rather than reporting findings.
-                    response_mime_type="application/json" if schema else "text/plain",
-                    # Gemini takes an OpenAPI subset, so the Claude-shaped
-                    # schema is reduced here rather than maintained twice.
-                    response_schema=for_gemini(schema) if schema else None,
-                    max_output_tokens=max_tokens,
-                ),
+                model=self.model, contents=contents, config=config
             )
         except Exception as error:  # noqa: BLE001 - reclassified below
             raise _as_unavailable(self.model, error) from error
@@ -149,7 +232,7 @@ class _GeminiEngine:
             output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
             cached_input_tokens=getattr(meta, "cached_content_token_count", 0) or 0,
         )
-        return response.text or ""
+        return response
 
 
 class _ClaudeEngine:
@@ -174,11 +257,91 @@ class _ClaudeEngine:
         schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
+        toolbox: Workspace | None = None,
     ) -> str:
+        messages: list[Any] = [{"role": "user", "content": user}]
+        if toolbox is not None:
+            await self._explore(messages, system, effort, max_tokens, toolbox)
+            messages.append({"role": "user", "content": prompts.FINALISE})
+
         output_config: dict[str, Any] = {"effort": effort}
         if schema:
             output_config["format"] = {"type": "json_schema", "schema": schema}
 
+        message = await self._send(messages, system, output_config, max_tokens)
+
+        if message.stop_reason == "refusal":
+            raise ValueError(f"{self.model} declined the request")
+        if message.stop_reason == "max_tokens":
+            raise ValueError(
+                f"{self.model} hit max_tokens ({max_tokens}); raise the budget"
+            )
+
+        return "".join(block.text for block in message.content if block.type == "text")
+
+    async def _explore(
+        self,
+        messages: list[Any],
+        system: str,
+        effort: str,
+        max_tokens: int,
+        toolbox: Workspace,
+    ) -> None:
+        """Read the repository before answering. See ``_GeminiEngine._explore``."""
+        tools = [
+            {
+                "name": spec["name"],
+                "description": spec["description"],
+                "input_schema": spec["parameters"],
+            }
+            for spec in workspace.TOOL_SPECS
+        ]
+
+        for _ in range(workspace.MAX_TURNS):
+            message = await self._send(
+                messages, system, {"effort": effort}, max_tokens, tools=tools
+            )
+            # A turn cut off at max_tokens can end inside a thinking block or a
+            # half-written tool call. Feeding that back is a 400, so the partial
+            # turn is dropped and the model answers from what it has.
+            if message.stop_reason == "max_tokens":
+                return
+            # Thinking blocks come back too, and have to go back in unaltered:
+            # a tool result whose preceding turn is missing its thinking is
+            # rejected. Appending the content list verbatim is the whole rule.
+            messages.append({"role": "assistant", "content": message.content})
+
+            uses = [block for block in message.content if block.type == "tool_use"]
+            if not uses:
+                return
+            # Every tool_use gets a tool_result even once the budget is gone —
+            # an unanswered one is a 400, so the refusal is delivered as the
+            # result text instead of by skipping the turn.
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": toolbox.run(block.name, dict(block.input or {})),
+                        }
+                        for block in uses
+                    ],
+                }
+            )
+            if toolbox.exhausted:
+                return
+
+    async def _send(
+        self,
+        messages: list[Any],
+        system: str,
+        output_config: dict[str, Any],
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Any:
+        extra: dict[str, Any] = {"tools": tools} if tools else {}
         try:
             # Streaming even though the payload is small: a non-streaming call
             # with a large max_tokens can outlive the SDK's HTTP timeout.
@@ -196,7 +359,8 @@ class _ClaudeEngine:
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                messages=[{"role": "user", "content": user}],
+                messages=messages,
+                **extra,
             ) as stream:
                 message = await stream.get_final_message()
         except Exception as error:  # noqa: BLE001 - reclassified below
@@ -208,15 +372,7 @@ class _ClaudeEngine:
             output_tokens=getattr(used, "output_tokens", 0) or 0,
             cached_input_tokens=getattr(used, "cache_read_input_tokens", 0) or 0,
         )
-
-        if message.stop_reason == "refusal":
-            raise ValueError(f"{self.model} declined the request")
-        if message.stop_reason == "max_tokens":
-            raise ValueError(
-                f"{self.model} hit max_tokens ({max_tokens}); raise the budget"
-            )
-
-        return "".join(block.text for block in message.content if block.type == "text")
+        return message
 
 
 class VertexProvider:
@@ -268,13 +424,20 @@ class VertexProvider:
         self._engines[model] = engine
         return engine
 
-    async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
+    async def scan(
+        self,
+        model: str,
+        ctx: PRContext,
+        skill: Skill,
+        toolbox: Workspace | None = None,
+    ) -> list[Finding]:
         raw = await self._engine(model).complete(
-            system=prompts.scan_system(skill, self.language),
+            system=prompts.scan_system(skill, self.language, tools=toolbox is not None),
             user=prompts.scan_user(ctx),
             schema=FINDINGS_SCHEMA,
             effort=SCAN_EFFORT,
             max_tokens=SCAN_MAX_TOKENS,
+            toolbox=toolbox,
         )
         return findings_from_payload(parse_json_object(raw), model)
 
@@ -289,13 +452,22 @@ class VertexProvider:
             max_tokens=max_tokens,
         )
 
-    async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
+    async def verify(
+        self,
+        model: str,
+        finding: Finding,
+        ctx: PRContext,
+        toolbox: Workspace | None = None,
+    ) -> Verdict:
         raw = await self._engine(model).complete(
-            system=prompts.verify_system(self.language),
+            system=prompts.verify_system(self.language, tools=toolbox is not None),
             user=prompts.verify_user(finding, ctx),
             schema=VERDICT_SCHEMA,
-            effort=VERIFY_EFFORT,
-            max_tokens=VERIFY_MAX_TOKENS,
+            effort=VERIFY_EFFORT if toolbox is None else VERIFY_WITH_TOOLS_EFFORT,
+            max_tokens=(
+                VERIFY_MAX_TOKENS if toolbox is None else VERIFY_WITH_TOOLS_MAX_TOKENS
+            ),
+            toolbox=toolbox,
         )
         return verdict_from_payload(parse_json_object(raw), model)
 

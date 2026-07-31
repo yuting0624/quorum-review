@@ -153,7 +153,17 @@ class DirectProvider:
             max_tokens=max_tokens,
         )
 
-    async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
+    # `toolbox` is accepted and ignored. This provider exists to show that the
+    # arrangement is not tied to Vertex, not to be the one people run, and a
+    # tool loop would be a second full implementation of the interesting part.
+    # Reviews here are diff-only; the summary says so.
+    async def scan(
+        self,
+        model: str,
+        ctx: PRContext,
+        skill: Skill,
+        toolbox: Any | None = None,
+    ) -> list[Finding]:
         raw = await self._complete(
             model=model,
             system=prompts.scan_system(skill, self.language),
@@ -164,7 +174,13 @@ class DirectProvider:
         )
         return findings_from_payload(parse_json_object(raw), model)
 
-    async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
+    async def verify(
+        self,
+        model: str,
+        finding: Finding,
+        ctx: PRContext,
+        toolbox: Any | None = None,
+    ) -> Verdict:
         raw = await self._complete(
             model=model,
             system=prompts.verify_system(self.language),

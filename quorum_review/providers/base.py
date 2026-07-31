@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from ..schema import Finding, ModelUsage, PRContext, Skill, Verdict
+from ..workspace import Workspace
 
 
 class ProviderUnavailable(Exception):
@@ -45,17 +46,35 @@ class ReviewProvider(Protocol):
     #: summary so an adopter can see what a review actually costs them.
     usage: dict[str, ModelUsage]
 
-    async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
+    async def scan(
+        self,
+        model: str,
+        ctx: PRContext,
+        skill: Skill,
+        toolbox: Workspace | None = None,
+    ) -> list[Finding]:
         """Scan the whole PR once and return candidate findings. Favour recall.
 
         Scans must be **independent**: a model must not be shown what another
         model found. Independent agreement between two models is the strongest
         signal this design produces, and it is only worth anything if neither
         could have been influenced by the other.
+
+        ``toolbox`` lets the model read the rest of the repository. Each caller
+        gets its own, so exploration stays independent too — a shared budget
+        would let one model's reading change what the other is able to check.
+        A provider that cannot offer tools may ignore it; the diff is still a
+        complete input.
         """
         ...
 
-    async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
+    async def verify(
+        self,
+        model: str,
+        finding: Finding,
+        ctx: PRContext,
+        toolbox: Workspace | None = None,
+    ) -> Verdict:
         """Judge a single finding in isolation. Favour precision.
 
         One finding, one verdict — never batch. ``model`` must be a model that

@@ -49,7 +49,14 @@ Tests need no credentials — model calls are not made in the suite.
   write against someone's repository.
 - **Making the reviewer look confident when it is degraded.** Every failure path
   says what happened in the summary. A run with one model down must not read
-  like a clean one.
+  like a clean one. The same applies to a run that could not read the checkout:
+  it says so.
+- **Giving the models a tool that writes, executes, or reaches the network.**
+  The toolbox is reachable from text an attacker wrote. Read-only is what keeps
+  a fully successful injection down to reading files the runner already had.
+- **Sharing one exploration budget between the two scans.** Each gets its own.
+  Otherwise how much the second model can investigate depends on what the first
+  one did, and their agreement stops being independent.
 
 ## If you find a false positive worth fixing
 
