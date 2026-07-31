@@ -109,6 +109,27 @@ class Skill:
 
 
 @dataclass
+class Discussion:
+    """A question asked in the thread under a finding.
+
+    The reviewer answers where the question was asked, with the finding and the
+    conversation so far as context. Without this a finding is a verdict handed
+    down with no way to argue — and the only remaining moves are to fix it or
+    ignore it.
+    """
+
+    file_path: str
+    line: int
+    #: The finding under discussion, when the thread can be matched to one.
+    #: A question can also arrive on a thread whose finding has since been
+    #: dismissed or resolved, in which case only the code is available.
+    title: str = ""
+    body: str = ""
+    #: ``(author, text)`` oldest first, including the reviewer's own replies.
+    transcript: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class ModelUsage:
     """What one model consumed during a review.
 

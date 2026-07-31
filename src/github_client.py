@@ -244,6 +244,35 @@ class GitHubClient:
             )
         return response.text
 
+    async def thread_comments(self, number: int, root_id: int) -> list[dict[str, Any]]:
+        """Every comment in one review thread, oldest first.
+
+        REST has no endpoint for a thread, so the pull request's comments are
+        listed and filtered: the root plus everything replying to it.
+        """
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = await self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+                params={"per_page": 100, "page": page},
+            )
+            comments = response.json()
+            if not comments:
+                break
+            collected += [
+                comment
+                for comment in comments
+                if comment.get("id") == root_id
+                or comment.get("in_reply_to_id") == root_id
+            ]
+            if len(comments) < 100:
+                break
+            page += 1
+
+        collected.sort(key=lambda comment: comment.get("created_at") or "")
+        return collected
+
     async def find_sticky_comment(self, number: int) -> StickyComment | None:
         """Locate our own summary comment by its ledger marker."""
         page = 1

@@ -19,7 +19,7 @@ import pathlib
 import sys
 import time
 
-from . import consensus, dismissal
+from . import consensus, conversation, dismissal
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
@@ -278,6 +278,17 @@ async def run(skill_name: str, dry_run: bool) -> int:
     if dismissal.is_dismissal(event):
         async with GitHubClient() as github:
             return await dismissal.handle(github, event, number)
+
+    # A question is one call to the model that made the claim, not a re-review.
+    if conversation.is_question(event):
+        async with GitHubClient() as github:
+            ledger, _ = await github.load_ledger(number)
+            ctx, _skipped, _trimmed = await github.load_context(
+                number, exclude_input=os.getenv("QUORUM_EXCLUDE", "")
+            )
+            return await conversation.handle(
+                github, build_provider(), ctx, ledger, event
+            )
 
     skill = load_skill(skill_name)
 

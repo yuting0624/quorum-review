@@ -9,7 +9,14 @@ models.
 from __future__ import annotations
 
 from . import diffs
-from .schema import BASE_INSTRUCTIONS, Finding, PRContext, Skill, language_directive
+from .schema import (
+    BASE_INSTRUCTIONS,
+    Discussion,
+    Finding,
+    PRContext,
+    Skill,
+    language_directive,
+)
 
 
 def scan_system(skill: Skill, language: str = "") -> str:
@@ -109,6 +116,65 @@ Default to `refuted` when the claim is merely plausible and you cannot show the
 failure. Precision is your job; recall was someone else's.
 """
     )
+
+
+def discuss_system(language: str = "") -> str:
+    """System prompt for answering a question about a finding."""
+    return (
+        BASE_INSTRUCTIONS
+        + language_directive(language)
+        + """
+## Your task
+
+Someone is asking about a finding in a code review. Answer them, in the thread,
+as a reviewer who is accountable for what was reported.
+
+- Answer the question that was asked. Do not restate the finding.
+- If they have shown the finding is wrong, say so plainly. Being right matters
+  more than the finding standing; tell them they can reply
+  `@quorum wontfix — <reason>` to retire it.
+- If they are asking whether some other case is affected, reason about that
+  case specifically rather than repeating the general rule.
+- If the diff does not contain enough to answer, say what you would need.
+- No preamble, no sign-off. A few sentences is usually right; use a short code
+  block when it is clearer than prose.
+
+Reply as plain Markdown. There is no JSON schema for this response.
+"""
+    )
+
+
+def discuss_user(discussion: Discussion, ctx: PRContext) -> str:
+    """User turn for a question in a review thread."""
+    file_diff = diffs.for_file(ctx.diff, discussion.file_path)
+    if not file_diff:
+        file_diff = "(this file does not appear in the current diff)"
+
+    claim = (
+        f"<finding>\nFile: {discussion.file_path}:{discussion.line}\n"
+        f"Claim: {discussion.title}\n\n{discussion.body}\n</finding>"
+        if discussion.title
+        else f"<finding>\nFile: {discussion.file_path}:{discussion.line}\n"
+        f"(the original finding is no longer on record)\n</finding>"
+    )
+
+    conversation = "\n\n".join(
+        f"{author}:\n{text}" for author, text in discussion.transcript
+    )
+
+    return f"""\
+{claim}
+
+<untrusted_diff file="{discussion.file_path}">
+{file_diff}
+</untrusted_diff>
+
+<untrusted_conversation>
+{conversation}
+</untrusted_conversation>
+
+Reply to the most recent message.
+"""
 
 
 def verify_user(finding: Finding, ctx: PRContext) -> str:

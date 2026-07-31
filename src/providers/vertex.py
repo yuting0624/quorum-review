@@ -22,6 +22,7 @@ from .. import prompts
 from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
+    Discussion,
     Finding,
     ModelUsage,
     PRContext,
@@ -54,6 +55,11 @@ VERIFY_MAX_TOKENS = 8_000
 SCAN_EFFORT = "high"
 VERIFY_EFFORT = "low"
 
+# Answering a question is scoped but open-ended: someone is pushing back and
+# deserves a considered reply, not a restatement.
+DISCUSS_EFFORT = "medium"
+DISCUSS_MAX_TOKENS = 8_000
+
 _AUTH_HINTS = (
     "could not automatically determine credentials",
     "default credentials",
@@ -76,7 +82,7 @@ class _Engine(Protocol):
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str: ...
@@ -113,7 +119,7 @@ class _GeminiEngine:
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
@@ -125,10 +131,12 @@ class _GeminiEngine:
                 contents=user,
                 config=types.GenerateContentConfig(
                     system_instruction=system,
-                    response_mime_type="application/json",
+                    # No schema means a prose answer — used when replying to a
+                    # question in a thread rather than reporting findings.
+                    response_mime_type="application/json" if schema else "text/plain",
                     # Gemini takes an OpenAPI subset, so the Claude-shaped
                     # schema is reduced here rather than maintained twice.
-                    response_schema=for_gemini(schema),
+                    response_schema=for_gemini(schema) if schema else None,
                     max_output_tokens=max_tokens,
                 ),
             )
@@ -163,20 +171,21 @@ class _ClaudeEngine:
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
+        output_config: dict[str, Any] = {"effort": effort}
+        if schema:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+
         try:
             # Streaming even though the payload is small: a non-streaming call
             # with a large max_tokens can outlive the SDK's HTTP timeout.
             async with self._client.messages.stream(
                 model=self.model,
                 max_tokens=max_tokens,
-                output_config={
-                    "effort": effort,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
+                output_config=output_config,
                 # The system prompt is identical across every verify call in a
                 # run, so a cache breakpoint here is read back once per finding.
                 # Vertex supports manual cache_control but not automatic caching.
@@ -268,6 +277,17 @@ class VertexProvider:
             max_tokens=SCAN_MAX_TOKENS,
         )
         return findings_from_payload(parse_json_object(raw), model)
+
+    async def discuss(
+        self, model: str, discussion: Discussion, ctx: PRContext
+    ) -> str:
+        return await self._engine(model).complete(
+            system=prompts.discuss_system(self.language),
+            user=prompts.discuss_user(discussion, ctx),
+            schema=None,
+            effort=DISCUSS_EFFORT,
+            max_tokens=DISCUSS_MAX_TOKENS,
+        )
 
     async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
         raw = await self._engine(model).complete(

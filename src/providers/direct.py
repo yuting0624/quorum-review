@@ -18,6 +18,7 @@ from .. import prompts
 from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
+    Discussion,
     Finding,
     ModelUsage,
     PRContext,
@@ -30,6 +31,8 @@ from ..schema import (
 )
 from .base import ProviderUnavailable
 from .vertex import (
+    DISCUSS_EFFORT,
+    DISCUSS_MAX_TOKENS,
     SCAN_EFFORT,
     SCAN_MAX_TOKENS,
     VERIFY_EFFORT,
@@ -38,6 +41,14 @@ from .vertex import (
 
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+
+
+def _output_config(effort: str, schema: dict[str, Any] | None) -> dict[str, Any]:
+    """No schema means a prose answer, used when replying to a question."""
+    config: dict[str, Any] = {"effort": effort}
+    if schema:
+        config["format"] = {"type": "json_schema", "schema": schema}
+    return config
 
 
 class DirectProvider:
@@ -79,7 +90,7 @@ class DirectProvider:
         model: str,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
@@ -88,10 +99,7 @@ class DirectProvider:
             async with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
-                output_config={
-                    "effort": effort,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
+                output_config=_output_config(effort, schema),
                 system=[
                     {
                         "type": "text",
@@ -121,8 +129,8 @@ class DirectProvider:
             contents=user,
             config=types.GenerateContentConfig(
                 system_instruction=system,
-                response_mime_type="application/json",
-                response_schema=for_gemini(schema),
+                response_mime_type="application/json" if schema else "text/plain",
+                response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
             ),
         )
@@ -133,6 +141,18 @@ class DirectProvider:
             output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
         )
         return response.text or ""
+
+    async def discuss(
+        self, model: str, discussion: Discussion, ctx: PRContext
+    ) -> str:
+        return await self._complete(
+            model=model,
+            system=prompts.discuss_system(self.language),
+            user=prompts.discuss_user(discussion, ctx),
+            schema=None,
+            effort=DISCUSS_EFFORT,
+            max_tokens=DISCUSS_MAX_TOKENS,
+        )
 
     async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
         raw = await self._complete(

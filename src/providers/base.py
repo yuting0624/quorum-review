@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..schema import Finding, ModelUsage, PRContext, Skill, Verdict
+from ..schema import Discussion, Finding, ModelUsage, PRContext, Skill, Verdict
 
 
 class ProviderUnavailable(Exception):
@@ -61,5 +61,14 @@ class ReviewProvider(Protocol):
         One finding, one verdict — never batch. ``model`` must be a model that
         did **not** report this finding; asking a model to check its own work
         measures nothing.
+        """
+        ...
+
+    async def discuss(
+        self, model: str, discussion: Discussion, ctx: PRContext
+    ) -> str:
+        """Answer a question asked in the thread under a finding.
+
+        Returns Markdown, not structured output: this is a reply to a person.
         """
         ...

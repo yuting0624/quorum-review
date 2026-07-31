@@ -55,15 +55,19 @@ class RunReport:
 
 
 def evidence(finding: Finding) -> str:
-    """One phrase describing why this finding is being shown."""
+    """One phrase describing how much agreement is behind this finding.
+
+    Two models that never saw each other's output is stronger evidence than one
+    model checked by another, which in turn beats one model unchecked. The
+    column exists so a reader can weigh a finding without opening it.
+    """
     if finding.agreed:
         return "both models, independently"
+    reporter = finding.reported_by[0] if finding.reported_by else "?"
     if finding.verifier_model:
-        return f"`{finding.reported_by[0] if finding.reported_by else '?'}`, " + (
-            f"checked by `{finding.verifier_model}`"
-        )
+        return f"`{reporter}`, agreed by `{finding.verifier_model}`"
     if finding.reported_by:
-        return f"`{finding.reported_by[0]}`, unchecked"
+        return f"`{reporter}`, unchecked"
     return "unknown"
 
 
@@ -372,18 +376,24 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
     if finding.agreed:
         lines += [
             "",
-            "> Reported independently by "
+            "> **Found by two models independently** — "
             + " and ".join(f"`{m}`" for m in finding.reported_by)
-            + ". Neither model saw the other's output.",
+            + " each read this diff without seeing the other's output.",
         ]
     elif finding.verifier_reason:
+        reporter = finding.reported_by[0] if finding.reported_by else "one model"
         lines += [
             "",
             "<details>",
-            f"<summary>Checked by <code>{finding.verifier_model}</code>, which did "
-            f"not report it</summary>",
+            f"<summary>Second opinion from <code>{finding.verifier_model}</code>"
+            f"</summary>",
             "",
-            finding.verifier_reason,
+            f"`{reporter}` raised this. `{finding.verifier_model}` was then asked "
+            f"to judge it — without being shown the reasoning, the severity, or "
+            f"who reported it, so that it would assess the code rather than "
+            f"agree with a colleague. Its answer:",
+            "",
+            f"> {finding.verifier_reason}",
             "",
             "</details>",
         ]
