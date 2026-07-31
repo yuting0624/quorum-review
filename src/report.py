@@ -195,7 +195,20 @@ def render(report: RunReport) -> str:
         lines += ["", "</details>"]
 
     if report.resolved:
-        lines += ["", "### Resolved since the last review", ""]
+        # Deliberately not called "resolved". A finding drops off this run
+        # either because it was fixed or because the scan did not re-detect it,
+        # and from here the two are indistinguishable. Claiming a fix that did
+        # not happen is the worse error, so the wording states only what is
+        # actually known.
+        lines += [
+            "",
+            "### No longer reported",
+            "",
+            "Previously flagged and not raised by this review — either fixed, or "
+            "not re-detected. These are no longer suppressed, so they will "
+            "reappear if a later review finds them again.",
+            "",
+        ]
         lines += [f"- {title}" for title in report.resolved]
 
     if report.unanchored:

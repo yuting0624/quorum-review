@@ -171,9 +171,46 @@ rank the models in general.
   runs either, so it is not yet evidence that dual scanning finds *more*
   unseeded bugs, only that it found some.
 
-### Still to measure
+## Live run from GitHub Actions
 
-- Re-review after fixing some bugs, to confirm resolved findings are recognised
-  and open ones are not re-reported. Requires a run that actually posts, since
-  the ledger lives in the summary comment.
+The measurements above drive the provider directly. This section records the
+real thing: the workflow running on `ubuntu-latest`, authenticating through
+Workload Identity Federation, and posting to PR #1.
+
+| | Result |
+|---|---|
+| Single Google Cloud credential drives both models from Actions | **yes** — this is the Phase 0 completion condition |
+| Findings posted | 13 inline + 1 summary carrying the ledger |
+| Seeded bugs found | 10 / 10 |
+| False positives | 0 — no decoy flagged |
+| Independent agreement | 9 of 11 findings reported by both models without seeing each other |
+| **Re-report rate on an unchanged PR** | **0%** (0 of 13) — target was ≤ 5% |
+| Summary comments accumulated | 1 — edited in place, not appended |
+
+### Getting to 0% took two fixes, both found by running it
+
+The first live re-run posted **eight of eleven findings a second time**.
+Suppression keyed on `finding_id`, which hashes the code the model quoted — and
+a model re-quotes the same bug with a different span between runs, so the same
+defect arrived with a new ID and read as new. Matching on position instead cut
+that to two.
+
+The two that survived were the same defect anchored at different lines: the
+unenforced share expiry reported at the storage, the lookup, and the check
+across sixteen lines, and the TOCTOU reported at the write and at the `open()`.
+Widening the line window was not available as a fix — `delete_document` and
+`purge_user` sit nine lines apart in the same file and are different bugs. A
+title-overlap rule closed it, with the thresholds tuned against exactly these
+cases and pinned in `tests/test_matching.py`.
+
+Neither failure was visible in the dry-run measurements, which never write a
+ledger. They only appeared once the thing actually posted twice.
+
+## Still to measure
+
+- Re-review after genuinely fixing some seeded bugs. The 0% above proves nothing
+  is re-posted on an unchanged PR; it does not prove a real fix is recognised as
+  one. Note also that one finding appeared under "no longer reported" purely
+  because the second scan did not re-raise it — the summary is careful not to
+  call that a fix.
 - Reference comparison against CodeRabbit and Copilot Code Review on the same PR.
