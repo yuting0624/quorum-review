@@ -19,7 +19,7 @@ import pathlib
 import sys
 import time
 
-from . import actions, consensus, conversation, dismissal, forks, learning
+from . import actions, consensus, conversation, dismissal, forks, learning, redaction
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
@@ -439,6 +439,17 @@ async def run(skill_name: str, dry_run: bool) -> int:
             raise ProviderUnavailable(f"every scanning model failed: {failures}")
 
         findings = dedupe(ledger_mod.assign_ids(consensus.merge(scans)))
+
+        # Before anything renders, records, or posts. A finding about a
+        # hardcoded credential quotes the credential, and republishing it in a
+        # comment makes it more visible and longer-lived than the diff it came
+        # from — a force-push removes the diff and leaves the comment.
+        #
+        # Note the order: after assign_ids, so the identity that suppresses a
+        # re-report is derived from the real snippet and stays stable whether
+        # or not a value was removed for display.
+        for finding in findings:
+            finding.redacted = redaction.sanitise(finding)
         report.scanned = len(findings)
         report.per_model_counts = {
             model: len(scan) for model, scan in zip(scanning, scans, strict=False)
@@ -503,6 +514,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 )
         else:
             verified = unresolved
+
+        # Again, because a verifier's prose is written after the first pass and
+        # quoting the offending value back is exactly what a good explanation
+        # of a hardcoded-credential finding does.
+        for finding in verified + skipped:
+            finding.redacted += redaction.sanitise(finding)
 
         for finding in agreed:
             report.confirmed.append(finding)

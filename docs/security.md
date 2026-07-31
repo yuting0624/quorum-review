@@ -109,6 +109,34 @@ There is no long-lived secret in the repository at all — that property comes
 from Workload Identity Federation, not from anything this code does. Nothing to
 leak from a workflow log, nothing to find in the git history later.
 
+### The reviewer does not republish the secret it found
+
+A finding about a hardcoded credential quotes the credential — that is what
+makes it legible. It also means the reviewer takes a value out of a diff and
+puts it in a pull request comment, which is more visible, harder to remove, and
+on a public repository indexed. The comment also outlives its source: force-push
+the branch and the diff is gone while the comment stays.
+
+So credential shapes are removed from every finding before it renders, records,
+or posts — [`redaction.py`](../quorum_review/redaction.py). Three details:
+
+- **Once, at the source.** Five places put a finding's text in front of a
+  reader, and one of them is the ledger, which lives inside the summary
+  comment. Redacting per rendering site works until someone adds the sixth.
+- **A suggestion is dropped, not redacted.** It is applied verbatim by a click,
+  so a redacted one would write the placeholder into the file.
+- **The comment says what was removed**, by kind, and tells the author to
+  rotate it. A finding that quotes `[redacted]` with no explanation reads like
+  a bug in the reviewer.
+
+The pattern list is short by design. Every entry matches a token format issued
+by a service, where the full value is worth nothing to a reader. Anything that
+would require guessing whether a string is sensitive is left alone: a reviewer
+that mangles ordinary code gets switched off, and then it protects nothing.
+
+This is not a secret scanner. It reduces what the reviewer itself spreads; it
+does not tell you whether your repository has secrets in it.
+
 ### The reviewer cannot write to the repository
 
 The workflow requests `contents: read`. There is no code path that pushes a

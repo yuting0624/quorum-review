@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 
+from . import redaction
 from .schema import SEVERITIES, SEVERITY_RANK, Finding, ModelUsage
 
 SEVERITY_ICON = {
@@ -441,6 +442,10 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     lines = [f"{icon} **{finding.title}**", "", finding.body]
 
+    # Redaction happened at the source, in review.py, not here. There are five
+    # places a finding's text reaches a comment — including the ledger, which
+    # lives inside the summary — and doing it per site works until someone adds
+    # the sixth.
     if with_suggestion and finding.fix_replacement:
         lines += ["", "```suggestion", finding.fix_replacement.rstrip("\n"), "```"]
 
@@ -468,6 +473,9 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
             "",
             "</details>",
         ]
+
+    if finding.redacted:
+        lines += ["", redaction.note(finding.redacted)]
 
     lines += [
         "",

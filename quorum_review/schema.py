@@ -62,6 +62,11 @@ class Finding:
     verifier_reason: str = ""
     verifier_model: str = ""
 
+    #: Kinds of credential removed from this finding's text before posting, if
+    #: any. Named in the comment so a reader knows something was taken out — a
+    #: finding that quotes `[redacted]` with no explanation reads like a bug.
+    redacted: list[str] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
