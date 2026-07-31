@@ -86,19 +86,53 @@ def evidence(finding: Finding) -> str:
     """
     if finding.agreed:
         return "both models, independently"
-    reporter = finding.reported_by[0] if finding.reported_by else "?"
+    reporter = cell(finding.reported_by[0]) if finding.reported_by else "?"
     if finding.verifier_model:
-        return f"`{reporter}`, agreed by `{finding.verifier_model}`"
+        return f"`{reporter}`, agreed by `{cell(finding.verifier_model)}`"
     if finding.reported_by:
         return f"`{reporter}`, unchecked"
     return "unknown"
 
 
+#: A title longer than this is not a title. The schema asks for 80 characters
+#: and models mostly comply, but a run that produces a paragraph would make one
+#: row unreadable and push the rest of the table off the screen.
+MAX_CELL_CHARS = 160
+
+
+def flatten(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """One line, bounded. For anywhere a title appears inside Markdown syntax.
+
+    A newline inside ``**bold**`` ends the emphasis and, in a list, starts a
+    new item mid-sentence. Titles are model output; they are asked for one
+    line and mostly give one.
+    """
+    flattened = " ".join((text or "").split())
+    if len(flattened) > limit:
+        flattened = flattened[: limit - 1].rstrip() + "…"
+    return flattened
+
+
+def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """Make a value safe to put between two pipes.
+
+    A security reviewer's titles contain pipes constantly — `cmd | grep`,
+    `a || b`, regex alternation. An unescaped one adds a column, so GitHub
+    shifts every later cell left and the Evidence column, which is the whole
+    argument this table exists to make, shows a fragment of the title instead.
+    A newline is worse: it ends the table and dumps the rest as prose.
+
+    Both were live. Neither shows up in a test that only checks the text
+    appears somewhere in the row.
+    """
+    return flatten(text, limit).replace("|", r"\|")
+
+
 def _row(finding: Finding) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     return (
-        f"| {icon} {finding.severity} | {finding.category} | "
-        f"`{finding.file_path}:{finding.line}` | {finding.title} | "
+        f"| {icon} {cell(finding.severity)} | {cell(finding.category)} | "
+        f"`{cell(finding.file_path)}:{finding.line}` | {cell(finding.title)} | "
         f"{evidence(finding)} |"
     )
 
@@ -301,8 +335,9 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.refuted:
             lines.append(
-                f"- **{finding.title}** (`{finding.file_path}:{finding.line}`) — "
-                f"{finding.verifier_reason or 'no reason given'}"
+                f"- **{flatten(finding.title)}** "
+                f"(`{finding.file_path}:{finding.line}`) — "
+                f"{flatten(finding.verifier_reason, 400) or 'no reason given'}"
             )
         lines += ["", "</details>"]
 
@@ -346,8 +381,8 @@ def render(report: RunReport) -> str:
         ]
         for finding in report.unanchored:
             lines.append(
-                f"- `{finding.file_path}:{finding.line}` — **{finding.title}**: "
-                f"{finding.body}"
+                f"- `{finding.file_path}:{finding.line}` — "
+                f"**{flatten(finding.title)}**: {finding.body}"
             )
 
     if report.summary_only:
@@ -495,7 +530,7 @@ def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
     corrupt the file.
     """
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
-    lines = [f"{icon} **{finding.title}**", "", finding.body]
+    lines = [f"{icon} **{flatten(finding.title)}**", "", finding.body]
 
     # Redaction happened at the source, in review.py, not here. There are five
     # places a finding's text reaches a comment — including the ledger, which
