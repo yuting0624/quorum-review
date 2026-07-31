@@ -120,23 +120,58 @@ class GitHubClient:
             )
         return response
 
+    async def _pull_diff(self, number: int) -> str:
+        return (
+            await self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls/{number}",
+                headers={"Accept": "application/vnd.github.v3.diff"},
+            )
+        ).text
+
+    async def _range_diff(self, base_sha: str, head_sha: str) -> str | None:
+        """Diff between two commits, or None if the range is not resolvable.
+
+        A force-push can make the previously reviewed commit unreachable. That
+        is expected rather than exceptional, so it returns None and the caller
+        falls back to the whole pull request.
+        """
+        try:
+            response = await self._get(
+                f"/repos/{self.owner}/{self.repo}/compare/{base_sha}...{head_sha}",
+                headers={"Accept": "application/vnd.github.v3.diff"},
+            )
+        except GitHubError:
+            return None
+        return response.text
+
     async def load_context(
-        self, number: int, path_filter: PathFilter | None = None
+        self,
+        number: int,
+        path_filter: PathFilter | None = None,
+        since_sha: str = "",
     ) -> tuple[PRContext, list[str], list[str]]:
         """Fetch everything a provider needs.
 
         Returns the context, the files skipped as not worth reviewing, and the
         files that were too large to send whole. Both lists are surfaced in the
         summary — a partial review must never read as a complete one.
+
+        With ``since_sha``, only what changed since that commit is reviewed.
+        The saving grows with every push: without it, a pull request on its
+        tenth commit re-reads all ten commits' worth of diff every time.
         """
         pull = (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
+        head_sha = pull["head"]["sha"]
 
-        raw_diff = (
-            await self._get(
-                f"/repos/{self.owner}/{self.repo}/pulls/{number}",
-                headers={"Accept": "application/vnd.github.v3.diff"},
-            )
-        ).text
+        raw_diff = ""
+        incremental = False
+        if since_sha and since_sha != head_sha:
+            ranged = await self._range_diff(since_sha, head_sha)
+            if ranged is not None:
+                raw_diff, incremental = ranged, True
+
+        if not incremental:
+            raw_diff = await self._pull_diff(number)
 
         path_filter = path_filter or PathFilter()
         selected, skipped = diffs.select(raw_diff, lambda p: not path_filter.excluded(p))
@@ -146,12 +181,13 @@ class GitHubClient:
             owner=self.owner,
             repo=self.repo,
             number=number,
-            head_sha=pull["head"]["sha"],
-            base_sha=pull["base"]["sha"],
+            head_sha=head_sha,
+            base_sha=since_sha if incremental else pull["base"]["sha"],
             title=pull.get("title") or "",
             body=pull.get("body") or "",
             diff=diff,
             changed_files=sorted(diffs.split_by_file(selected)),
+            incremental=incremental,
         )
         return ctx, skipped, trimmed
 
@@ -209,25 +245,37 @@ class GitHubClient:
         return int(response.json()["id"])
 
     async def post_inline_comment(
-        self, number: int, commit_sha: str, path: str, line: int, body: str
+        self,
+        number: int,
+        commit_sha: str,
+        path: str,
+        line: int,
+        body: str,
+        start_line: int | None = None,
     ) -> int | None:
-        """Anchor a comment to a line, returning its ID.
+        """Anchor a comment to a line or a line range, returning its ID.
+
+        ``start_line`` spans a range, which is what a multi-line suggestion
+        needs — GitHub applies a suggestion to exactly the commented lines.
 
         GitHub rejects an anchor that is not part of the diff with a 422. That
         is expected often enough — the model can point at a line it read for
         context rather than one the PR touched — that it is not treated as an
-        error: None comes back and the caller folds the finding into the
-        summary instead of failing the run.
+        error: None comes back and the caller decides what to do instead.
         """
+        payload: dict[str, Any] = {
+            "commit_id": commit_sha,
+            "path": path,
+            "line": line,
+            "side": "RIGHT",
+            "body": body,
+        }
+        if start_line is not None and start_line < line:
+            payload["start_line"] = start_line
+            payload["start_side"] = "RIGHT"
+
         response = await self._http.post(
-            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
-            json={
-                "commit_id": commit_sha,
-                "path": path,
-                "line": line,
-                "side": "RIGHT",
-                "body": body,
-            },
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments", json=payload
         )
         if response.status_code == 422:
             return None

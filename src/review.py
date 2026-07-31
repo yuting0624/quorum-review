@@ -53,6 +53,16 @@ def verification_enabled() -> bool:
     return os.getenv("QUORUM_VERIFICATION", "on").strip().lower() not in _OFF
 
 
+def incremental_enabled() -> bool:
+    """Whether a re-review reads only what changed since the last one.
+
+    On by default. The saving compounds: without it, a pull request on its
+    tenth commit re-reads all ten commits' worth of diff on every run, and
+    re-derives findings the ledger already knows about.
+    """
+    return os.getenv("QUORUM_INCREMENTAL", "on").strip().lower() not in _OFF
+
+
 def scan_with_all_models() -> bool:
     """Whether every configured model scans, or only the first.
 
@@ -158,6 +168,39 @@ async def verify_all(
     return list(verified), unavailable[0] if unavailable else ""
 
 
+async def post_finding(
+    github: GitHubClient, number: int, head_sha: str, finding: Finding
+) -> int | None:
+    """Post one finding inline, degrading rather than losing it.
+
+    A one-click suggestion has to be anchored to exactly the lines it replaces,
+    and GitHub rejects a range that is not wholly inside the diff. When that
+    happens the finding is still worth saying — so it is retried on the single
+    line, with the suggestion dropped. Keeping the suggestion while narrowing
+    the anchor would apply the replacement to the wrong lines.
+    """
+    spans_range = bool(finding.fix_replacement) and finding.fix_end_line > finding.line
+
+    comment_id = await github.post_inline_comment(
+        number=number,
+        commit_sha=head_sha,
+        path=finding.file_path,
+        line=finding.fix_end_line if spans_range else finding.line,
+        start_line=finding.line if spans_range else None,
+        body=report_mod.render_inline(finding),
+    )
+    if comment_id is not None or not spans_range:
+        return comment_id
+
+    return await github.post_inline_comment(
+        number=number,
+        commit_sha=head_sha,
+        path=finding.file_path,
+        line=finding.line,
+        body=report_mod.render_inline(finding, with_suggestion=False),
+    )
+
+
 async def close_threads(
     github: GitHubClient,
     number: int,
@@ -223,7 +266,11 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
     async with GitHubClient() as github:
         ledger, sticky = await github.load_ledger(number)
-        ctx, skipped_files, trimmed = await github.load_context(number, path_filter)
+        ctx, skipped_files, trimmed = await github.load_context(
+            number,
+            path_filter,
+            since_sha=ledger.last_reviewed_sha if incremental_enabled() else "",
+        )
 
         report = report_mod.RunReport(
             models=models,
@@ -231,6 +278,8 @@ async def run(skill_name: str, dry_run: bool) -> int:
             verification_on=verify_wanted,
             trimmed_files=trimmed,
             skipped_files=skipped_files,
+            incremental=ctx.incremental,
+            since_sha=ctx.base_sha if ctx.incremental else "",
             head_sha=ctx.head_sha,
         )
 
@@ -250,9 +299,17 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # as fixed. Scans are not perfectly repeatable, so a finding can drop
         # out because the models missed it rather than because it was fixed —
         # accepted for now, since re-detection later simply reopens it.
+        #
+        # Only files this run actually looked at are eligible. On an
+        # incremental review the diff covers just the new commits, so a finding
+        # in an untouched file was never examined — closing it would report a
+        # fix that nobody made.
+        reviewed = set(ctx.changed_files)
         newly_closed: list[ledger_mod.LedgerEntry] = []
         for entry in list(ledger.entries.values()):
-            if entry.status == "open" and not ledger.still_present(entry, findings):
+            if entry.status != "open" or entry.file_path not in reviewed:
+                continue
+            if not ledger.still_present(entry, findings):
                 ledger.mark_fixed(entry.finding_id, ctx.head_sha)
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
                 newly_closed.append(entry)
@@ -310,13 +367,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
             return 0
 
         for finding in report.confirmed + report.unverified:
-            comment_id = await github.post_inline_comment(
-                number=number,
-                commit_sha=ctx.head_sha,
-                path=finding.file_path,
-                line=finding.line,
-                body=report_mod.render_inline(finding),
-            )
+            comment_id = await post_finding(github, number, ctx.head_sha, finding)
             if comment_id is None:
                 report.unanchored.append(finding)
             entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)

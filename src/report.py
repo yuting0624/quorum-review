@@ -46,6 +46,8 @@ class RunReport:
     skipped_files: list[str] = field(default_factory=list)
     usage: dict[str, ModelUsage] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
+    incremental: bool = False
+    since_sha: str = ""
     head_sha: str = ""
 
 
@@ -151,7 +153,18 @@ def _how_it_ran(report: RunReport) -> list[str]:
 
 def render(report: RunReport) -> str:
     """Build the Markdown body. The ledger marker is appended by the caller."""
-    lines: list[str] = ["## Quorum review", "", *_how_it_ran(report)]
+    lines: list[str] = ["## Quorum review", ""]
+
+    if report.incremental:
+        lines += [
+            f"Reviewing only what changed since `{report.since_sha[:7]}`. Findings "
+            f"in files this range does not touch are carried over untouched — "
+            f"they were not re-examined, so they are neither re-reported nor "
+            f"treated as fixed.",
+            "",
+        ]
+
+    lines += _how_it_ran(report)
 
     if report.suppressed:
         lines += [
@@ -295,10 +308,19 @@ def _footer(report: RunReport) -> list[str]:
     return lines
 
 
-def render_inline(finding: Finding) -> str:
-    """Body of a single line-anchored comment."""
+def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
+    """Body of a single line-anchored comment.
+
+    ``with_suggestion`` is turned off when GitHub rejects the multi-line anchor
+    a suggestion needs. The finding is still worth posting; the one-click fix
+    is what gets dropped, because a suggestion applied to the wrong range would
+    corrupt the file.
+    """
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     lines = [f"{icon} **{finding.title}**", "", finding.body]
+
+    if with_suggestion and finding.fix_replacement:
+        lines += ["", "```suggestion", finding.fix_replacement.rstrip("\n"), "```"]
 
     if finding.agreed:
         lines += [

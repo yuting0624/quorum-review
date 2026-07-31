@@ -98,6 +98,27 @@ reporting something still has to get past a second model that never saw the
 manipulated session — and that second model is now scanning too, not just
 reacting.
 
+### Living with it
+
+**Dismiss a false positive** by replying `@quorum wontfix — <why>` to the review
+comment. It is not reported again, and the reason is kept.
+
+**Resolved findings close themselves.** When a finding stops being reported, its
+thread gets a reply and is collapsed. A wall of open comments for problems that
+are gone is how a reviewer teaches people to ignore it.
+
+**Fixes arrive as suggestions when they are safe.** Only when the model can
+replace the anchored lines completely — a partial fix someone clicks apply on is
+worse than no fix.
+
+**Generated files are skipped.** Lockfiles, vendored code, build output, and
+generated sources are excluded by default; add your own with `exclude` or a
+`.quorumignore`. Whatever is skipped is named in the summary.
+
+**Re-reviews read only the new commits**, using the sha in the ledger. Findings
+in files those commits do not touch are carried over rather than re-derived —
+and, importantly, are not mistaken for fixed.
+
 ### Findings are tracked by content, not by line
 
 The failure mode of automated review is not wrong findings — it is the *same*
@@ -144,6 +165,8 @@ Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
 | `verifier-model` | `claude-opus-5` | Both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` uses one model — cheaper, but caps recall at that model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
+| `incremental` | `on` | Re-reviews only what changed since the last review |
+| `exclude` | — | Extra paths to skip, on top of the built-in defaults |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `claude-vertex-region` | `global` | Try `us-east5` if your entitlement is region-scoped |
 | `max-verified-findings` | `20` | Cap on second opinions; ignored when verification is off |

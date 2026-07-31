@@ -60,6 +60,13 @@ inputs:
       repository root is read as well.
     required: false
     default: ""
+  incremental:
+    description: >-
+      'on' re-reviews only what changed since the last review, using the sha
+      recorded in the ledger. Saves grow with every push. 'off' always reads
+      the whole pull request.
+    required: false
+    default: "on"
   scan:
     description: >-
       'both' has each model read the diff independently and merges the results.
@@ -111,6 +118,7 @@ runs:
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
         CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
         QUORUM_EXCLUDE: ${{ inputs.exclude }}
+        QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}
         QUORUM_VERIFICATION: ${{ inputs.verification }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}

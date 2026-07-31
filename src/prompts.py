@@ -28,6 +28,25 @@ pre-filter for confidence yourself.
 Report only on lines the diff adds or modifies. Pre-existing problems in
 untouched code are out of scope.
 
+## Proposing a fix
+
+`fix_replacement` becomes a one-click suggestion the author can apply without
+reading it closely. Treat that as the bar.
+
+Fill it in only when all of these hold:
+
+- The fix is a **complete replacement** of lines `line` through `fix_end_line`.
+  Never a fragment, never a diff, never a `...` placeholder.
+- It compiles and behaves correctly on its own, with the surrounding code
+  unchanged. If it needs a new import, a new helper, or an edit elsewhere,
+  there is no safe suggestion — leave it empty and describe the fix in `body`.
+- You are confident. A plausible-looking fix that someone applies and ships is
+  worse than no fix at all.
+
+Preserve the original indentation exactly; the text is inserted verbatim.
+Leave `fix_replacement` as an empty string and `fix_end_line` as 0 whenever the
+bar above is not met, which will often be most findings.
+
 ## Review criteria
 
 {skill.content}
