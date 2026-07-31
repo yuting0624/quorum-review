@@ -14,7 +14,21 @@ inputs:
     required: false
     default: vertex
   skill:
-    description: Review criteria to load from skills/<name>/SKILL.md.
+    description: >-
+      Which review criteria to use. A bare name is a built-in
+      (security-review, code-quality-review). Anything with a slash or ending
+      in .md is a path in *your* repository, so your own standards do not
+      require forking this one:
+
+        skill: .github/quorum/backend.md
+
+      Several can be combined, comma- or newline-separated, and are
+      concatenated. Up to four, 20,000 characters each — they are prepended to
+      every scan prompt, and a model given pages of policy starts reporting
+      policy violations rather than defects.
+
+      Criteria are instructions to the model, so they are read from the base
+      branch for a pull request from a fork.
     required: false
     default: security-review
   primary-model:
@@ -156,6 +170,21 @@ inputs:
       one Vertex region is having a bad afternoon is its own outage.
     required: false
     default: "false"
+  sarif-file:
+    description: >-
+      Write the findings here as SARIF, for
+      github/codeql-action/upload-sarif. They then appear in the Security tab,
+      deduplicated across runs and tracked open-to-fixed, which is where an
+      organisation's triage already looks — a pull request comment is not a
+      queue and nothing counts it.
+
+      Only findings the reviewer stands behind are written. Advisory and
+      refuted ones stay in the summary comment: the Security tab is a queue
+      someone is expected to empty, and a queue full of maybes is not emptied.
+
+      Empty (the default) writes nothing.
+    required: false
+    default: ""
   dry-run:
     description: Print the summary instead of posting it.
     required: false
@@ -232,6 +261,7 @@ runs:
         QUORUM_MAX_DIFF_CHARS: ${{ inputs.max-diff-characters }}
         QUORUM_FAIL_ON: ${{ inputs.fail-on }}
         QUORUM_FAIL_ON_DEGRADED: ${{ inputs.fail-on-degraded }}
+        QUORUM_SARIF_FILE: ${{ inputs.sarif-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         QUORUM_PR_NUMBER: ${{ inputs.pr-number }}
       run: |

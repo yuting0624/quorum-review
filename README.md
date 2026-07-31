@@ -238,7 +238,7 @@ finding.
 | Input | Default | Notes |
 |---|---|---|
 | `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
-| `skill` | `security-review` | also ships `code-quality-review`; add your own under `skills/` |
+| `skill` | `security-review` | a built-in name, or a path to criteria in your own repository; several combine |
 | `primary-model` | a Gemini model | **confirm against your project** — `python -m quorum_review.review --list-models` |
 | `verifier-model` | `claude-opus-5` | both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
@@ -248,6 +248,7 @@ finding.
 | `fail-on-degraded` | `false` | also fail when the reviewer could not run properly. See below |
 | `max-diff-characters` | `400000` | whole-diff budget; files that do not fit are named, never quietly skipped |
 | `fork-label` | `quorum: review` | label that authorises reviewing a pull request from a fork |
+| `sarif-file` | — | write findings as SARIF for code scanning |
 | `incremental` | `on` | re-reviews only what changed since the last review |
 | `exclude` | — | extra paths to skip, on top of the built-in defaults |
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
@@ -291,6 +292,43 @@ calls worth stating: a required check that passes because the reviewer was
 broken is worse than no check, but one that blocks every merge in the
 organisation because a Vertex region is having a bad afternoon is its own
 outage. Two policies, two switches.
+
+### 📋 Your criteria, not mine
+
+The built-in criteria are a starting point, not a standard. Point `skill` at a
+file in **your** repository and the review asks what your security review asks:
+
+```yaml
+    with:
+      skill: security-review, .github/quorum/backend.md
+```
+
+A bare name is a built-in; anything with a slash or ending in `.md` is read from
+the repository being reviewed. Up to four, concatenated. Criteria are
+instructions to the model, so for a pull request from a fork they come from the
+base branch — a branch does not get to choose the standard it is judged against.
+
+### 🔎 In the Security tab, not just the pull request
+
+A pull request comment is read once by whoever is looking at that pull request.
+It is not a queue, it has no owner, and nothing counts it. `sarif-file` writes
+the findings for `github/codeql-action/upload-sarif`, and they then appear in
+code scanning — deduplicated across runs by content, tracked open-to-fixed, and
+routed through the triage process you already have.
+
+```yaml
+    with:
+      sarif-file: quorum.sarif
+```
+```yaml
+  - if: always() && hashFiles('quorum.sarif') != ''
+    uses: github/codeql-action/upload-sarif@v3
+    with: { sarif_file: quorum.sarif, category: quorum-review }
+```
+
+Only findings the reviewer stands behind are uploaded. Advisory and refuted ones
+stay in the comment: the Security tab is a queue someone is expected to empty,
+and a queue full of maybes is not emptied.
 
 ### 🏢 Rolling it out across an organisation
 

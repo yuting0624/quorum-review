@@ -55,10 +55,12 @@ concurrency:
 #
 # Note that `permissions:` only governs GITHUB_TOKEN. If you switch to a GitHub
 # App token, the effective permissions are the App installation's instead.
+# `security-events: write` is only for the SARIF upload at the end.
 permissions:
   contents: read
   id-token: write
   pull-requests: write
+  security-events: write
 
 jobs:
   review:
@@ -132,6 +134,7 @@ jobs:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 
       - name: Review
+        id: review
         uses: ./
         with:
           mode: vertex
@@ -139,3 +142,14 @@ jobs:
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
           workspace-path: ${{ github.workspace }}/pr-head
+          sarif-file: ${{ github.workspace }}/quorum.sarif
+
+      # Puts the findings in the Security tab, where they dedupe across runs and
+      # go through the triage that already exists. `always()` so a failed gate
+      # still uploads what it failed on.
+      - name: Upload to code scanning
+        if: always() && hashFiles('quorum.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: quorum.sarif
+          category: quorum-review

@@ -15,11 +15,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import pathlib
 import sys
 import time
 
-from . import actions, consensus, conversation, dismissal, forks, learning, redaction
+from . import (
+    actions,
+    consensus,
+    conversation,
+    criteria,
+    dismissal,
+    forks,
+    learning,
+    redaction,
+    sarif,
+)
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
@@ -39,8 +48,6 @@ VERIFY_CONCURRENCY = int(os.getenv("VERIFY_CONCURRENCY", "4"))
 
 #: Whole-run ceiling. A hung model call must not hold an Actions runner open.
 TIMEOUT_SECONDS = int(os.getenv("QUORUM_TIMEOUT_SECONDS", "1200"))
-
-SKILLS_ROOT = pathlib.Path(__file__).resolve().parent.parent / "skills"
 
 _OFF = {"off", "0", "false", "no"}
 
@@ -91,11 +98,8 @@ def inline_min_severity() -> str:
 
 
 def load_skill(name: str) -> Skill:
-    path = SKILLS_ROOT / name / "SKILL.md"
-    if not path.exists():
-        available = ", ".join(sorted(p.name for p in SKILLS_ROOT.iterdir() if p.is_dir()))
-        raise FileNotFoundError(f"unknown skill {name!r}; available: {available}")
-    return Skill(name=name, content=path.read_text(encoding="utf-8"))
+    """Built-in criteria only. See ``criteria.resolve`` for the general case."""
+    return criteria.load_builtin(name)
 
 
 def dedupe(findings: list[Finding]) -> list[Finding]:
@@ -231,7 +235,8 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
         )
         return 0
 
-    skill = load_skill(skill_name)
+    pull = await github.pull_request(number)
+    skill = await criteria.resolve(skill_name, github, pull["head"]["sha"])
     provider = build_provider()
     body = await provider.respond(
         provider.models[0],
@@ -362,8 +367,6 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 github, build_provider(), ctx, ledger, event
             )
 
-    skill = load_skill(skill_name)
-
     provider = build_provider()
     models = list(provider.models)
     scanning = models if scan_with_all_models() else models[:1]
@@ -383,6 +386,13 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 print(f"::notice title=Not reviewed::{refusal}")
                 print(f"skipped: {refusal}", file=sys.stderr)
                 return 0
+
+        # Criteria are instructions to the model, so an untrusted head must
+        # not choose its own — the base branch's copy governs a fork, exactly
+        # as it does for `.quorumignore`.
+        pull = await github.pull_request(number)
+        criteria_ref = pull["base"]["sha"] if from_fork else pull["head"]["sha"]
+        skill = await criteria.resolve(skill_name, github, criteria_ref)
 
         ledger, sticky = await github.load_ledger(number)
         ctx, skipped_files, trimmed, dropped = await github.load_context(
@@ -589,6 +599,28 @@ async def run(skill_name: str, dry_run: bool) -> int:
     return _finish(report)
 
 
+def _write_sarif(report: report_mod.RunReport) -> None:
+    """Write the findings where an organisation's existing triage can see them.
+
+    A pull request comment is read once by whoever is looking at that pull
+    request. It is not a queue, has no owner, and nothing counts it. Uploading
+    this to code scanning puts the findings in the Security tab, where they
+    dedupe across runs and go through the same process as everything else.
+    """
+    path = os.getenv("QUORUM_SARIF_FILE", "").strip()
+    if not path:
+        return
+    try:
+        sarif.write(
+            path,
+            actions.posted(report),
+            list(report.models),
+            report.head_sha,
+        )
+    except OSError as error:  # noqa: BLE001 - cosmetic; never fail a run for it
+        print(f"note: could not write {path}: {error}", file=sys.stderr)
+
+
 def _finish(report: report_mod.RunReport) -> int:
     """Publish the run to the workflow, and decide whether to fail the check.
 
@@ -598,6 +630,7 @@ def _finish(report: report_mod.RunReport) -> int:
     """
     actions.annotate(report)
     actions.write_outputs(report)
+    _write_sarif(report)
 
     message = actions.gate_message(report)
     if message:

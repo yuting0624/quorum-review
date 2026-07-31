@@ -55,10 +55,13 @@ concurrency:
 #
 # Note that `permissions:` only governs GITHUB_TOKEN. If you switch to a GitHub
 # App token, the effective permissions are the App installation's instead.
+# `security-events: write` is only needed for the SARIF upload at the end. Drop
+# it, and that step, if you do not want the findings in the Security tab.
 permissions:
   contents: read
   id-token: write
   pull-requests: write
+  security-events: write
 
 jobs:
   review:
@@ -128,9 +131,27 @@ jobs:
           project_id: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 
       - name: Review
+        id: review
         uses: yuting0624/quorum-review@v1
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          # A bare name is a built-in. A path is read from *your* repository,
+          # so your own standards do not require forking this one:
+          #   skill: security-review, .github/quorum/backend.md
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
+          sarif-file: quorum.sarif
+          # Uncomment to make this a required check. Advisory and refuted
+          # findings never gate — the reviewer declined to stand behind them.
+          # fail-on: critical
+
+      # Puts the findings in the Security tab, where they dedupe across runs,
+      # track open-to-fixed, and go through the triage the organisation already
+      # has. `always()` so a failed gate still uploads what it failed on.
+      - name: Upload to code scanning
+        if: always() && hashFiles('quorum.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: quorum.sarif
+          category: quorum-review
