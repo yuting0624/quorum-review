@@ -10,7 +10,15 @@ the Security tab, deduplicated across runs, tracked open-to-fixed, filterable by
 severity and rule, and available to the same reports as everything else. The
 comments remain the thing people read; this is the thing people count.
 
-Two decisions worth naming:
+Three decisions worth naming:
+
+**The upload is the whole open state, not this run's new findings.** Code
+scanning treats each upload for a category as a replacement: anything absent
+from it is marked fixed. So uploading only what a run newly reported would close
+every earlier alert the moment an incremental re-review found nothing new —
+which is most re-reviews, because the ledger's whole job is to stop re-reporting
+what it already reported. The findings therefore come from the ledger's open
+entries, which is the reviewer's actual current position.
 
 **Advisory and refuted findings are not uploaded.** The Security tab is a queue
 someone is expected to empty. Filling it with findings the reviewer itself
@@ -176,6 +184,35 @@ def build(
     if commit:
         run["versionControlProvenance"] = [{"revisionId": commit}]
     return {"$schema": SCHEMA, "version": VERSION, "runs": [run]}
+
+
+def open_findings(ledger: Any) -> list[Finding]:
+    """The reviewer's current position, as findings, from the ledger.
+
+    Not this run's output. See the module docstring: an upload replaces the
+    previous state, so a run that reported nothing new would otherwise close
+    every alert it had raised before.
+
+    ``wontfix`` entries are excluded along with ``fixed`` ones. Someone
+    dismissed them with a reason on the pull request, and re-raising them in a
+    second system is how a dismissal stops meaning anything.
+    """
+    return [
+        Finding(
+            file_path=entry.file_path,
+            line=entry.line,
+            category=entry.category,
+            severity=entry.severity,
+            title=entry.title,
+            body=entry.verifier_reason or "",
+            code_snippet=entry.snippet,
+            finding_id=entry.finding_id,
+            reported_by=list(entry.reported_by),
+            verifier_model=entry.verifier_model,
+        )
+        for entry in ledger.entries.values()
+        if entry.status == "open"
+    ]
 
 
 def write(

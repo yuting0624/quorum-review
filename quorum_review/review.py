@@ -595,17 +595,23 @@ async def run(skill_name: str, dry_run: bool) -> int:
         marker = ledger_mod.fit_to_comment(ledger, body)
         await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)
         actions.write_job_summary(body)
+        _write_sarif(report, ledger)
 
     return _finish(report)
 
 
-def _write_sarif(report: report_mod.RunReport) -> None:
+def _write_sarif(report: report_mod.RunReport, ledger: ledger_mod.Ledger) -> None:
     """Write the findings where an organisation's existing triage can see them.
 
     A pull request comment is read once by whoever is looking at that pull
     request. It is not a queue, has no owner, and nothing counts it. Uploading
     this to code scanning puts the findings in the Security tab, where they
     dedupe across runs and go through the same process as everything else.
+
+    The ledger rather than this run's output, because code scanning treats an
+    upload as a replacement. A re-review that reports nothing new — which the
+    ledger exists to make the common case — would otherwise close every alert
+    the earlier reviews had raised.
     """
     path = os.getenv("QUORUM_SARIF_FILE", "").strip()
     if not path:
@@ -613,7 +619,7 @@ def _write_sarif(report: report_mod.RunReport) -> None:
     try:
         sarif.write(
             path,
-            actions.posted(report),
+            sarif.open_findings(ledger),
             list(report.models),
             report.head_sha,
         )
@@ -630,7 +636,6 @@ def _finish(report: report_mod.RunReport) -> int:
     """
     actions.annotate(report)
     actions.write_outputs(report)
-    _write_sarif(report)
 
     message = actions.gate_message(report)
     if message:

@@ -158,3 +158,66 @@ def test_write_produces_a_readable_file(tmp_path: pathlib.Path):
     path = tmp_path / "quorum.sarif"
     sarif.write(str(path), [finding()], ["m"], "sha")
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == "2.1.0"
+
+
+# -- the whole open state, not this run --------------------------------------
+
+
+class FakeLedger:
+    def __init__(self, entries):
+        self.entries = {e.finding_id: e for e in entries}
+
+
+def entry(finding_id="a", status="open", **kwargs):
+    from quorum_review.ledger import LedgerEntry
+
+    base = {
+        "finding_id": finding_id,
+        "file_path": "app/x.py",
+        "category": "security",
+        "severity": "high",
+        "title": "something",
+        "line": 3,
+        "snippet": "bad = 1",
+        "reported_by": ["model-a"],
+        "status": status,
+    }
+    base.update(kwargs)
+    return LedgerEntry(**base)
+
+
+def test_open_findings_come_from_the_ledger_not_the_run():
+    """Code scanning treats an upload as a replacement.
+
+    A re-review that reports nothing new — which the ledger exists to make the
+    common case — would otherwise close every alert earlier reviews raised.
+    """
+    ledger = FakeLedger([entry("a"), entry("b"), entry("c")])
+    assert {f.finding_id for f in sarif.open_findings(ledger)} == {"a", "b", "c"}
+
+
+def test_fixed_findings_are_left_out():
+    ledger = FakeLedger([entry("a"), entry("b", status="fixed")])
+    assert [f.finding_id for f in sarif.open_findings(ledger)] == ["a"]
+
+
+def test_dismissed_findings_are_left_out():
+    """Re-raising a dismissal in a second system is how a dismissal stops
+    meaning anything."""
+    ledger = FakeLedger([entry("a", status="wontfix")])
+    assert sarif.open_findings(ledger) == []
+
+
+def test_an_empty_ledger_uploads_an_empty_result_set():
+    """Which is how code scanning learns the alerts are resolved."""
+    log = sarif.build(sarif.open_findings(FakeLedger([])), ["m"], "sha")
+    assert log["runs"][0]["results"] == []
+
+
+def test_the_ledger_carries_enough_to_build_a_result():
+    ledger = FakeLedger([entry("a", verifier_model="model-b")])
+    log = sarif.build(sarif.open_findings(ledger), ["m"], "sha")
+    result = log["runs"][0]["results"][0]
+    assert result["ruleId"] == "security"
+    assert result["partialFingerprints"]["quorumFindingId"] == "a"
+    assert result["properties"]["verifiedBy"] == "model-b"
