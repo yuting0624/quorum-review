@@ -176,3 +176,41 @@ def test_a_backslash_before_a_pipe_does_not_survive_as_a_column_break():
 
 def test_a_lone_backslash_is_escaped():
     assert cell("\\") == "\\\\"
+
+
+# -- suppression says what it suppressed ------------------------------------
+
+
+def test_suppressed_findings_are_listed_not_just_counted():
+    """Matching is positional and by wording, so it can be wrong.
+
+    A summary that reports only a count gives a reader no way to notice a bad
+    match — which is exactly the position this project was in when reading its
+    own re-review.
+    """
+    from quorum_review.report import RunReport, render
+
+    body = render(
+        RunReport(
+            suppressed=2,
+            suppressed_titles=["SQL injection in search", "Missing owner check"],
+        )
+    )
+    assert "2 finding(s) were already reported" in body
+    assert "<summary>Which ones</summary>" in body
+    assert "- SQL injection in search" in body
+    assert "- Missing owner check" in body
+
+
+def test_the_list_is_collapsed():
+    """The point of suppression is that these are not worth reading twice."""
+    from quorum_review.report import RunReport, render
+
+    body = render(RunReport(suppressed=1, suppressed_titles=["a"]))
+    assert "<details>" in body
+
+
+def test_nothing_is_listed_when_nothing_was_suppressed():
+    from quorum_review.report import RunReport, render
+
+    assert "Which ones" not in render(RunReport(confirmed=[finding()]))

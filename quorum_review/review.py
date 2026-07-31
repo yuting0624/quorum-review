@@ -549,6 +549,13 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # differently between runs, so ID equality alone lets duplicates
         # through — which is exactly what happened the first time this ran.
         fresh = [f for f in findings if not ledger.is_suppressed(f)]
+        # What was suppressed, not just how many. Matching is positional and
+        # by title overlap, so it can be wrong — and a summary that reports a
+        # count gives a reader no way to notice. Collapsed, because the point
+        # of suppression is that these are not worth reading twice.
+        report.suppressed_titles = [
+            f.title for f in findings if f not in fresh
+        ]
         report.suppressed = len(findings) - len(fresh)
 
         # -- consensus, then verify only what is unresolved --------------------

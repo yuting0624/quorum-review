@@ -37,6 +37,10 @@ class RunReport:
 
     scanned: int = 0
     suppressed: int = 0
+    #: Titles of the findings suppressed as already reported. Matching is
+    #: positional and by title overlap rather than exact, so it can be wrong;
+    #: a count alone leaves a reader no way to notice that it was.
+    suppressed_titles: list[str] = field(default_factory=list)
     agreed: list[Finding] = field(default_factory=list)
     confirmed: list[Finding] = field(default_factory=list)
     unverified: list[Finding] = field(default_factory=list)
@@ -301,6 +305,21 @@ def render(report: RunReport) -> str:
             f"{report.suppressed} finding(s) were already reported earlier in "
             f"this pull request and are not repeated here.",
         ]
+        if report.suppressed_titles:
+            lines += [
+                "",
+                "<details>",
+                "<summary>Which ones</summary>",
+                "",
+                *(f"- {flatten(title)}" for title in report.suppressed_titles),
+                "",
+                "Matched to an existing finding by position and wording, not by "
+                "an exact identifier — models do not quote the same defect the "
+                "same way twice. Listed so a wrong match is visible rather than "
+                "silent.",
+                "",
+                "</details>",
+            ]
 
     if report.confirmed:
         lines += [
