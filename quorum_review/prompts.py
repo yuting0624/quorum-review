@@ -28,6 +28,13 @@ you were given. Base it on the diff and on whatever you read. Do not call any \
 more tools.\
 """
 
+#: The same, for a turn that produces prose rather than a schema — answering a
+#: question in a review thread.
+FINALISE_PROSE = """\
+Stop investigating and answer now, in Markdown, using the diff and whatever you \
+read. Do not call any more tools.\
+"""
+
 #: Appended to a scan or verification when the repository is readable. The
 #: instruction that earns its place is the last one: most false positives in
 #: code review are a guard the reviewer could not see, and most misses are a
@@ -163,11 +170,12 @@ failure. Precision is your job; recall was someone else's.
     )
 
 
-def discuss_system(language: str = "") -> str:
+def discuss_system(language: str = "", tools: bool = False) -> str:
     """System prompt for answering a question about a finding."""
     return (
         BASE_INSTRUCTIONS
         + language_directive(language)
+        + (_TOOL_GUIDANCE if tools else "")
         + """
 ## Your task
 
@@ -180,7 +188,8 @@ as a reviewer who is accountable for what was reported.
   `@quorum wontfix — <reason>` to retire it.
 - If they are asking whether some other case is affected, reason about that
   case specifically rather than repeating the general rule.
-- If the diff does not contain enough to answer, say what you would need.
+- If you cannot answer from what you can see, say what you would need. Look
+  first, if looking is available to you.
 - No preamble, no sign-off. A few sentences is usually right; use a short code
   block when it is clearer than prose.
 

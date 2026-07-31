@@ -84,7 +84,12 @@ class ReviewProvider(Protocol):
         ...
 
     async def respond(
-        self, model: str, system: str, user: str, max_tokens: int = 8_000
+        self,
+        model: str,
+        system: str,
+        user: str,
+        max_tokens: int = 8_000,
+        toolbox: Workspace | None = None,
     ) -> str:
         """Return prose rather than structured output.
 

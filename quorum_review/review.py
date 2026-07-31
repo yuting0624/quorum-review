@@ -24,7 +24,6 @@ from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
-from .pathfilter import PathFilter
 from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
@@ -75,44 +74,9 @@ def scan_with_all_models() -> bool:
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
-def repo_access_enabled() -> bool:
-    """Whether the models may read files outside the diff.
-
-    On by default, because off is the setting that produces the two failures
-    people actually complain about — a false positive on code that is guarded
-    somewhere the reviewer could not look, and silence on a bug whose evidence
-    is one file away. It costs extra turns, so ``QUORUM_REPO_ACCESS=off``
-    restores the diff-only behaviour.
-    """
-    return os.getenv("QUORUM_REPO_ACCESS", "on").strip().lower() not in _OFF
-
-
 #: Tool calls one verification may make. Far below a scan's budget: a verifier
 #: is settling one specific claim, and it is called once per finding.
 VERIFY_TOOL_CALLS = int(os.getenv("QUORUM_VERIFY_TOOL_CALLS", "6"))
-
-
-def build_workspaces(
-    ctx: PRContext, count: int, max_calls: int
-) -> list[Workspace | None]:
-    """One independent budget per caller, or ``None`` when there is no checkout.
-
-    Budgets are not shared. Two models exploring the same repository must not be
-    able to starve each other, for the same reason their scans do not see each
-    other: the moment one model's behaviour changes what the other is allowed to
-    do, their agreement stops being evidence.
-    """
-    root = workspace_mod.workspace_root()
-    if root is None or not repo_access_enabled():
-        return [None] * count
-
-    # Reading .quorumignore from disk is right here, and only here: the
-    # workspace *is* the repository under review, unlike the action's own
-    # working directory.
-    path_filter = PathFilter.build(
-        exclude_input=os.getenv("QUORUM_EXCLUDE", ""), root=root
-    )
-    return [Workspace(root, path_filter, max_calls=max_calls) for _ in range(count)]
 
 
 def inline_min_severity() -> str:
@@ -427,7 +391,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
         )
 
         # -- independent scans ------------------------------------------------
-        scan_budgets = build_workspaces(ctx, len(scanning), workspace_mod.MAX_CALLS)
+        scan_budgets = workspace_mod.build(len(scanning), workspace_mod.MAX_CALLS)
         root = next((w.root for w in scan_budgets if w is not None), None)
         if root is not None and not workspace_mod.checkout_has_commit(root, ctx.head_sha):
             # The checkout is not this pull request — an issue_comment run gets
@@ -449,7 +413,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
         elif not report.repo_access:
             report.repo_access = (
                 "off by configuration"
-                if not repo_access_enabled()
+                if not workspace_mod.access_enabled()
                 else "off: no checkout available"
             )
 
@@ -499,7 +463,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
             skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
             verify_budgets = (
-                build_workspaces(ctx, len(to_verify), VERIFY_TOOL_CALLS)
+                workspace_mod.build(len(to_verify), VERIFY_TOOL_CALLS)
                 if any(w is not None for w in scan_budgets)
                 else [None] * len(to_verify)
             )

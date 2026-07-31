@@ -10,6 +10,7 @@ degrades the run instead of ending it.
 import asyncio
 
 from quorum_review import consensus, prompts, review
+from quorum_review import workspace as workspace_mod
 from quorum_review.providers.base import ProviderUnavailable
 from quorum_review.schema import Finding, PRContext, Skill, Verdict
 
@@ -280,7 +281,7 @@ def test_each_scanner_gets_its_own_budget(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     monkeypatch.delenv("QUORUM_REPO_ACCESS", raising=False)
 
-    first, second = review.build_workspaces(CTX, 2, max_calls=10)
+    first, second = workspace_mod.build(2, max_calls=10)
     assert first is not None and second is not None
 
     first.run("list_files", {})
@@ -291,13 +292,13 @@ def test_each_scanner_gets_its_own_budget(monkeypatch, tmp_path):
 def test_repo_access_can_be_turned_off(monkeypatch, tmp_path):
     monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("QUORUM_REPO_ACCESS", "off")
-    assert review.build_workspaces(CTX, 2, max_calls=10) == [None, None]
+    assert workspace_mod.build(2, max_calls=10) == [None, None]
 
 
 def test_no_checkout_means_no_tools_rather_than_an_error(monkeypatch):
     """Someone will wire a workflow without actions/checkout. It must still review."""
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
-    assert review.build_workspaces(CTX, 2, max_calls=10) == [None, None]
+    assert workspace_mod.build(2, max_calls=10) == [None, None]
 
 
 def test_scanners_are_handed_the_toolbox(monkeypatch, tmp_path):
@@ -305,7 +306,7 @@ def test_scanners_are_handed_the_toolbox(monkeypatch, tmp_path):
     monkeypatch.delenv("QUORUM_REPO_ACCESS", raising=False)
 
     provider = FakeProvider()
-    budgets = review.build_workspaces(CTX, 2, max_calls=10)
+    budgets = workspace_mod.build(2, max_calls=10)
     asyncio.run(review.scan_all(provider, provider.models, CTX, SKILL, budgets))
 
     assert provider.toolboxes == budgets
