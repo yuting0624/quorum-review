@@ -22,10 +22,13 @@ import time
 from . import consensus, conversation, dismissal, learning
 from . import ledger as ledger_mod
 from . import report as report_mod
+from . import workspace as workspace_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
+from .pathfilter import PathFilter
 from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
+from .workspace import Workspace
 
 #: Verification costs one model call per unresolved finding, so it is capped.
 #: Findings are ranked by severity first, so the cap drops the least important.
@@ -72,6 +75,46 @@ def scan_with_all_models() -> bool:
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
 
 
+def repo_access_enabled() -> bool:
+    """Whether the models may read files outside the diff.
+
+    On by default, because off is the setting that produces the two failures
+    people actually complain about — a false positive on code that is guarded
+    somewhere the reviewer could not look, and silence on a bug whose evidence
+    is one file away. It costs extra turns, so ``QUORUM_REPO_ACCESS=off``
+    restores the diff-only behaviour.
+    """
+    return os.getenv("QUORUM_REPO_ACCESS", "on").strip().lower() not in _OFF
+
+
+#: Tool calls one verification may make. Far below a scan's budget: a verifier
+#: is settling one specific claim, and it is called once per finding.
+VERIFY_TOOL_CALLS = int(os.getenv("QUORUM_VERIFY_TOOL_CALLS", "6"))
+
+
+def build_workspaces(
+    ctx: PRContext, count: int, max_calls: int
+) -> list[Workspace | None]:
+    """One independent budget per caller, or ``None`` when there is no checkout.
+
+    Budgets are not shared. Two models exploring the same repository must not be
+    able to starve each other, for the same reason their scans do not see each
+    other: the moment one model's behaviour changes what the other is allowed to
+    do, their agreement stops being evidence.
+    """
+    root = workspace_mod.workspace_root()
+    if root is None or not repo_access_enabled():
+        return [None] * count
+
+    # Reading .quorumignore from disk is right here, and only here: the
+    # workspace *is* the repository under review, unlike the action's own
+    # working directory.
+    path_filter = PathFilter.build(
+        exclude_input=os.getenv("QUORUM_EXCLUDE", ""), root=root
+    )
+    return [Workspace(root, path_filter, max_calls=max_calls) for _ in range(count)]
+
+
 def inline_min_severity() -> str:
     """Lowest severity that earns its own inline comment.
 
@@ -109,18 +152,25 @@ def by_severity(findings: list[Finding]) -> list[Finding]:
 
 
 async def scan_all(
-    provider: ReviewProvider, models: list[str], ctx: PRContext, skill: Skill
+    provider: ReviewProvider,
+    models: list[str],
+    ctx: PRContext,
+    skill: Skill,
+    workspaces: list[Workspace | None] | None = None,
 ) -> tuple[list[list[Finding]], list[str]]:
     """Run every model over the diff concurrently and independently.
 
     A model that fails does not sink the review: its results are simply absent,
     and the summary names it so nobody mistakes a degraded run for a clean one.
     """
-    async def one(model: str) -> list[Finding]:
-        return await provider.scan(model, ctx, skill)
+    budgets = workspaces or [None] * len(models)
+
+    async def one(model: str, toolbox: Workspace | None) -> list[Finding]:
+        return await provider.scan(model, ctx, skill, toolbox=toolbox)
 
     results = await asyncio.gather(
-        *(one(model) for model in models), return_exceptions=True
+        *(one(model, toolbox) for model, toolbox in zip(models, budgets, strict=True)),
+        return_exceptions=True,
     )
 
     scans: list[list[Finding]] = []
@@ -134,7 +184,11 @@ async def scan_all(
 
 
 async def verify_all(
-    provider: ReviewProvider, findings: list[Finding], models: list[str], ctx: PRContext
+    provider: ReviewProvider,
+    findings: list[Finding],
+    models: list[str],
+    ctx: PRContext,
+    workspaces: list[Workspace | None] | None = None,
 ) -> tuple[list[Finding], str]:
     """Judge each unresolved finding with a model that did not report it.
 
@@ -144,8 +198,9 @@ async def verify_all(
     """
     semaphore = asyncio.Semaphore(VERIFY_CONCURRENCY)
     unavailable: list[str] = []
+    budgets = workspaces or [None] * len(findings)
 
-    async def one(finding: Finding) -> Finding:
+    async def one(finding: Finding, toolbox: Workspace | None) -> Finding:
         reviewer = consensus.reviewer_for(finding, models)
         if reviewer is None:
             finding.verdict = "confirmed"
@@ -154,7 +209,7 @@ async def verify_all(
 
         async with semaphore:
             try:
-                verdict = await provider.verify(reviewer, finding, ctx)
+                verdict = await provider.verify(reviewer, finding, ctx, toolbox=toolbox)
             except ProviderUnavailable as error:
                 unavailable.append(str(error))
                 finding.verdict = "uncertain"
@@ -174,7 +229,12 @@ async def verify_all(
             finding.severity = verdict.severity
         return finding
 
-    verified = await asyncio.gather(*(one(finding) for finding in findings))
+    verified = await asyncio.gather(
+        *(
+            one(finding, toolbox)
+            for finding, toolbox in zip(findings, budgets, strict=True)
+        )
+    )
     return list(verified), unavailable[0] if unavailable else ""
 
 
@@ -367,8 +427,32 @@ async def run(skill_name: str, dry_run: bool) -> int:
         )
 
         # -- independent scans ------------------------------------------------
-        scans, failures = await scan_all(provider, scanning, ctx, skill)
+        scan_budgets = build_workspaces(ctx, len(scanning), workspace_mod.MAX_CALLS)
+        root = next((w.root for w in scan_budgets if w is not None), None)
+        if root is not None and not workspace_mod.checkout_has_commit(root, ctx.head_sha):
+            # The checkout is not this pull request — an issue_comment run gets
+            # the default branch. Reading it would answer questions about the
+            # wrong tree, so the tools are withdrawn and the summary says so.
+            scan_budgets = [None] * len(scanning)
+            report.repo_access = "off: the checkout does not contain this pull request"
+
+        scans, failures = await scan_all(provider, scanning, ctx, skill, scan_budgets)
         report.scan_failures = failures
+
+        used = [w for w in scan_budgets if w is not None]
+        if used:
+            report.repo_access = "on"
+            report.tool_calls = sum(w.calls for w in used)
+            report.files_read = list(
+                dict.fromkeys(path for w in used for path in w.files_read)
+            )
+        elif not report.repo_access:
+            report.repo_access = (
+                "off by configuration"
+                if not repo_access_enabled()
+                else "off: no checkout available"
+            )
+
         if not scans:
             raise ProviderUnavailable(f"every scanning model failed: {failures}")
 
@@ -414,7 +498,15 @@ async def run(skill_name: str, dry_run: bool) -> int:
             to_verify = ranked[:MAX_VERIFIED_FINDINGS]
             skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
-            verified, verifier_error = await verify_all(provider, to_verify, models, ctx)
+            verify_budgets = (
+                build_workspaces(ctx, len(to_verify), VERIFY_TOOL_CALLS)
+                if any(w is not None for w in scan_budgets)
+                else [None] * len(to_verify)
+            )
+            verified, verifier_error = await verify_all(
+                provider, to_verify, models, ctx, verify_budgets
+            )
+            report.tool_calls += sum(w.calls for w in verify_budgets if w is not None)
             if verifier_error:
                 report.verifier_error = verifier_error
 

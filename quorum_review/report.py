@@ -53,6 +53,14 @@ class RunReport:
     threads_not_collapsible: bool = False
     head_sha: str = ""
 
+    #: Whether the models could read past the diff, and what they opened. Shown
+    #: because a reader judging a finding needs to know what the reviewer had
+    #: access to — "no guard anywhere" means one thing from a reviewer that
+    #: searched the repository and another from one that saw eleven files.
+    repo_access: str = ""
+    tool_calls: int = 0
+    files_read: list[str] = field(default_factory=list)
+
 
 def evidence(finding: Finding) -> str:
     """One phrase describing how much agreement is behind this finding.
@@ -106,6 +114,43 @@ def _counts(findings: list[Finding]) -> str:
     return ", ".join(parts)
 
 
+def _repo_access(report: RunReport) -> list[str]:
+    """What the models read beyond the diff — or why they could not.
+
+    Worth its own paragraph rather than a footnote. Whether a reviewer could
+    open the function it is complaining about changes how much its silence and
+    its confidence are each worth, and the reader cannot infer that from the
+    findings themselves.
+    """
+    if report.repo_access.startswith("off"):
+        return [
+            "",
+            f"> ℹ️ **Diff only** ({report.repo_access.removeprefix('off: ')}). "
+            f"The models could not read files outside the diff, so anything "
+            f"that turns on code elsewhere — a validator, a permission "
+            f"registry, a function signature — was judged from the call site "
+            f"alone.",
+        ]
+    if not report.repo_access:
+        return []
+
+    if not report.files_read:
+        return [
+            "",
+            f"Both models could read the repository; neither needed to "
+            f"({report.tool_calls} lookup(s), no files opened).",
+        ]
+
+    shown = ", ".join(f"`{path}`" for path in report.files_read[:8])
+    if len(report.files_read) > 8:
+        shown += f", and {len(report.files_read) - 8} more"
+    return [
+        "",
+        f"Beyond the diff, the models made **{report.tool_calls}** read-only "
+        f"lookup(s) into the checkout and opened {shown}.",
+    ]
+
+
 def _how_it_ran(report: RunReport) -> list[str]:
     """The paragraph explaining what each model did. The point of the report."""
     lines: list[str] = []
@@ -140,6 +185,8 @@ def _how_it_ran(report: RunReport) -> list[str]:
                 f"**{len(report.advisory)}** uncertain, "
                 f"**{len(report.refuted)}** refuted."
             )
+
+    lines += _repo_access(report)
 
     if not report.verification_on:
         lines += [

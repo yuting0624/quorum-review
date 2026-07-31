@@ -26,12 +26,16 @@ GitHub event
        │
        ├─ provider.scan(A)  ─┐ concurrent, independent — neither model
        ├─ provider.scan(B)  ─┤ sees the other's output
+       │      │              │
+       │      └─ workspace   each scan gets its OWN read-only view of the
+       │                     checkout, with its own budget
        │                     ▼
        ├─ consensus.merge    both reported → agreed, no further call
        │                     one reported  → unresolved
        │
        ├─ provider.verify    one call per unresolved finding, always by a
-       │                     model that did not report it
+       │                     model that did not report it — also with tools,
+       │                     on a smaller budget
        │
        └─ github_client      inline comments + summary carrying the new ledger
 ```
@@ -137,6 +141,12 @@ identical prompts. If one model's output leaked into the other's prompt, the
 agreement signal would be worthless — a model shown another's findings tends to
 endorse them.
 
+**Exploration budgets are not shared.** Each scan gets its own `Workspace`, so
+one model reading twenty files cannot leave the other unable to read any. A
+shared allowance would make the second model's thoroughness a function of the
+first model's behaviour, and the moment that is true, their agreement stops
+being independent evidence.
+
 **The judge never sees the reporter's reasoning.** A finding only one model
 raised is sent to the other with the file, the line, the code, and a one-line
 claim. Not the argument, not the severity rating, not who reported it. Give a
@@ -216,13 +226,45 @@ describes. When the comment approaches GitHub's 64 KB limit, resolved findings
 are dropped first — a fixed issue that reappears is a regression worth
 reporting again anyway.
 
+## Reading past the diff
+
+A diff cannot answer the question a reviewer most often needs answered: *is this
+already handled somewhere else?* Whether a path join is safe depends on the
+validator above it. Whether a permission check does anything depends on a
+registry the pull request never touches. A reviewer that cannot open either one
+has to guess, and the two ways of guessing are the two complaints people
+actually have about review bots — confident false positives, and silence on real
+bugs.
+
+So each model gets three read-only tools over the checkout: `read_file`,
+`search`, `list_files`. Two details of the implementation are worth knowing:
+
+**Exploration and answering are separate calls.** Gemini rejects a request that
+carries both function declarations and a `response_schema`, so the model
+explores with tools and no schema, and is then asked for the schema-shaped
+answer on top of the same conversation. Claude does not need the split. It is
+given it anyway: the two models have to be asked the same question in the same
+shape, or their agreement measures the harness rather than the code.
+
+**The workspace is verified before it is used.** A workflow triggered by
+`issue_comment` checks out the default branch, not the pull request. If the
+checkout does not contain the commit under review, the tools are withdrawn for
+that run and the summary reports a diff-only review — a wrong answer read
+confidently off the wrong tree is worse than no answer.
+
+What this is *not* is whole-repository ingestion. Nothing is indexed, embedded,
+or uploaded. The models read a couple of dozen files they asked for by name,
+inside a budget, and the summary lists which ones — so a reader can tell what
+the reviewer actually had in front of it.
+
 ## What is deliberately absent
 
 - **Managed Agents.** The intended primary stage is an agent in a persistent
   sandbox that can check out the branch, install dependencies, and run tests.
-  That API is pre-GA and not licensed for production use, so the primary stage
-  is a plain Gemini call over the diff. The `ReviewProvider` protocol exists so
-  that swap costs one new file.
+  That API is pre-GA and not licensed for production use, so the models get
+  read-only tools over the runner's checkout instead — enough to resolve a
+  definition, not enough to execute anything. The `ReviewProvider` protocol
+  exists so that swap costs one new file.
 - **A framework.** The dependencies are two model SDKs and an HTTP client. A
   reader should be able to follow the path from event to comment without
   stepping through an abstraction layer.

@@ -66,6 +66,18 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # Not for the action — that is pulled from the marketplace — but for the
+      # models. This is the tree they read when a finding depends on code the
+      # diff does not contain. See review-vertex.yml for why the ref is given
+      # explicitly rather than left to default.
+      - uses: actions/checkout@v4
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}/merge
+          fetch-depth: 2
+
       - name: Mint a token from the App
         id: app-token
         uses: actions/create-github-app-token@v1

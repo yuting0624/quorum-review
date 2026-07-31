@@ -18,12 +18,46 @@ from .schema import (
     language_directive,
 )
 
+#: Closes an exploration loop. The model has been reading the repository with
+#: tools; this turn asks for the schema-shaped answer and nothing else. It is a
+#: separate turn because Gemini cannot be given tools and a response schema in
+#: the same request.
+FINALISE = """\
+Stop investigating and give your final answer now, as JSON matching the schema \
+you were given. Base it on the diff and on whatever you read. Do not call any \
+more tools.\
+"""
 
-def scan_system(skill: Skill, language: str = "") -> str:
+#: Appended to a scan or verification when the repository is readable. The
+#: instruction that earns its place is the last one: most false positives in
+#: code review are a guard the reviewer could not see, and most misses are a
+#: definition it did not open.
+_TOOL_GUIDANCE = """
+## Reading the repository
+
+The diff is the change; it is not the codebase. You have three read-only tools —
+`read_file`, `search`, `list_files` — over the full checkout, and you are
+expected to use them before deciding anything that the diff alone cannot settle:
+
+- A call to a function defined elsewhere. Open it. `validate_x(...)` is not
+  evidence that anything was validated; the body is.
+- A missing check. Search for it before reporting it, in the caller, in a
+  decorator, in middleware. Absent from the diff is not absent from the code.
+- A name in a registry, a constant, a config key. Confirm it is actually there.
+- An argument list. Read the signature rather than inferring it from the name.
+
+Your budget is a couple of dozen calls, so spend them on the claims that turn on
+what they would show. Findings you can already establish from the diff need no
+lookup. When the budget runs out, answer from what you have.
+"""
+
+
+def scan_system(skill: Skill, language: str = "", tools: bool = False) -> str:
     """System prompt for the primary scan. Optimised for recall."""
     return (
         BASE_INSTRUCTIONS
         + language_directive(language)
+        + (_TOOL_GUIDANCE if tools else "")
         + f"""
 ## Your task
 
@@ -85,16 +119,27 @@ Pull request: #{ctx.number}
 """
 
 
-def verify_system(language: str = "") -> str:
+def verify_system(language: str = "", tools: bool = False) -> str:
     """System prompt for verification.
 
     Constant across every finding in a run, which is what makes it worth a
     prompt-cache breakpoint: the verifier is called once per finding, so this
     text is re-sent N times.
     """
+    settle = (
+        """
+Because you can read the repository, `uncertain` now means you looked and still
+could not tell — not that the answer was somewhere you could not reach. If a
+definition would settle it, open the definition.
+"""
+        if tools
+        else ""
+    )
     return (
         BASE_INSTRUCTIONS
         + language_directive(language)
+        + (_TOOL_GUIDANCE if tools else "")
+        + settle
         + """
 ## Your task
 

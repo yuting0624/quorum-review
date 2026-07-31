@@ -88,9 +88,26 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # The checkout is what the models read beyond the diff — the validator a
+      # changed line calls, the registry an action has to be listed in. It has
+      # to be the pull request's code.
+      #
+      # On a `pull_request` event that is the default. On `issue_comment` it is
+      # not: that event checks out the default branch, so the reference is
+      # given explicitly. `fetch-depth: 2` keeps the head commit itself in the
+      # clone, which is how the reviewer confirms at run time that it is
+      # reading the right tree; without it, the tools are withdrawn and the
+      # summary says the review was diff-only.
+      #
       # Pin third-party actions to a commit rather than a tag when the token
       # in scope matters to you: a tag can be moved to point at new code.
       - uses: actions/checkout@v4
+        with:
+          ref: >-
+            refs/pull/${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}/merge
+          fetch-depth: 2
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

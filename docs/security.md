@@ -15,6 +15,8 @@ what that input can accomplish.
 2. Talk the model into posting misleading or abusive comments.
 3. Reach a credential through the model.
 4. Get the model to write to the repository.
+5. Steer the model's file reads — at somewhere outside the checkout, at a
+   secret, or at enough of the repository to exhaust the run.
 
 **What is out of scope**
 
@@ -66,11 +68,42 @@ The same asymmetry works against attempt #2. A finding invented through
 injection was raised by one model only, which means it is exactly the kind that
 gets sent to the other model — the one that was asked to refute it.
 
+### The models can read the checkout, and can do nothing else with it
+
+A reviewer that only sees the diff has to guess whether the validator a changed
+line calls actually validates, so the models are given three read-only tools —
+`read_file`, `search`, `list_files` — over the checked-out repository. That is
+an expansion of what attacker-controlled text can steer, and it is bounded on
+four sides:
+
+- **There is no write tool and no execute tool.** Not disabled, not
+  permission-gated — never implemented. The most a fully successful injection
+  buys is reads of files the same workflow already checked out onto the same
+  runner.
+- **Paths are resolved before they are checked.** Anything landing outside the
+  checkout root is refused, including a symlink inside the repository that
+  points out of it.
+- **`.git`, `.env`, and private keys are unreadable**, on top of the ordinary
+  review exclusions, regardless of what the repository's own configuration
+  says.
+- **Everything is budgeted** — calls, bytes returned, and conversation turns —
+  so a diff crafted to send the reviewer on a long walk runs out rather than
+  running up a bill.
+
+The tools read the workspace, so the workspace has to be the right one. A
+workflow triggered by `issue_comment` checks out the default branch rather than
+the pull request; when the checkout does not contain the commit under review the
+tools are withdrawn for that run and the summary says the review was diff-only.
+
+Turn the whole thing off with `repo-access: off` if reading beyond the diff is
+not acceptable in your environment. Findings will get worse; that is the trade,
+and it is measured in `benchmark/seeded-bugs/README.md` rather than asserted.
+
 ### Credentials are never in reach of a model
 
-The models see the diff. They do not execute code, do not make network calls,
-and do not receive any credential. Federation produces a short-lived token used
-by the runner, never placed in a prompt.
+The models never receive a credential. Federation produces a short-lived token
+used by the runner, never placed in a prompt. Nothing the models can call makes
+an outbound network request.
 
 There is no long-lived secret in the repository at all — that property comes
 from Workload Identity Federation, not from anything this code does. Nothing to
@@ -108,6 +141,9 @@ worth making, so forks stay unsupported.
   named in the summary, so a partial review never passes as a complete one.
 - Verification runs on at most the top 20 findings by severity, so cost cannot
   scale with a hostile model's willingness to report.
+- Repository reads are capped per caller: 24 tool calls and 400 KB for a scan,
+  6 calls for a verification, 8 conversation turns either way. Budgets are
+  per-caller, so exhausting one does not silence the other model.
 - A 20-minute ceiling on the whole run.
 
 ## Operational guidance
