@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from . import prompts  # noqa: F401  (kept for symmetry with the prompt module)
+from . import prompts
 from .github_client import GitHubClient
 from .ledger import Ledger, LedgerEntry
 from .providers.base import ReviewProvider
@@ -111,7 +111,11 @@ async def handle(
 
     model = answering_model(entry, list(provider.models))
     try:
-        answer = await provider.discuss(model, discussion, ctx)
+        answer = await provider.respond(
+            model,
+            prompts.discuss_system(getattr(provider, 'language', '')),
+            prompts.discuss_user(discussion, ctx),
+        )
     except Exception as error:  # noqa: BLE001 - a failed reply must still reply
         await github.reply_to_comment(
             number,

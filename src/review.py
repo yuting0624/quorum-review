@@ -19,7 +19,7 @@ import pathlib
 import sys
 import time
 
-from . import consensus, conversation, dismissal
+from . import consensus, conversation, dismissal, learning
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
@@ -178,6 +178,48 @@ async def verify_all(
     return list(verified), unavailable[0] if unavailable else ""
 
 
+def wants_criteria_proposal(event: dict) -> bool:
+    """Whether someone asked for the dismissals to be turned into criteria."""
+    comment = event.get("comment")
+    if not isinstance(comment, dict):
+        return False
+    return "@quorum /criteria" in (comment.get("body") or "").lower()
+
+
+async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -> int:
+    """Summarise dismissed findings into a suggested change to the criteria.
+
+    Posted as a comment for a human to apply, never written to the skill file.
+    Dismissal reasons come from pull request comments, so applying them
+    automatically would let someone argue the reviewer out of a category of
+    finding by dismissing it convincingly a few times.
+    """
+    ledger, _sticky = await github.load_ledger(number)
+    entries = learning.dismissed(ledger)
+
+    if len(entries) < learning.MIN_DISMISSALS:
+        await github.post_issue_comment(
+            number,
+            f"Only {len(entries)} dismissed finding(s) on this pull request. "
+            f"I need at least {learning.MIN_DISMISSALS} before a pattern is "
+            f"worth reading anything into — narrowing the criteria for a "
+            f"one-off costs more than it saves.",
+        )
+        return 0
+
+    skill = load_skill(skill_name)
+    provider = build_provider()
+    body = await provider.respond(
+        provider.models[0],
+        "You improve code review criteria based on feedback from maintainers.",
+        learning.render_prompt(skill.name, skill.content, entries),
+    )
+
+    proposal = learning.Proposal(skill=skill.name, dismissals=entries, body=body.strip())
+    await github.post_issue_comment(number, learning.render_comment(proposal))
+    return 0
+
+
 async def post_finding(
     github: GitHubClient, number: int, head_sha: str, finding: Finding
 ) -> int | None:
@@ -278,6 +320,12 @@ async def run(skill_name: str, dry_run: bool) -> int:
     if dismissal.is_dismissal(event):
         async with GitHubClient() as github:
             return await dismissal.handle(github, event, number)
+
+    # Turning accumulated dismissals into a criteria proposal is one call and
+    # posts a suggestion, so it is not a review either.
+    if wants_criteria_proposal(event):
+        async with GitHubClient() as github:
+            return await propose_criteria(github, number, skill_name)
 
     # A question is one call to the model that made the claim, not a re-review.
     if conversation.is_question(event):

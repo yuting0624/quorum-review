@@ -129,8 +129,20 @@ reacting.
 
 ### Living with it
 
+**Argue with a finding** by replying `@quorum <question>` in its thread. The
+model that reported it answers — not one that would have to invent a defence of
+someone else's reasoning. It will concede when you are right, and tell you how
+to retire the finding.
+
 **Dismiss a false positive** by replying `@quorum wontfix — <why>` to the review
 comment. It is not reported again, and the reason is kept.
+
+**Feed dismissals back into the criteria** with `@quorum /criteria`. Once a few
+findings have been retired, it summarises them into a proposed edit to your
+`SKILL.md` so the same mistake stops being made. It proposes; you apply.
+Dismissal reasons come from pull request comments, and applying those
+automatically would let someone argue the reviewer out of a whole category of
+finding.
 
 **Resolved findings close themselves** — given a token that is allowed to.
 When a finding stops being reported its thread gets a reply, and is collapsed

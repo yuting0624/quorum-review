@@ -18,7 +18,6 @@ from .. import prompts
 from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
-    Discussion,
     Finding,
     ModelUsage,
     PRContext,
@@ -31,8 +30,8 @@ from ..schema import (
 )
 from .base import ProviderUnavailable
 from .vertex import (
-    DISCUSS_EFFORT,
-    DISCUSS_MAX_TOKENS,
+    PROSE_EFFORT,
+    PROSE_MAX_TOKENS,
     SCAN_EFFORT,
     SCAN_MAX_TOKENS,
     VERIFY_EFFORT,
@@ -142,16 +141,16 @@ class DirectProvider:
         )
         return response.text or ""
 
-    async def discuss(
-        self, model: str, discussion: Discussion, ctx: PRContext
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
     ) -> str:
         return await self._complete(
             model=model,
-            system=prompts.discuss_system(self.language),
-            user=prompts.discuss_user(discussion, ctx),
+            system=system,
+            user=user,
             schema=None,
-            effort=DISCUSS_EFFORT,
-            max_tokens=DISCUSS_MAX_TOKENS,
+            effort=PROSE_EFFORT,
+            max_tokens=max_tokens,
         )
 
     async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:

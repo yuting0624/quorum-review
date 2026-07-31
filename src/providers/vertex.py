@@ -22,7 +22,6 @@ from .. import prompts
 from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
-    Discussion,
     Finding,
     ModelUsage,
     PRContext,
@@ -55,10 +54,11 @@ VERIFY_MAX_TOKENS = 8_000
 SCAN_EFFORT = "high"
 VERIFY_EFFORT = "low"
 
-# Answering a question is scoped but open-ended: someone is pushing back and
-# deserves a considered reply, not a restatement.
-DISCUSS_EFFORT = "medium"
-DISCUSS_MAX_TOKENS = 8_000
+# Prose answers — a question in a thread, a proposed criteria change. Scoped
+# but open-ended: someone is pushing back and deserves a considered reply
+# rather than a restatement.
+PROSE_EFFORT = "medium"
+PROSE_MAX_TOKENS = 8_000
 
 _AUTH_HINTS = (
     "could not automatically determine credentials",
@@ -278,15 +278,15 @@ class VertexProvider:
         )
         return findings_from_payload(parse_json_object(raw), model)
 
-    async def discuss(
-        self, model: str, discussion: Discussion, ctx: PRContext
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
     ) -> str:
         return await self._engine(model).complete(
-            system=prompts.discuss_system(self.language),
-            user=prompts.discuss_user(discussion, ctx),
+            system=system,
+            user=user,
             schema=None,
-            effort=DISCUSS_EFFORT,
-            max_tokens=DISCUSS_MAX_TOKENS,
+            effort=PROSE_EFFORT,
+            max_tokens=max_tokens,
         )
 
     async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:

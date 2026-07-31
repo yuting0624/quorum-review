@@ -326,6 +326,18 @@ class GitHubClient:
             )
         return int(response.json()["id"])
 
+    async def post_issue_comment(self, number: int, body: str) -> int:
+        """Add a standalone comment, separate from the sticky summary."""
+        response = await self._http.post(
+            f"/repos/{self.owner}/{self.repo}/issues/{number}/comments",
+            json={"body": body},
+        )
+        if response.status_code >= 400:
+            raise GitHubError(
+                f"could not comment -> {response.status_code}: {response.text[:400]}"
+            )
+        return int(response.json()["id"])
+
     async def post_inline_comment(
         self,
         number: int,

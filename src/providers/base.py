@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..schema import Discussion, Finding, ModelUsage, PRContext, Skill, Verdict
+from ..schema import Finding, ModelUsage, PRContext, Skill, Verdict
 
 
 class ProviderUnavailable(Exception):
@@ -64,11 +64,13 @@ class ReviewProvider(Protocol):
         """
         ...
 
-    async def discuss(
-        self, model: str, discussion: Discussion, ctx: PRContext
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = 8_000
     ) -> str:
-        """Answer a question asked in the thread under a finding.
+        """Return prose rather than structured output.
 
-        Returns Markdown, not structured output: this is a reply to a person.
+        Used wherever the reader is a person rather than the next stage:
+        answering a question in a thread, or proposing a change to the review
+        criteria. Kept general so those do not each need their own method.
         """
         ...
