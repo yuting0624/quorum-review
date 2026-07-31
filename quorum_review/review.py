@@ -17,8 +17,9 @@ import asyncio
 import os
 import pathlib
 import sys
+import time
 
-from . import consensus
+from . import consensus, conversation, dismissal, learning
 from . import ledger as ledger_mod
 from . import report as report_mod
 from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
@@ -51,6 +52,16 @@ def verification_enabled() -> bool:
     return os.getenv("QUORUM_VERIFICATION", "on").strip().lower() not in _OFF
 
 
+def incremental_enabled() -> bool:
+    """Whether a re-review reads only what changed since the last one.
+
+    On by default. The saving compounds: without it, a pull request on its
+    tenth commit re-reads all ten commits' worth of diff on every run, and
+    re-derives findings the ledger already knows about.
+    """
+    return os.getenv("QUORUM_INCREMENTAL", "on").strip().lower() not in _OFF
+
+
 def scan_with_all_models() -> bool:
     """Whether every configured model scans, or only the first.
 
@@ -59,6 +70,17 @@ def scan_with_all_models() -> bool:
     pull request. ``QUORUM_SCAN=single`` is the cheap tier.
     """
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
+
+
+def inline_min_severity() -> str:
+    """Lowest severity that earns its own inline comment.
+
+    Everything still appears in the summary. This only decides what interrupts
+    the reader in the diff view: a dozen simultaneous comments on one pull
+    request is how a reviewer gets muted.
+    """
+    value = os.getenv("QUORUM_INLINE_SEVERITY", "low").strip().lower()
+    return value if value in SEVERITY_RANK else "low"
 
 
 def load_skill(name: str) -> Skill:
@@ -156,9 +178,166 @@ async def verify_all(
     return list(verified), unavailable[0] if unavailable else ""
 
 
+def wants_criteria_proposal(event: dict) -> bool:
+    """Whether someone asked for the dismissals to be turned into criteria."""
+    comment = event.get("comment")
+    if not isinstance(comment, dict):
+        return False
+    return "@quorum /criteria" in (comment.get("body") or "").lower()
+
+
+async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -> int:
+    """Summarise dismissed findings into a suggested change to the criteria.
+
+    Posted as a comment for a human to apply, never written to the skill file.
+    Dismissal reasons come from pull request comments, so applying them
+    automatically would let someone argue the reviewer out of a category of
+    finding by dismissing it convincingly a few times.
+    """
+    ledger, _sticky = await github.load_ledger(number)
+    entries = learning.dismissed(ledger)
+
+    if len(entries) < learning.MIN_DISMISSALS:
+        await github.post_issue_comment(
+            number,
+            f"Only {len(entries)} dismissed finding(s) on this pull request. "
+            f"I need at least {learning.MIN_DISMISSALS} before a pattern is "
+            f"worth reading anything into — narrowing the criteria for a "
+            f"one-off costs more than it saves.",
+        )
+        return 0
+
+    skill = load_skill(skill_name)
+    provider = build_provider()
+    body = await provider.respond(
+        provider.models[0],
+        "You improve code review criteria based on feedback from maintainers.",
+        learning.render_prompt(skill.name, skill.content, entries),
+    )
+
+    proposal = learning.Proposal(skill=skill.name, dismissals=entries, body=body.strip())
+    await github.post_issue_comment(number, learning.render_comment(proposal))
+    return 0
+
+
+async def post_finding(
+    github: GitHubClient, number: int, head_sha: str, finding: Finding
+) -> int | None:
+    """Post one finding inline, degrading rather than losing it.
+
+    A one-click suggestion has to be anchored to exactly the lines it replaces,
+    and GitHub rejects a range that is not wholly inside the diff. When that
+    happens the finding is still worth saying — so it is retried on the single
+    line, with the suggestion dropped. Keeping the suggestion while narrowing
+    the anchor would apply the replacement to the wrong lines.
+    """
+    spans_range = bool(finding.fix_replacement) and finding.fix_end_line > finding.line
+
+    comment_id = await github.post_inline_comment(
+        number=number,
+        commit_sha=head_sha,
+        path=finding.file_path,
+        line=finding.fix_end_line if spans_range else finding.line,
+        start_line=finding.line if spans_range else None,
+        body=report_mod.render_inline(finding),
+    )
+    if comment_id is not None or not spans_range:
+        return comment_id
+
+    return await github.post_inline_comment(
+        number=number,
+        commit_sha=head_sha,
+        path=finding.file_path,
+        line=finding.line,
+        body=report_mod.render_inline(finding, with_suggestion=False),
+    )
+
+
+async def close_threads(
+    github: GitHubClient,
+    number: int,
+    entries: list[ledger_mod.LedgerEntry],
+    head_sha: str,
+) -> bool:
+    """Reply to and collapse the threads of findings that are no longer raised.
+
+    Leaving them open is the failure mode this project was built partly in
+    reaction to: a reviewer that keeps a wall of resolved comments open teaches
+    people to stop reading it.
+
+    Returns True when collapsing was refused. The default ``GITHUB_TOKEN``
+    cannot call ``resolveReviewThread`` — GitHub forbids it for the Actions app
+    whatever `permissions:` says — so this is an ordinary configuration state,
+    not a bug, and the summary explains it rather than the logs swallowing it.
+    The reply is still posted either way.
+    """
+    anchored = [entry for entry in entries if entry.review_comment_id]
+    if not anchored:
+        return False
+
+    try:
+        threads = await github.review_threads(number)
+    except GitHubError as error:
+        print(f"warning: could not read review threads: {error}", file=sys.stderr)
+        return False
+
+    forbidden = False
+    for entry in anchored:
+        comment_id = int(entry.review_comment_id or 0)
+        thread = threads.get(comment_id)
+        if thread is None or thread.is_resolved:
+            continue
+
+        try:
+            await github.reply_to_comment(
+                number,
+                comment_id,
+                f"No longer reported as of `{head_sha[:7]}`. It will reappear "
+                f"if a later review finds it again.",
+            )
+        except GitHubError as error:
+            print(f"warning: could not reply to {comment_id}: {error}", file=sys.stderr)
+            continue
+
+        if forbidden:
+            continue  # the token cannot resolve; do not ask N more times
+        try:
+            await github.resolve_thread(thread.thread_id)
+        except GitHubError as error:
+            forbidden = True
+            print(f"note: threads cannot be collapsed by this token: {error}",
+                  file=sys.stderr)
+
+    return forbidden
+
+
 async def run(skill_name: str, dry_run: bool) -> int:
     event = read_event()
     number = pr_number_from_event(event)
+
+    # Retiring a false positive is a state change, not a review. Running a full
+    # review here would burn two model calls to answer a question nobody asked.
+    if dismissal.is_dismissal(event):
+        async with GitHubClient() as github:
+            return await dismissal.handle(github, event, number)
+
+    # Turning accumulated dismissals into a criteria proposal is one call and
+    # posts a suggestion, so it is not a review either.
+    if wants_criteria_proposal(event):
+        async with GitHubClient() as github:
+            return await propose_criteria(github, number, skill_name)
+
+    # A question is one call to the model that made the claim, not a re-review.
+    if conversation.is_question(event):
+        async with GitHubClient() as github:
+            ledger, _ = await github.load_ledger(number)
+            ctx, _skipped, _trimmed = await github.load_context(
+                number, exclude_input=os.getenv("QUORUM_EXCLUDE", "")
+            )
+            return await conversation.handle(
+                github, build_provider(), ctx, ledger, event
+            )
+
     skill = load_skill(skill_name)
 
     provider = build_provider()
@@ -166,15 +345,24 @@ async def run(skill_name: str, dry_run: bool) -> int:
     scanning = models if scan_with_all_models() else models[:1]
     verify_wanted = verification_enabled() and len(models) > 1
 
+    started = time.monotonic()
+
     async with GitHubClient() as github:
         ledger, sticky = await github.load_ledger(number)
-        ctx, trimmed = await github.load_context(number)
+        ctx, skipped_files, trimmed = await github.load_context(
+            number,
+            exclude_input=os.getenv("QUORUM_EXCLUDE", ""),
+            since_sha=ledger.last_reviewed_sha if incremental_enabled() else "",
+        )
 
         report = report_mod.RunReport(
             models=models,
             scanning_models=scanning,
             verification_on=verify_wanted,
             trimmed_files=trimmed,
+            skipped_files=skipped_files,
+            incremental=ctx.incremental,
+            since_sha=ctx.base_sha if ctx.incremental else "",
             head_sha=ctx.head_sha,
         )
 
@@ -194,10 +382,20 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # as fixed. Scans are not perfectly repeatable, so a finding can drop
         # out because the models missed it rather than because it was fixed —
         # accepted for now, since re-detection later simply reopens it.
+        #
+        # Only files this run actually looked at are eligible. On an
+        # incremental review the diff covers just the new commits, so a finding
+        # in an untouched file was never examined — closing it would report a
+        # fix that nobody made.
+        reviewed = set(ctx.changed_files)
+        newly_closed: list[ledger_mod.LedgerEntry] = []
         for entry in list(ledger.entries.values()):
-            if entry.status == "open" and not ledger.still_present(entry, findings):
+            if entry.status != "open" or entry.file_path not in reviewed:
+                continue
+            if not ledger.still_present(entry, findings):
                 ledger.mark_fixed(entry.finding_id, ctx.head_sha)
                 report.resolved.append(f"{entry.title} (`{entry.file_path}`)")
+                newly_closed.append(entry)
 
         # Never re-report something already posted or dismissed. Matching is
         # positional, not by ID: the same model re-quotes the same bug
@@ -244,21 +442,27 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 report.advisory.append(finding)
 
         # -- write back --------------------------------------------------------
+        report.usage = dict(provider.usage)
+        report.elapsed_seconds = time.monotonic() - started
+
         if dry_run:
             print(report_mod.render(report))
             return 0
 
+        threshold = SEVERITY_RANK[inline_min_severity()]
         for finding in report.confirmed + report.unverified:
-            comment_id = await github.post_inline_comment(
-                number=number,
-                commit_sha=ctx.head_sha,
-                path=finding.file_path,
-                line=finding.line,
-                body=report_mod.render_inline(finding),
-            )
+            entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
+
+            # Below the threshold the finding is recorded and listed in the
+            # summary, but does not get its own comment in the diff view.
+            if SEVERITY_RANK.get(finding.severity, 99) > threshold:
+                report.summary_only.append(finding)
+                ledger.record(entry)
+                continue
+
+            comment_id = await post_finding(github, number, ctx.head_sha, finding)
             if comment_id is None:
                 report.unanchored.append(finding)
-            entry = ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha)
             entry.review_comment_id = comment_id
             ledger.record(entry)
 
@@ -272,12 +476,18 @@ async def run(skill_name: str, dry_run: bool) -> int:
             f for f in report.unverified if f.finding_id not in unanchored_ids
         ]
 
+        report.threads_not_collapsible = await close_threads(
+            github, number, newly_closed, ctx.head_sha
+        )
+
         # Refuted findings are still recorded: keeping them stops the next run
         # from re-proposing something already dismissed.
         for finding in report.refuted + report.advisory:
             ledger.record(ledger_mod.LedgerEntry.from_finding(finding, ctx.head_sha))
 
         ledger.last_reviewed_sha = ctx.head_sha
+        report.usage = dict(provider.usage)
+        report.elapsed_seconds = time.monotonic() - started
         body = report_mod.render(report)
         marker = ledger_mod.fit_to_comment(ledger, body)
         await github.upsert_sticky_comment(number, f"{body}\n\n{marker}", sticky)

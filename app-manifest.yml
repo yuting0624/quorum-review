@@ -1,0 +1,53 @@
+# GitHub App manifest for quorum-review.
+#
+# A single shared App cannot be distributed — its private key would have to
+# come with it — so each adopter creates their own. `python scripts/create_app.py`
+# turns this file into an App on your account in about a minute.
+#
+# WHAT THIS APP IS FOR
+#
+# Only one thing: minting a short-lived installation token that
+# `actions/create-github-app-token` hands to the workflow.
+#
+# It is not a service. It receives no webhooks and has no URL to run, because
+# GitHub Actions already delivers the events. `default_events` is therefore
+# empty and no webhook is configured — an App that listens to nothing has
+# nothing to attack.
+#
+# WHY NOT JUST USE GITHUB_TOKEN
+#
+# For most of what the reviewer does, you can. The exception is collapsing a
+# resolved thread: GitHub does not permit the Actions app to call
+# `resolveReviewThread`, whatever `permissions:` says. An App token can.
+#
+# A second reason is presentation. Comments arrive under your App's name and
+# avatar rather than "github-actions[bot]", which also means you pick both —
+# and picking your own keeps this project clear of other people's trademarks.
+
+name: Quorum Review
+url: https://github.com/yuting0624/quorum-review
+description: >-
+  Cross-model pull request review on Google Cloud. Two models read each diff
+  independently; where they agree, that is the result.
+
+public: false
+
+# No webhook: events reach the reviewer through GitHub Actions.
+hook_attributes:
+  active: false
+
+default_events: []
+
+# The smallest set that does the job.
+#
+#   metadata      mandatory for every App
+#   contents      read the diff and .quorumignore
+#   pull_requests read the pull request, post and resolve review comments
+#
+# Deliberately absent: `contents: write`. Nothing here pushes a commit, and
+# granting it would raise the cost of a successful prompt injection from a
+# wrong comment to a write against your repository.
+default_permissions:
+  metadata: read
+  contents: read
+  pull_requests: write

@@ -20,6 +20,10 @@ VERDICTS = ("confirmed", "refuted", "uncertain")
 #: Ordering for severity, used when capping verification to the top N findings.
 SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITIES)}
 
+#: How many lines a one-click fix may rewrite. Past this it is a refactor, and
+#: a refactor nobody read before clicking apply is not an improvement.
+MAX_FIX_LINES = 20
+
 
 @dataclass
 class Finding:
@@ -37,6 +41,13 @@ class Finding:
     title: str
     body: str
     code_snippet: str
+
+    #: A whole-line replacement for ``line``..``fix_end_line``, or empty when
+    #: the model did not propose one. Only ever rendered as a GitHub suggestion
+    #: when it replaces the anchored lines completely: a partial fix that
+    #: someone clicks apply on leaves broken code behind.
+    fix_replacement: str = ""
+    fix_end_line: int = 0
 
     finding_id: str = ""
 
@@ -83,6 +94,11 @@ class PRContext:
     diff: str
     changed_files: list[str] = field(default_factory=list)
 
+    #: True when ``diff`` covers only what changed since the last review rather
+    #: than the whole pull request. Findings in files absent from an
+    #: incremental diff were not looked at, and must not be read as resolved.
+    incremental: bool = False
+
 
 @dataclass
 class Skill:
@@ -90,6 +106,53 @@ class Skill:
 
     name: str
     content: str
+
+
+@dataclass
+class Discussion:
+    """A question asked in the thread under a finding.
+
+    The reviewer answers where the question was asked, with the finding and the
+    conversation so far as context. Without this a finding is a verdict handed
+    down with no way to argue — and the only remaining moves are to fix it or
+    ignore it.
+    """
+
+    file_path: str
+    line: int
+    #: The finding under discussion, when the thread can be matched to one.
+    #: A question can also arrive on a thread whose finding has since been
+    #: dismissed or resolved, in which case only the code is available.
+    title: str = ""
+    body: str = ""
+    #: ``(author, text)`` oldest first, including the reviewer's own replies.
+    transcript: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class ModelUsage:
+    """What one model consumed during a review.
+
+    Reported as tokens and calls, never as money: prices differ per model, per
+    platform, and per contract, so a dollar figure computed here would be a
+    guess presented as a fact. Tokens are what we actually observed.
+    """
+
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+
+    def add(
+        self,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cached_input_tokens: int = 0,
+    ) -> None:
+        self.calls += 1
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cached_input_tokens += cached_input_tokens
 
 
 # --------------------------------------------------------------------------
@@ -132,6 +195,26 @@ FINDINGS_SCHEMA: dict[str, Any] = {
                             "Used to derive a stable finding ID."
                         ),
                     },
+                    "fix_end_line": {
+                        "type": "integer",
+                        "description": (
+                            "Last line the fix replaces, inclusive. Equal to "
+                            "`line` for a single-line fix. Use 0 when you are "
+                            "not proposing a fix."
+                        ),
+                    },
+                    "fix_replacement": {
+                        "type": "string",
+                        "description": (
+                            "Complete replacement text for lines `line` through "
+                            "`fix_end_line`, including original indentation and "
+                            "no diff markers. It is applied verbatim, so it must "
+                            "be valid on its own. Use an empty string unless the "
+                            "fix is a whole-line replacement you are confident "
+                            "in — a partial or speculative fix that someone "
+                            "clicks apply on is worse than no fix at all."
+                        ),
+                    },
                 },
                 "required": [
                     "file_path",
@@ -141,6 +224,8 @@ FINDINGS_SCHEMA: dict[str, Any] = {
                     "title",
                     "body",
                     "code_snippet",
+                    "fix_end_line",
+                    "fix_replacement",
                 ],
                 "additionalProperties": False,
             },
@@ -318,6 +403,8 @@ def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
                 title=str(item["title"]),
                 body=str(item["body"]),
                 code_snippet=str(item["code_snippet"]),
+                fix_replacement=str(item.get("fix_replacement") or ""),
+                fix_end_line=int(item.get("fix_end_line") or 0),
                 reported_by=[model],
             )
         except (KeyError, TypeError, ValueError):
@@ -325,6 +412,15 @@ def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
 
         if finding.severity not in SEVERITIES or finding.category not in CATEGORIES:
             continue
+
+        # A fix ending before it starts, or claiming a range far larger than a
+        # review comment should rewrite, is discarded rather than trusted.
+        if finding.fix_replacement and not (
+            finding.line <= finding.fix_end_line <= finding.line + MAX_FIX_LINES
+        ):
+            finding.fix_replacement = ""
+            finding.fix_end_line = 0
+
         findings.append(finding)
 
     return findings

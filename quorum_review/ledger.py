@@ -303,6 +303,22 @@ def decode_marker(comment_body: str) -> Ledger | None:
         return None
 
 
+def strip_marker(comment_body: str) -> str:
+    """Return the human-visible part of a summary comment."""
+    return _MARKER.sub("", comment_body or "").rstrip()
+
+
+def replace_marker(comment_body: str, ledger: Ledger) -> str:
+    """Swap in an updated ledger while leaving the prose untouched.
+
+    Used by flows that change state without re-reviewing — dismissing a false
+    positive, for one. Re-rendering the whole summary there would mean
+    inventing a report for a review that never ran.
+    """
+    visible = strip_marker(comment_body)
+    return f"{visible}\n\n{fit_to_comment(ledger, visible)}"
+
+
 def fit_to_comment(ledger: Ledger, visible_body: str) -> str:
     """Serialise the ledger so the finished comment stays under GitHub's limit.
 

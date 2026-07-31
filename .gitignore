@@ -10,3 +10,7 @@ build/
 *.sqlite3
 .env
 .DS_Store
+
+# Written transiently by scripts/create_app.py
+.quorum-app-setup.html
+*.private-key.pem

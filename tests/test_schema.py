@@ -1,6 +1,6 @@
 import pytest
 
-from src import schema
+from quorum_review import schema
 
 
 def test_parse_json_object_handles_a_fenced_payload():

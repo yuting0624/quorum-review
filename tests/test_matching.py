@@ -8,7 +8,7 @@ either re-posts duplicate comments or silently drops a finding.
 
 import pytest
 
-from src.matching import Report, normalize_snippet, same_defect, title_tokens
+from quorum_review.matching import Report, normalize_snippet, same_defect, title_tokens
 
 SHARING = "app/sharing.py"
 EXPORT = "app/export.py"

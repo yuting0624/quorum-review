@@ -1,8 +1,8 @@
 """The ledger is what keeps the reviewer from re-reporting itself, so the
 identity rules get direct tests."""
 
-from src import ledger
-from src.schema import Finding
+from quorum_review import ledger
+from quorum_review.schema import Finding
 
 SNIPPET = 'query = f"SELECT * FROM docs WHERE id={doc_id}"'
 

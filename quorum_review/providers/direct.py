@@ -19,6 +19,7 @@ from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
     Finding,
+    ModelUsage,
     PRContext,
     Skill,
     Verdict,
@@ -29,6 +30,8 @@ from ..schema import (
 )
 from .base import ProviderUnavailable
 from .vertex import (
+    PROSE_EFFORT,
+    PROSE_MAX_TOKENS,
     SCAN_EFFORT,
     SCAN_MAX_TOKENS,
     VERIFY_EFFORT,
@@ -37,6 +40,14 @@ from .vertex import (
 
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+
+
+def _output_config(effort: str, schema: dict[str, Any] | None) -> dict[str, Any]:
+    """No schema means a prose answer, used when replying to a question."""
+    config: dict[str, Any] = {"effort": effort}
+    if schema:
+        config["format"] = {"type": "json_schema", "schema": schema}
+    return config
 
 
 class DirectProvider:
@@ -48,6 +59,10 @@ class DirectProvider:
         self.models = [m for m in dict.fromkeys([first, second]) if m]
         self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._clients: dict[str, Any] = {}
+        self.usage: dict[str, ModelUsage] = {}
+
+    def _record(self, model: str, **tokens: int) -> None:
+        self.usage.setdefault(model, ModelUsage()).add(**tokens)
 
     def _gemini(self) -> Any:
         if "gemini" not in self._clients:
@@ -74,7 +89,7 @@ class DirectProvider:
         model: str,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
@@ -83,10 +98,7 @@ class DirectProvider:
             async with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
-                output_config={
-                    "effort": effort,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
+                output_config=_output_config(effort, schema),
                 system=[
                     {
                         "type": "text",
@@ -97,6 +109,14 @@ class DirectProvider:
                 messages=[{"role": "user", "content": user}],
             ) as stream:
                 message = await stream.get_final_message()
+            self._record(
+                model,
+                input_tokens=getattr(message.usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(message.usage, "output_tokens", 0) or 0,
+                cached_input_tokens=getattr(
+                    message.usage, "cache_read_input_tokens", 0
+                ) or 0,
+            )
             if message.stop_reason == "refusal":
                 raise ValueError(f"{model} declined the request")
             return "".join(b.text for b in message.content if b.type == "text")
@@ -108,12 +128,30 @@ class DirectProvider:
             contents=user,
             config=types.GenerateContentConfig(
                 system_instruction=system,
-                response_mime_type="application/json",
-                response_schema=for_gemini(schema),
+                response_mime_type="application/json" if schema else "text/plain",
+                response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
             ),
         )
+        meta = getattr(response, "usage_metadata", None)
+        self._record(
+            model,
+            input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+        )
         return response.text or ""
+
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
+    ) -> str:
+        return await self._complete(
+            model=model,
+            system=system,
+            user=user,
+            schema=None,
+            effort=PROSE_EFFORT,
+            max_tokens=max_tokens,
+        )
 
     async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
         raw = await self._complete(

@@ -10,9 +10,10 @@ different strengths of evidence, and the comment says which is which.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
-from .schema import Finding
+from .schema import SEVERITIES, SEVERITY_RANK, Finding, ModelUsage
 
 SEVERITY_ICON = {
     "critical": "🔴",
@@ -42,20 +43,31 @@ class RunReport:
     refuted: list[Finding] = field(default_factory=list)
     resolved: list[str] = field(default_factory=list)
     unanchored: list[Finding] = field(default_factory=list)
+    summary_only: list[Finding] = field(default_factory=list)
     trimmed_files: list[str] = field(default_factory=list)
+    skipped_files: list[str] = field(default_factory=list)
+    usage: dict[str, ModelUsage] = field(default_factory=dict)
+    elapsed_seconds: float = 0.0
+    incremental: bool = False
+    since_sha: str = ""
+    threads_not_collapsible: bool = False
     head_sha: str = ""
 
 
 def evidence(finding: Finding) -> str:
-    """One phrase describing why this finding is being shown."""
+    """One phrase describing how much agreement is behind this finding.
+
+    Two models that never saw each other's output is stronger evidence than one
+    model checked by another, which in turn beats one model unchecked. The
+    column exists so a reader can weigh a finding without opening it.
+    """
     if finding.agreed:
         return "both models, independently"
+    reporter = finding.reported_by[0] if finding.reported_by else "?"
     if finding.verifier_model:
-        return f"`{finding.reported_by[0] if finding.reported_by else '?'}`, " + (
-            f"checked by `{finding.verifier_model}`"
-        )
+        return f"`{reporter}`, agreed by `{finding.verifier_model}`"
     if finding.reported_by:
-        return f"`{finding.reported_by[0]}`, unchecked"
+        return f"`{reporter}`, unchecked"
     return "unknown"
 
 
@@ -69,11 +81,29 @@ def _row(finding: Finding) -> str:
 
 
 def _table(findings: list[Finding]) -> str:
+    """Render a findings table, worst first.
+
+    Reading order is the only prioritisation a summary can offer, so it should
+    not be the order the models happened to return.
+    """
+    ordered = sorted(
+        findings,
+        key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.file_path, f.line),
+    )
     header = (
         "| Severity | Category | Location | Finding | Evidence |\n"
         "|---|---|---|---|---|"
     )
-    return "\n".join([header, *(_row(finding) for finding in findings)])
+    return "\n".join([header, *(_row(finding) for finding in ordered)])
+
+
+def _counts(findings: list[Finding]) -> str:
+    """A one-line severity tally, so the headline does not need the table."""
+    tally = Counter(finding.severity for finding in findings)
+    parts = [
+        f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)
+    ]
+    return ", ".join(parts)
 
 
 def _how_it_ran(report: RunReport) -> list[str]:
@@ -148,7 +178,18 @@ def _how_it_ran(report: RunReport) -> list[str]:
 
 def render(report: RunReport) -> str:
     """Build the Markdown body. The ledger marker is appended by the caller."""
-    lines: list[str] = ["## Quorum review", "", *_how_it_ran(report)]
+    lines: list[str] = ["## Quorum review", ""]
+
+    if report.incremental:
+        lines += [
+            f"Reviewing only what changed since `{report.since_sha[:7]}`. Findings "
+            f"in files this range does not touch are carried over untouched — "
+            f"they were not re-examined, so they are neither re-reported nor "
+            f"treated as fixed.",
+            "",
+        ]
+
+    lines += _how_it_ran(report)
 
     if report.suppressed:
         lines += [
@@ -158,11 +199,20 @@ def render(report: RunReport) -> str:
         ]
 
     if report.confirmed:
-        lines += ["", "### Confirmed", "", _table(report.confirmed)]
+        lines += [
+            "",
+            f"### Confirmed — {_counts(report.confirmed)}",
+            "",
+            _table(report.confirmed),
+        ]
 
     if report.unverified:
-        lines += ["", "### Reported, not independently checked", "",
-                  _table(report.unverified)]
+        lines += [
+            "",
+            f"### Reported, not independently checked — {_counts(report.unverified)}",
+            "",
+            _table(report.unverified),
+        ]
 
     if report.advisory:
         lines += [
@@ -211,6 +261,15 @@ def render(report: RunReport) -> str:
         ]
         lines += [f"- {title}" for title in report.resolved]
 
+        if report.threads_not_collapsible:
+            lines += [
+                "",
+                "> ℹ️ Their threads were replied to but left open: the default "
+                "`GITHUB_TOKEN` is not allowed to resolve review threads, "
+                "whatever `permissions:` says. Supply a GitHub App token via "
+                "`github-token` to have them collapse automatically.",
+            ]
+
     if report.unanchored:
         lines += [
             "",
@@ -226,12 +285,23 @@ def render(report: RunReport) -> str:
                 f"{finding.body}"
             )
 
+    if report.summary_only:
+        lines += [
+            "",
+            f"<sub>{len(report.summary_only)} finding(s) are listed above but "
+            f"not commented inline, being below the configured severity "
+            f"threshold.</sub>",
+        ]
+
     if report.trimmed_files:
         lines += [
             "",
-            "> Some files were truncated or skipped before review: "
+            "> Too large to send whole, so only partly reviewed: "
             + ", ".join(f"`{path}`" for path in report.trimmed_files),
         ]
+
+    if report.skipped_files:
+        lines += ["", _skipped_note(report.skipped_files)]
 
     if not (
         report.confirmed
@@ -242,39 +312,88 @@ def render(report: RunReport) -> str:
     ):
         lines += ["", "No new issues found in this diff."]
 
-    lines += [
-        "",
-        "---",
-        "",
-        f"<sub>Reviewed `{report.head_sha[:7]}` · models "
-        + ", ".join(f"`{m}`" for m in report.models)
-        + " · quorum-review — a reference implementation, not a supported "
-        "product.</sub>",
-    ]
-
+    lines += ["", "---", "", *_footer(report)]
     return "\n".join(lines)
 
 
-def render_inline(finding: Finding) -> str:
-    """Body of a single line-anchored comment."""
+def _skipped_note(paths: list[str]) -> str:
+    """Say what was not reviewed, without burying the findings under a list."""
+    shown = ", ".join(f"`{path}`" for path in paths[:8])
+    more = f" and {len(paths) - 8} more" if len(paths) > 8 else ""
+    return (
+        f"<sub>Not reviewed — generated, vendored, or excluded "
+        f"({len(paths)} file(s)): {shown}{more}. Adjust with the `exclude` "
+        f"input or a `.quorumignore` file.</sub>"
+    )
+
+
+def _footer(report: RunReport) -> list[str]:
+    """Provenance and cost.
+
+    Tokens and call counts rather than a monetary figure: prices differ by
+    model, platform, and contract, so a number computed here would be a guess
+    wearing the costume of a fact.
+    """
+    lines = []
+
+    if report.usage:
+        rows = [
+            "| Model | Calls | Input | Cached input | Output |",
+            "|---|--:|--:|--:|--:|",
+        ]
+        for model, used in report.usage.items():
+            rows.append(
+                f"| `{model}` | {used.calls} | {used.input_tokens:,} | "
+                f"{used.cached_input_tokens:,} | {used.output_tokens:,} |"
+            )
+        lines += ["<details>", "<summary>Usage</summary>", ""]
+        lines += [*rows, "", "</details>", ""]
+
+    elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
+    lines.append(
+        f"<sub>Reviewed `{report.head_sha[:7]}` · models "
+        + ", ".join(f"`{m}`" for m in report.models)
+        + f"{elapsed} · quorum-review — a reference implementation, not a "
+        "supported product.</sub>"
+    )
+    return lines
+
+
+def render_inline(finding: Finding, with_suggestion: bool = True) -> str:
+    """Body of a single line-anchored comment.
+
+    ``with_suggestion`` is turned off when GitHub rejects the multi-line anchor
+    a suggestion needs. The finding is still worth posting; the one-click fix
+    is what gets dropped, because a suggestion applied to the wrong range would
+    corrupt the file.
+    """
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     lines = [f"{icon} **{finding.title}**", "", finding.body]
+
+    if with_suggestion and finding.fix_replacement:
+        lines += ["", "```suggestion", finding.fix_replacement.rstrip("\n"), "```"]
 
     if finding.agreed:
         lines += [
             "",
-            "> Reported independently by "
+            "> **Found by two models independently** — "
             + " and ".join(f"`{m}`" for m in finding.reported_by)
-            + ". Neither model saw the other's output.",
+            + " each read this diff without seeing the other's output.",
         ]
     elif finding.verifier_reason:
+        reporter = finding.reported_by[0] if finding.reported_by else "one model"
         lines += [
             "",
             "<details>",
-            f"<summary>Checked by <code>{finding.verifier_model}</code>, which did "
-            f"not report it</summary>",
+            f"<summary>Second opinion from <code>{finding.verifier_model}</code>"
+            f"</summary>",
             "",
-            finding.verifier_reason,
+            f"`{reporter}` raised this. `{finding.verifier_model}` was then asked "
+            f"to judge it — without being shown the reasoning, the severity, or "
+            f"who reported it, so that it would assess the code rather than "
+            f"agree with a colleague. Its answer:",
+            "",
+            f"> {finding.verifier_reason}",
             "",
             "</details>",
         ]

@@ -52,6 +52,21 @@ inputs:
       workflow_dispatch, which carries no pull request in its payload.
     required: false
     default: ""
+  exclude:
+    description: >-
+      Extra paths to leave unreviewed, as gitignore-style globs, one per line
+      or comma-separated. Added to a built-in list covering lockfiles, vendored
+      code, build output, and generated sources. A .quorumignore file at the
+      repository root is read as well.
+    required: false
+    default: ""
+  incremental:
+    description: >-
+      'on' re-reviews only what changed since the last review, using the sha
+      recorded in the ledger. Saves grow with every push. 'off' always reads
+      the whole pull request.
+    required: false
+    default: "on"
   scan:
     description: >-
       'both' has each model read the diff independently and merges the results.
@@ -68,6 +83,14 @@ inputs:
       positives.
     required: false
     default: "on"
+  inline-severity:
+    description: >-
+      Lowest severity that gets its own comment in the diff view: critical,
+      high, medium, or low. Everything still appears in the summary — this only
+      decides what interrupts the reader. A dozen simultaneous comments on one
+      pull request is how a reviewer gets muted.
+    required: false
+    default: low
   max-verified-findings:
     description: >-
       Cap on how many unresolved findings reach a second opinion, highest
@@ -102,8 +125,11 @@ runs:
         REVIEW_LANGUAGE: ${{ inputs.review-language }}
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
         CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
+        QUORUM_EXCLUDE: ${{ inputs.exclude }}
+        QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}
         QUORUM_VERIFICATION: ${{ inputs.verification }}
+        QUORUM_INLINE_SEVERITY: ${{ inputs.inline-severity }}
         MAX_VERIFIED_FINDINGS: ${{ inputs.max-verified-findings }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
         QUORUM_PR_NUMBER: ${{ inputs.pr-number }}
@@ -112,4 +138,4 @@ runs:
         for name in PRIMARY_MODEL VERIFIER_MODEL REVIEW_LANGUAGE QUORUM_PR_NUMBER; do
           if [ -z "${!name}" ]; then unset "$name"; fi
         done
-        python -m src.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}
+        python -m quorum_review.review ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}

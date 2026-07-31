@@ -46,7 +46,7 @@ While you are here, confirm your Gemini model ID. Availability varies by project
 and release channel, and a stale ID is the most common first-run failure:
 
 ```bash
-python -m src.review --list-models
+python -m quorum_review.review --list-models
 ```
 
 ## 3. Set up Workload Identity Federation
@@ -190,6 +190,12 @@ and confirm the impersonated service account, not your user account, holds
 **Findings appear but nothing is posted.** Check `pull-requests: write` in the
 workflow's `permissions`, and note that pull requests from forks get a read-only
 token — those are unsupported.
+
+**Threads get a reply but never collapse.** Expected with the default
+`GITHUB_TOKEN`: GitHub does not let the Actions app call `resolveReviewThread`,
+and no `permissions:` setting changes that. Create a GitHub App with
+*Pull requests: Read & write*, mint a token with
+`actions/create-github-app-token`, and pass it as `github-token`.
 
 ## Governance
 

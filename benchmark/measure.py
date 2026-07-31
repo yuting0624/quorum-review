@@ -24,12 +24,12 @@ import asyncio
 import os
 import sys
 
-from src import consensus
-from src import ledger as ledger_mod
-from src import review as review_mod
-from src.github_client import GitHubClient
-from src.providers import build_provider
-from src.schema import Finding, PRContext
+from quorum_review import consensus
+from quorum_review import ledger as ledger_mod
+from quorum_review import review as review_mod
+from quorum_review.github_client import GitHubClient
+from quorum_review.providers import build_provider
+from quorum_review.schema import Finding, PRContext
 
 # Answer key. Each entry is (path suffix, keywords); a finding matches when the
 # path matches and any keyword appears in its title or body. Keywords are
@@ -161,7 +161,11 @@ async def main_async(args: argparse.Namespace) -> int:
 
     # Fetch the pull request once; every run reviews byte-identical input.
     async with GitHubClient() as github:
-        ctx, trimmed = await github.load_context(args.pr)
+        # No path filter: the fixture is the whole point, and the defaults
+        # would be free to decide part of it is not worth reviewing.
+        ctx, _skipped, trimmed = await github.load_context(
+            args.pr, use_default_excludes=False
+        )
     if trimmed:
         print(f"warning: files truncated before review: {trimmed}", file=sys.stderr)
 

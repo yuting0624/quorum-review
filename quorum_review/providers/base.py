@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from ..schema import Finding, PRContext, Skill, Verdict
+from ..schema import Finding, ModelUsage, PRContext, Skill, Verdict
 
 
 class ProviderUnavailable(Exception):
@@ -41,6 +41,10 @@ class ReviewProvider(Protocol):
     #: when only a single scan is requested.
     models: list[str]
 
+    #: Tokens and calls consumed so far, keyed by model. Reported in the
+    #: summary so an adopter can see what a review actually costs them.
+    usage: dict[str, ModelUsage]
+
     async def scan(self, model: str, ctx: PRContext, skill: Skill) -> list[Finding]:
         """Scan the whole PR once and return candidate findings. Favour recall.
 
@@ -57,5 +61,16 @@ class ReviewProvider(Protocol):
         One finding, one verdict — never batch. ``model`` must be a model that
         did **not** report this finding; asking a model to check its own work
         measures nothing.
+        """
+        ...
+
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = 8_000
+    ) -> str:
+        """Return prose rather than structured output.
+
+        Used wherever the reader is a person rather than the next stage:
+        answering a question in a thread, or proposing a change to the review
+        criteria. Kept general so those do not each need their own method.
         """
         ...

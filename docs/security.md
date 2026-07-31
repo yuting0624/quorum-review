@@ -32,7 +32,7 @@ system prompt — which comes first — states that content inside those tags is
 data to review, never instructions. The model is additionally told to report
 embedded instructions as a `security` finding rather than act on them.
 
-See `BASE_INSTRUCTIONS` in [`src/schema.py`](../src/schema.py).
+See `BASE_INSTRUCTIONS` in [`quorum_review/schema.py`](../src/schema.py).
 
 This is a mitigation, not a guarantee. Prompt injection is not a solved problem
 and instruction-hierarchy prompting can be defeated. The controls below assume

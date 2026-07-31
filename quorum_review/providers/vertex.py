@@ -23,6 +23,7 @@ from ..schema import (
     FINDINGS_SCHEMA,
     VERDICT_SCHEMA,
     Finding,
+    ModelUsage,
     PRContext,
     Skill,
     Verdict,
@@ -53,6 +54,12 @@ VERIFY_MAX_TOKENS = 8_000
 SCAN_EFFORT = "high"
 VERIFY_EFFORT = "low"
 
+# Prose answers — a question in a thread, a proposed criteria change. Scoped
+# but open-ended: someone is pushing back and deserves a considered reply
+# rather than a restatement.
+PROSE_EFFORT = "medium"
+PROSE_MAX_TOKENS = 8_000
+
 _AUTH_HINTS = (
     "could not automatically determine credentials",
     "default credentials",
@@ -69,12 +76,13 @@ class _Engine(Protocol):
     """A single model behind a uniform 'return JSON matching this schema' call."""
 
     model: str
+    usage: ModelUsage
 
     async def complete(
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str: ...
@@ -102,6 +110,7 @@ class _GeminiEngine:
         from google import genai
 
         self.model = model
+        self.usage = ModelUsage()
         # vertexai=True is what routes this at Vertex rather than AI Studio.
         # Credentials come from ADC, which on Actions is the WIF-issued token.
         self._client = genai.Client(vertexai=True, project=project, location=location)
@@ -110,7 +119,7 @@ class _GeminiEngine:
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
@@ -122,16 +131,24 @@ class _GeminiEngine:
                 contents=user,
                 config=types.GenerateContentConfig(
                     system_instruction=system,
-                    response_mime_type="application/json",
+                    # No schema means a prose answer — used when replying to a
+                    # question in a thread rather than reporting findings.
+                    response_mime_type="application/json" if schema else "text/plain",
                     # Gemini takes an OpenAPI subset, so the Claude-shaped
                     # schema is reduced here rather than maintained twice.
-                    response_schema=for_gemini(schema),
+                    response_schema=for_gemini(schema) if schema else None,
                     max_output_tokens=max_tokens,
                 ),
             )
         except Exception as error:  # noqa: BLE001 - reclassified below
             raise _as_unavailable(self.model, error) from error
 
+        meta = getattr(response, "usage_metadata", None)
+        self.usage.add(
+            input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+            cached_input_tokens=getattr(meta, "cached_content_token_count", 0) or 0,
+        )
         return response.text or ""
 
 
@@ -147,26 +164,28 @@ class _ClaudeEngine:
         from anthropic import AsyncAnthropicVertex
 
         self.model = model
+        self.usage = ModelUsage()
         self._client = AsyncAnthropicVertex(project_id=project, region=region)
 
     async def complete(
         self,
         system: str,
         user: str,
-        schema: dict[str, Any],
+        schema: dict[str, Any] | None,
         effort: str,
         max_tokens: int,
     ) -> str:
+        output_config: dict[str, Any] = {"effort": effort}
+        if schema:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+
         try:
             # Streaming even though the payload is small: a non-streaming call
             # with a large max_tokens can outlive the SDK's HTTP timeout.
             async with self._client.messages.stream(
                 model=self.model,
                 max_tokens=max_tokens,
-                output_config={
-                    "effort": effort,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
+                output_config=output_config,
                 # The system prompt is identical across every verify call in a
                 # run, so a cache breakpoint here is read back once per finding.
                 # Vertex supports manual cache_control but not automatic caching.
@@ -182,6 +201,13 @@ class _ClaudeEngine:
                 message = await stream.get_final_message()
         except Exception as error:  # noqa: BLE001 - reclassified below
             raise _as_unavailable(self.model, error) from error
+
+        used = message.usage
+        self.usage.add(
+            input_tokens=getattr(used, "input_tokens", 0) or 0,
+            output_tokens=getattr(used, "output_tokens", 0) or 0,
+            cached_input_tokens=getattr(used, "cache_read_input_tokens", 0) or 0,
+        )
 
         if message.stop_reason == "refusal":
             raise ValueError(f"{self.model} declined the request")
@@ -220,6 +246,11 @@ class VertexProvider:
         self.language = os.getenv("REVIEW_LANGUAGE", "").strip()
         self._engines: dict[str, _Engine] = {}
 
+    @property
+    def usage(self) -> dict[str, ModelUsage]:
+        """Per-model token and call counts, for models actually used."""
+        return {model: engine.usage for model, engine in self._engines.items()}
+
     def _engine(self, model: str) -> _Engine:
         """Resolve a model ID to an engine, constructing it on first use.
 
@@ -246,6 +277,17 @@ class VertexProvider:
             max_tokens=SCAN_MAX_TOKENS,
         )
         return findings_from_payload(parse_json_object(raw), model)
+
+    async def respond(
+        self, model: str, system: str, user: str, max_tokens: int = PROSE_MAX_TOKENS
+    ) -> str:
+        return await self._engine(model).complete(
+            system=system,
+            user=user,
+            schema=None,
+            effort=PROSE_EFFORT,
+            max_tokens=max_tokens,
+        )
 
     async def verify(self, model: str, finding: Finding, ctx: PRContext) -> Verdict:
         raw = await self._engine(model).complete(
