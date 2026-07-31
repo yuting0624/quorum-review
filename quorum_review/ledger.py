@@ -73,9 +73,9 @@ def compute_finding_id(file_path: str, code_snippet: str) -> str:
     bug identically twice. ``Ledger.find_match`` falls back to positional
     matching for that reason — see ``matching.same_defect``.
 
-    Known limitation: a renamed file yields a different ID and does not match
-    positionally either, so the finding is treated as new. Documented in the
-    README.
+    A rename changes the ID, and defeats positional matching too. That is
+    handled before matching rather than here — see ``Ledger.follow_renames``,
+    which reads the moves out of the diff and takes the entries with them.
     """
     digest = hashlib.sha256()
     digest.update(file_path.encode("utf-8"))
@@ -194,6 +194,35 @@ class Ledger:
             or same_defect(report, _report_of(finding))
             for finding in findings
         )
+
+    def follow_renames(self, moves: dict[str, str]) -> list[tuple[str, str]]:
+        """Move tracked findings to where their file went. Returns what moved.
+
+        A rename is the one change that breaks content-addressed identity: the
+        snippet is unchanged, but the path is half of the hash and all of the
+        positional match. Without this a refactor produces a page of
+        resolutions and a page of identical fresh findings, which is the worst
+        possible output for a change that altered no behaviour.
+
+        The ID is recomputed from the new path so that suppression keeps
+        working on the next run, and the entry is re-keyed to match. A collision
+        with something already tracked at the destination means the same defect
+        arrived by two routes; the existing entry wins, since it is the one the
+        posted comment points at.
+        """
+        moved: list[tuple[str, str]] = []
+        for entry in list(self.entries.values()):
+            destination = moves.get(entry.file_path)
+            if destination is None:
+                continue
+
+            old_id = entry.finding_id
+            entry.file_path = destination
+            entry.finding_id = compute_finding_id(destination, entry.snippet)
+            self.entries.pop(old_id, None)
+            self.entries.setdefault(entry.finding_id, entry)
+            moved.append((old_id, entry.finding_id))
+        return moved
 
     def record(self, entry: LedgerEntry) -> None:
         """Store an entry, folding it into an existing one for the same defect.

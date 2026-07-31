@@ -27,6 +27,8 @@ DEFAULT_FILE_CHAR_LIMIT = 20_000
 DEFAULT_TOTAL_CHAR_LIMIT = 400_000
 
 _HEADER = re.compile(r"^diff --git a/(?P<a>.+?) b/(?P<b>.+)$")
+_RENAME_FROM = re.compile(r"^rename from (?P<path>.+)$")
+_RENAME_TO = re.compile(r"^rename to (?P<path>.+)$")
 
 
 def split_by_file(diff: str) -> dict[str, str]:
@@ -54,8 +56,56 @@ def split_by_file(diff: str) -> dict[str, str]:
     return sections
 
 
+def renames(diff: str) -> dict[str, str]:
+    """``{old path: new path}`` for every file this diff moves.
+
+    Findings are keyed on a path, so a rename otherwise costs twice: every
+    finding in the file is closed as fixed, because nothing at the old path was
+    re-reported, and the same defects come back as new at the new path. A
+    reader sees a refactor produce a page of resolutions and a page of
+    identical fresh findings.
+
+    Read from the diff rather than asked of the API, so it works the same for
+    an incremental range as for a whole pull request.
+    """
+    moves: dict[str, str] = {}
+    old: str | None = None
+    for line in diff.splitlines():
+        if _HEADER.match(line):
+            old = None
+            continue
+        from_match = _RENAME_FROM.match(line)
+        if from_match:
+            old = from_match.group("path")
+            continue
+        to_match = _RENAME_TO.match(line)
+        if to_match and old:
+            moves[old] = to_match.group("path")
+            old = None
+    return moves
+
+
+#: How git announces a file it will not show as text. Both appear at column
+#: zero, outside any hunk — every line *inside* a hunk carries a `+`, `-` or
+#: space prefix, which is what makes anchoring sufficient.
+_BINARY_MARKERS = ("GIT binary patch", "Binary files ")
+
+
 def is_binary(section: str) -> bool:
-    return "GIT binary patch" in section or "Binary files " in section
+    """Whether git declined to show this file as text.
+
+    Anchored to the start of a line, and that is the whole point. A substring
+    search matched source code *discussing* binary diffs — this function's own
+    body, as it happens, which is how the bug was found: the file was silently
+    dropped from its own review and the summary reported it as too large.
+
+    Any file mentioning either marker in a string, a docstring, or a test
+    fixture was excluded from review the same way, in any repository.
+    """
+    return any(
+        line.startswith(_BINARY_MARKERS)
+        for line in section.splitlines()
+    )
 
 
 def truncate(
@@ -66,10 +116,10 @@ def truncate(
     """Cap each file, drop binary patches, and keep the whole thing bounded.
 
     Returns ``(diff, trimmed, dropped)``. ``trimmed`` is files that were
-    shortened or are binary; ``dropped`` is files that did not fit the total
-    budget at all. They are reported separately because they mean different
-    things to a reader: a trimmed file was partly reviewed, a dropped one was
-    not looked at.
+    shortened *or* are binary; ``dropped`` is files that did not fit the total
+    budget at all. Trimmed and dropped are reported separately because they
+    mean different things to a reader: a trimmed file was partly reviewed, a
+    dropped one was not looked at.
     """
     sections = split_by_file(diff)
     if not sections:

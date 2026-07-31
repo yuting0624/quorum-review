@@ -24,6 +24,7 @@ from . import (
     consensus,
     conversation,
     criteria,
+    diffs,
     dismissal,
     forks,
     learning,
@@ -445,6 +446,14 @@ async def run(skill_name: str, dry_run: bool) -> int:
             since_sha=ctx.base_sha if ctx.incremental else "",
             head_sha=ctx.head_sha,
         )
+
+        # Before anything is matched against the ledger. A renamed file breaks
+        # content-addressed identity — the snippet is unchanged but the path is
+        # half of the hash — so without this a refactor closes every finding in
+        # the file and immediately re-reports all of them at the new path.
+        report.renamed_files = diffs.renames(ctx.diff)
+        if report.renamed_files:
+            ledger.follow_renames(report.renamed_files)
 
         # Nothing to look at. Reachable more often than it sounds: a pull
         # request that only touches lockfiles or generated code, or an

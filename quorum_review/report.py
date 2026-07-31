@@ -55,6 +55,10 @@ class RunReport:
     #: `trimmed_files` because they mean different things to a reader: a
     #: trimmed file was partly reviewed, a dropped one was never looked at.
     dropped_files: list[str] = field(default_factory=list)
+    #: ``{old path: new path}`` for files this change moves. Reported because a
+    #: reader seeing findings appear at a path they did not edit deserves to
+    #: know the reviewer followed a rename rather than invented them.
+    renamed_files: dict[str, str] = field(default_factory=dict)
     usage: dict[str, ModelUsage] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     incremental: bool = False
@@ -382,6 +386,19 @@ def render(report: RunReport) -> str:
             f"The diff exceeded the size budget, and these did not fit: {shown}. "
             f"Nothing below is a statement about them. Split the pull request, "
             f"or raise `max-diff-characters`.",
+        ]
+
+    if report.renamed_files:
+        moves = ", ".join(
+            f"`{old}` → `{new}`" for old, new in list(report.renamed_files.items())[:5]
+        )
+        if len(report.renamed_files) > 5:
+            moves += f", and {len(report.renamed_files) - 5} more"
+        lines += [
+            "",
+            f"<sub>Followed {len(report.renamed_files)} rename(s) — {moves} — so "
+            f"findings already tracked in those files were not closed and "
+            f"re-opened.</sub>",
         ]
 
     if report.skipped_files:
