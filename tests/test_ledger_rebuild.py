@@ -279,3 +279,24 @@ def test_a_footer_that_is_not_a_hex_digest_is_not_a_finding():
         "body": "**x**\n\n<sub>`security` · id `zzzzzzzzzzzzzzzz`</sub>",
     }
     assert rebuild(7, [fake], dismissed=set()).entries == {}
+
+
+def test_a_closure_reply_from_anyone_else_is_not_trusted():
+    """The mirror of the dismissal hole, and not merely noise: a finding marked
+    fixed is excluded from the SARIF upload, so a fake closure would close a
+    code-scanning alert."""
+    comments = [
+        {**posted(11, "5e" * 8), "user": {"login": "github-actions[bot]"}},
+        by(12, 11, "drive-by", "No longer reported as of `abc1234`."),
+    ]
+    book, _ = rebuild_via_client(comments, writers=set())
+    assert book.entries["5e" * 8].status == "open"
+
+
+def test_a_closure_reply_from_the_reviewer_is_trusted():
+    comments = [
+        {**posted(11, "6f" * 8), "user": {"login": "github-actions[bot]"}},
+        by(12, 11, "github-actions[bot]", "No longer reported as of `abc1234`."),
+    ]
+    book, _ = rebuild_via_client(comments, writers=set())
+    assert book.entries["6f" * 8].status == "fixed"

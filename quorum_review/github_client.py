@@ -461,20 +461,30 @@ class GitHubClient:
         dismissed: set[int] = set()
         closed: set[int] = set()
         permitted: dict[str, bool] = {}
+        authors = {
+            int(comment["id"]): ((comment.get("user") or {}).get("login") or "")
+            for comment in comments
+            if comment.get("id")
+        }
 
         for comment in comments:
             root = comment.get("in_reply_to_id")
             if not root:
                 continue
             body = comment.get("body") or ""
+            author = ((comment.get("user") or {}).get("login") or "").strip()
 
             if CLOSED_REPLY in body:
-                closed.add(int(root))
+                # Only from whoever posted the finding — the reviewer itself.
+                # The phrase is text anyone can type, and a fake closure is not
+                # merely noise: a finding marked fixed is excluded from the
+                # SARIF upload, so it would close a code-scanning alert.
+                if author and author == authors.get(int(root)):
+                    closed.add(int(root))
                 continue
             if not is_dismissal_text(body):
                 continue
 
-            author = ((comment.get("user") or {}).get("login") or "").strip()
             if author not in permitted:
                 permitted[author] = await self.has_write_access(author)
             if permitted[author]:
