@@ -157,6 +157,31 @@ a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
 repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
 on an unchanged pull request.
 
+<details>
+<summary><b>It found two real security bugs in the commit that gave it repository access</b></summary>
+
+Neither was visible in the diff. Both required reading files the change did not
+touch, which is the capability being tested.
+
+**The fork guard admitted forks.** The workflow condition `head.repo.fork != true`
+reads a field that is `null` on `issue_comment` events — that payload has no
+`pull_request` object at all — and `null != true` is true. So `@quorum /review`
+on a fork's pull request satisfied a condition written to exclude forks. The
+reviewer had to read `.github/workflows/review.yml` against `review.py` to see
+it.
+
+**One policy file, read at two different refs.** `.quorumignore` is read at the
+base branch for an untrusted head, so a fork cannot exclude its own files from
+review — except that the file tools read it *again* from the checkout, which is
+the head. The base's copy governed the diff while the head's copy governed the
+tools. That needed `github_client.py` read against `workspace.py`.
+
+Both are fixed, with regression tests naming the mechanism. The relevant point
+is not that the tool is clever — it is that a diff-only reviewer had already
+looked at these same lines and said nothing, because neither bug is *in* a line.
+
+</details>
+
 > **Read this narrowly.** One fixture, written by the same person who wrote the
 > reviewer. Two rounds of results had to be thrown away when the models turned
 > out to be reading the answer key — [both contamination sources are documented
