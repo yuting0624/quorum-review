@@ -25,7 +25,10 @@ class RunReport:
 
     primary_model: str
     verifier_model: str = ""
-    verifier_available: bool = True
+    #: "ran", "disabled" (turned off to save cost), or "unavailable" (it broke).
+    #: A reader needs to tell a deliberate single-model review from a degraded
+    #: one, because only the second is a problem to go and fix.
+    verifier_status: str = "ran"
     verifier_error: str = ""
 
     scanned: int = 0
@@ -60,7 +63,7 @@ def render(report: RunReport) -> str:
 
     # How the two models were arranged, and what each contributed. This is the
     # part a reader is here for.
-    if report.verifier_available:
+    if report.verifier_status == "ran":
         lines.append(
             f"`{report.primary_model}` scanned the diff and proposed "
             f"**{report.scanned}** finding(s). "
@@ -72,15 +75,24 @@ def render(report: RunReport) -> str:
     else:
         lines.append(
             f"`{report.primary_model}` scanned the diff and proposed "
-            f"**{report.scanned}** finding(s)."
+            f"**{report.scanned}** finding(s). Single-model review — these "
+            f"findings have not been independently checked."
         )
         lines.append("")
-        lines.append(
-            f"> ⚠️ **Verification did not run, so these findings are unfiltered.** "
-            f"The second-opinion model (`{report.verifier_model}`) was "
-            f"unavailable: {report.verifier_error or 'reason not reported'}. "
-            f"Expect a higher false-positive rate than usual."
-        )
+        if report.verifier_status == "disabled":
+            lines.append(
+                "> ℹ️ **Verification is switched off for this repository.** "
+                "Findings come from one model only, so expect more false "
+                "positives than a verified review. Set `verification: on` to "
+                "add a second opinion."
+            )
+        else:
+            lines.append(
+                f"> ⚠️ **Verification was supposed to run and could not.** "
+                f"`{report.verifier_model}` was unavailable: "
+                f"{report.verifier_error or 'reason not reported'}. "
+                f"These findings are unfiltered."
+            )
 
     if report.suppressed:
         lines.append("")

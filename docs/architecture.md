@@ -73,6 +73,47 @@ Verification costs one model call per finding, which is why it is capped at the
 top 20 by severity (`max-verified-findings`). Findings past the cap are demoted
 to advisory, never silently dropped.
 
+### Verification raises precision. It can never raise recall.
+
+This is the property most easily misread, and the measurements made it concrete.
+
+The verifier only ever sees findings the primary model already reported. A bug
+the primary missed is not a bug the verifier evaluates and gets wrong — it is a
+bug the verifier is never shown. **The primary model's recall is a hard ceiling
+on the pipeline's recall**, and no verifier, however strong, can raise it.
+
+So when `gemini-3.1-pro-preview` missed the mutable-default-argument defect,
+pairing it with `claude-opus-5` did not help: Claude was never asked. Swapping
+the roles so that Claude scanned found the bug immediately — because the fix for
+a recall problem is a better *primary*, not a better verifier.
+
+The corollary is the direction the arrow can move. Verification can only remove
+things, so it trades recall for precision:
+
+- Something confirmed was seen by two models that never spoke to each other.
+- Something refuted is gone, and if the refutation was wrong, a true positive
+  went with it. In the measurements this happened — see
+  [`benchmark/seeded-bugs/README.md`](../benchmark/seeded-bugs/README.md).
+
+Which is why verification is a switch (`verification: off`) and not an
+architectural given. A repository that would rather read three extra false
+positives than miss one real bug should turn it off, and pay for one model
+instead of two.
+
+### Cost is shaped by which stage scales
+
+Scanning is one call regardless of how large the diff is. Verification is one
+call **per finding**. The stage that scales with N is the second one, so on cost
+grounds the cheaper model belongs there:
+
+| | Calls | Put here |
+|---|---|---|
+| Primary scan | 1 | The model with the best recall — it sets the ceiling |
+| Verification | N | The cheaper model — it only has to judge one claim at a time |
+
+That inverts the arrangement this project started with, and the measurements
+support the inversion on accuracy as well as cost.
+
 ### The verifier is deliberately kept ignorant
 
 It receives the file, the line, the code, and a one-line claim. It does not

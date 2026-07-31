@@ -29,6 +29,19 @@ VERIFY_CONCURRENCY = int(os.getenv("VERIFY_CONCURRENCY", "4"))
 #: Whole-run ceiling. A hung model call must not hold an Actions runner open.
 TIMEOUT_SECONDS = int(os.getenv("QUORUM_TIMEOUT_SECONDS", "1200"))
 
+_OFF = {"off", "0", "false", "no"}
+
+
+def verification_enabled() -> bool:
+    """Whether to run the second model at all.
+
+    Verification is the expensive half — one model call per finding, against
+    the scan's single call — so a cost-sensitive repository may reasonably want
+    the primary model only, and turn the second opinion on later. Read at call
+    time rather than at import so tests and the benchmark harness can flip it.
+    """
+    return os.getenv("QUORUM_VERIFICATION", "on").strip().lower() not in _OFF
+
 SKILLS_ROOT = pathlib.Path(__file__).resolve().parent.parent / "skills"
 
 
@@ -107,9 +120,11 @@ async def run(skill_name: str, dry_run: bool) -> int:
         ledger, sticky = await github.load_ledger(number)
         ctx, trimmed = await github.load_context(number)
 
+        verify_wanted = verification_enabled()
         report = report_mod.RunReport(
             primary_model=provider.primary_model,
             verifier_model=provider.verifier_model,
+            verifier_status="ran" if verify_wanted else "disabled",
             trimmed_files=trimmed,
             head_sha=ctx.head_sha,
         )
@@ -135,24 +150,33 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         # -- independent verification ---------------------------------------
         ranked = by_severity(fresh)
-        to_verify = ranked[:MAX_VERIFIED_FINDINGS]
-        skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
-        verified, verifier_error = await verify_all(provider, to_verify, ctx)
-        if verifier_error:
-            report.verifier_available = False
-            report.verifier_error = verifier_error
+        if verify_wanted:
+            # The cap exists because verification costs one call per finding.
+            # With verification off there is nothing to ration, so it does not
+            # apply and every finding is reported.
+            to_verify = ranked[:MAX_VERIFIED_FINDINGS]
+            skipped = ranked[MAX_VERIFIED_FINDINGS:]
 
-        # Over the cap: never silently dropped, just demoted to advisory.
-        for finding in skipped:
-            finding.verdict = "uncertain"
-            finding.verifier_reason = (
-                f"not verified: only the top {MAX_VERIFIED_FINDINGS} findings "
-                f"by severity are checked"
-            )
+            verified, verifier_error = await verify_all(provider, to_verify, ctx)
+            if verifier_error:
+                report.verifier_status = "unavailable"
+                report.verifier_error = verifier_error
+
+            # Over the cap: never silently dropped, just demoted to advisory.
+            for finding in skipped:
+                finding.verdict = "uncertain"
+                finding.verifier_reason = (
+                    f"not verified: only the top {MAX_VERIFIED_FINDINGS} findings "
+                    f"by severity are checked"
+                )
+        else:
+            verified, skipped = ranked, []
 
         for finding in verified + skipped:
-            if not report.verifier_available:
+            # With no verdicts to sort by, everything the primary reported is
+            # posted as-is; the summary makes clear it went unchecked.
+            if report.verifier_status != "ran":
                 report.confirmed.append(finding)
             elif finding.verdict == "confirmed":
                 report.confirmed.append(finding)

@@ -57,12 +57,19 @@ GitHub event (pull_request, or an @quorum /review comment)
 Both models authenticate off the same Application Default Credentials. That is
 the entire point of the repository.
 
-### Two rules that make verification worth having
+### Three things worth knowing about the two stages
 
 **The verifier never sees the reporter's reasoning.** It gets the location, the
 code, and the one-line claim — not the argument, not the severity rating, not
 which model produced it. Hand a model someone else's rationale and it agrees
 with it; the stage stops filtering anything. See `prompts.verify_user`.
+
+**Verification raises precision and can never raise recall.** The verifier only
+judges findings the primary already reported, so a bug the primary missed is
+never put in front of it. **The primary model sets a hard ceiling on what the
+pipeline can find.** If you are missing bugs, change the primary; a stronger
+verifier cannot help. Conversely, verification can remove a true positive — in
+our measurements it did.
 
 **Verification also blunts prompt injection.** A diff crafted to talk the primary
 model out of reporting something still has to get past a second model that never
@@ -112,9 +119,15 @@ Full workflows: [`examples/review-vertex.yml`](examples/review-vertex.yml) and
 | `skill` | `security-review` | Also ships `code-quality-review`; add your own under `skills/` |
 | `primary-model` | a Gemini model | **Confirm this against your project** — see below |
 | `verifier-model` | `claude-opus-5` | |
+| `verification` | `on` | `off` runs the primary model only — half the cost, more false positives |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `claude-vertex-region` | `global` | Try `us-east5` if your entitlement is region-scoped |
-| `max-verified-findings` | `20` | Verification costs one model call per finding |
+| `max-verified-findings` | `20` | One model call per finding; ignored when verification is off |
+
+**Start with one model if cost matters.** `verification: off` posts what the
+primary model finds, and the summary says plainly that nothing was
+double-checked. Turn it on when the false-positive rate starts costing more
+attention than the second model costs money.
 
 **Swapping the roles is configuration, not code.** Set `primary-model` to a
 Claude ID and `verifier-model` to a Gemini ID and the pipeline reverses —
