@@ -78,6 +78,11 @@ class RunReport:
     repo_access: str = ""
     #: Spend against the configured ceiling, when there is one.
     budget_note: str = ""
+    #: What the checkout was at. Not the same object as the commit under
+    #: review: `refs/pull/N/merge` is recomputed whenever the base branch
+    #: moves, and resolved when the workflow checks out rather than when the
+    #: diff was fetched, so the tree read can be a merge against a newer base.
+    workspace_commit: str = ""
     tool_calls: int = 0
     files_read: list[str] = field(default_factory=list)
 
@@ -276,10 +281,15 @@ def _repo_access(report: RunReport) -> list[str]:
     shown = ", ".join(f"`{path}`" for path in report.files_read[:8])
     if len(report.files_read) > 8:
         shown += f", and {len(report.files_read) - 8} more"
+    # Which tree, not just which files. A merge ref is recomputed when the base
+    # branch moves, so it can differ from the commit the diff describes — and
+    # someone chasing a finding that does not match their checkout deserves to
+    # know which one the reviewer read.
+    where = f" at `{report.workspace_commit}`" if report.workspace_commit else ""
     return [
         "",
         f"Beyond the diff, the models made **{report.tool_calls}** read-only "
-        f"lookup(s) into the checkout and opened {shown}.",
+        f"lookup(s) into the checkout{where} and opened {shown}.",
     ]
 
 

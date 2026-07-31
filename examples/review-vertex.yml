@@ -102,9 +102,9 @@ jobs:
                  github.event.comment.author_association)) ||
        (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        github.event.issue.state == 'open' &&
-        (contains(github.event.comment.body, '@quorum /review') ||
-         contains(github.event.comment.body, '@quorum /criteria')) &&
+        (contains(github.event.comment.body, '@quorum /criteria') ||
+         (contains(github.event.comment.body, '@quorum /review') &&
+          github.event.issue.state == 'open')) &&
         github.event.comment.user.type != 'Bot' &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
                  github.event.comment.author_association)))
