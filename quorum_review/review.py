@@ -268,7 +268,13 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
         return 0
 
     pull = await github.pull_request(number)
-    skill = await criteria.resolve(skill_name, github, pull["head"]["sha"])
+    # The same rule the review path applies. Criteria are instructions to a
+    # model and this path treats them as trusted, so a fork must not choose
+    # them — and this had been reading them at the head with no check, which
+    # made the "they are trusted, so unlabelled" argument false as well.
+    from_fork = forks.is_fork_payload(pull)
+    ref = pull["base"]["sha"] if from_fork else pull["head"]["sha"]
+    skill = await criteria.resolve(skill_name, github, ref)
     provider = build_provider()
     body = await provider.respond(
         provider.models[0],

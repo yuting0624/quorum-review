@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .ledger import Ledger, LedgerEntry
+from .prompts import untrusted
 from .report import flatten
 
 #: Below this there is not enough signal to distinguish a pattern from a
@@ -66,16 +67,15 @@ def render_prompt(skill_name: str, skill_body: str, entries: list[LedgerEntry]) 
         for entry in entries
     )
 
-    return f"""<untrusted_dismissals>
-{cases}
-</untrusted_dismissals>
-
-<current_criteria name="{skill_name}">
-{skill_body}
-</current_criteria>
-
-Propose the change.
-"""
+    return (
+        untrusted("dismissals", cases)
+        + "\n\n"
+        # The criteria are the repository's own, read at the base ref, so they
+        # are the trusted half — and labelling trusted input as untrusted
+        # teaches the model the tag means nothing.
+        + f'<current_criteria name="{skill_name}">\n{skill_body}\n</current_criteria>'
+        + "\n\nPropose the change.\n"
+    )
 
 
 def render_comment(proposal: Proposal) -> str:

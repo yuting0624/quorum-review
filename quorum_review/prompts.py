@@ -59,6 +59,28 @@ lookup. When the budget runs out, answer from what you have.
 """
 
 
+def untrusted(tag: str, content: str) -> str:
+    """Wrap attacker-controlled text so it cannot climb out of its own block.
+
+    The whole labelling scheme rests on the model being able to tell where the
+    untrusted text ends, and interpolating raw content into
+    ``<untrusted_x>...</untrusted_x>`` does not achieve that: a pull request
+    title reading ``</untrusted_pr_title>`` closes the block, and everything
+    after it sits beside the instructions as a peer.
+
+    That was live in every prompt this project sends. Neutralising the closing
+    delimiter is the fix, and it has to happen in one place — the failure is
+    invisible at each call site, because each one looks like correct XML.
+
+    The replacement is deliberately readable rather than escaped: a model that
+    sees ``<!untrusted_pr_title>`` understands what was attempted, and the base
+    instructions tell it to report exactly that as a finding.
+    """
+    safe = (content or "").replace("</untrusted", "</!untrusted")
+    safe = safe.replace("<untrusted", "<!untrusted")
+    return "\n".join([f"<untrusted_{tag}>", safe, f"</untrusted_{tag}>"])
+
+
 def scan_system(skill: Skill, language: str = "", tools: bool = False) -> str:
     """System prompt for the primary scan. Optimised for recall."""
     return (
@@ -105,25 +127,20 @@ bar above is not met, which will often be most findings.
 def scan_user(ctx: PRContext) -> str:
     """User turn for the primary scan.
 
-    Every attacker-controlled field is wrapped in an ``<untrusted_*>`` tag; see
-    ``BASE_INSTRUCTIONS`` for how the model is told to treat them.
+    Every attacker-controlled field goes through ``untrusted()``; see
+    ``BASE_INSTRUCTIONS`` for how the model is told to treat them, and
+    ``untrusted()`` for why interpolating them directly did not work.
     """
-    return f"""\
-Repository: {ctx.owner}/{ctx.repo}
-Pull request: #{ctx.number}
-
-<untrusted_pr_title>
-{ctx.title}
-</untrusted_pr_title>
-
-<untrusted_pr_body>
-{ctx.body}
-</untrusted_pr_body>
-
-<untrusted_diff>
-{ctx.diff}
-</untrusted_diff>
-"""
+    return (
+        f"Repository: {ctx.owner}/{ctx.repo}\n"
+        f"Pull request: #{ctx.number}\n\n"
+        + untrusted("pr_title", ctx.title)
+        + "\n\n"
+        + untrusted("pr_body", ctx.body)
+        + "\n\n"
+        + untrusted("diff", ctx.diff)
+        + "\n"
+    )
 
 
 def verify_system(language: str = "", tools: bool = False) -> str:
@@ -216,19 +233,14 @@ def discuss_user(discussion: Discussion, ctx: PRContext) -> str:
         f"{author}:\n{text}" for author, text in discussion.transcript
     )
 
-    return f"""\
-{claim}
-
-<untrusted_diff file="{discussion.file_path}">
-{file_diff}
-</untrusted_diff>
-
-<untrusted_conversation>
-{conversation}
-</untrusted_conversation>
-
-Reply to the most recent message.
-"""
+    return (
+        claim
+        + "\n\n"
+        + untrusted("diff", file_diff)
+        + "\n\n"
+        + untrusted("conversation", conversation)
+        + "\n\nReply to the most recent message.\n"
+    )
 
 
 def verify_user(finding: Finding, ctx: PRContext) -> str:
@@ -244,23 +256,17 @@ def verify_user(finding: Finding, ctx: PRContext) -> str:
     if not file_diff:
         file_diff = "(this file does not appear in the diff)"
 
-    return f"""\
-<claim>
-File: {finding.file_path}
-Line: {finding.line}
-Claim: {finding.title}
-</claim>
-
-<code_under_review>
-{finding.code_snippet}
-</code_under_review>
-
-<untrusted_diff file="{finding.file_path}">
-{file_diff}
-</untrusted_diff>
-
-Does the claim hold?
-"""
+    return (
+        f"<claim>\nFile: {finding.file_path}\nLine: {finding.line}\n"
+        f"Claim: {finding.title}\n</claim>\n\n"
+        # The snippet is the model's own quotation of attacker-controlled code,
+        # so it is labelled too — it was not, and a claim is a shorter route to
+        # the instructions than a diff.
+        + untrusted("code_under_review", finding.code_snippet)
+        + "\n\n"
+        + untrusted("diff", file_diff)
+        + "\n\nDoes the claim hold?\n"
+    )
 
 
 def criteria_system(language: str = "") -> str:
