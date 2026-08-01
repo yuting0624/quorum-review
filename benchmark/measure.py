@@ -71,6 +71,9 @@ DECOYS = {
     "D2": ("app/plugins.py", ("import",)),
     "D3": ("app/fetcher.py", ("random", "predictable", "entropy")),
     "C1": ("app/reports.py", ("traversal", "path", "filename", "sanitis", "sanitiz")),
+    # The same class as C1 but without the tell: the changed lines show a raw
+    # join and the guard is at the HTTP boundary, outside the diff.
+    "C4": ("app/reports.py", ("write_named_report", "unsanitised", "unvalidated")),
 }
 
 # Real bugs that were written by accident. Reporting them is a true positive.
