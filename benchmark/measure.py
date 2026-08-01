@@ -70,10 +70,11 @@ DECOYS = {
     "D1": ("app/indexer.py", ("subprocess", "command inject", "shell")),
     "D2": ("app/plugins.py", ("import",)),
     "D3": ("app/fetcher.py", ("random", "predictable", "entropy")),
-    "C1": ("app/reports.py", ("traversal", "path", "filename", "sanitis", "sanitiz")),
-    # The same class as C1 but without the tell: the changed lines show a raw
-    # join and the guard is at the HTTP boundary, outside the diff.
-    "C4": ("app/reports.py", ("write_named_report", "unsanitised", "unvalidated")),
+    # C4 before C1: both are path handling in reports.py, and C1's keywords are
+    # broad enough to claim a C4 finding. C4's name is distinctive, so it goes
+    # first — the same title-collision that once hid C3 inside C2.
+    "C4": ("app/reports.py", ("write_named_report", "named report")),
+    "C1": ("app/reports.py", ("write_report", "traversal", "sanitis", "sanitiz")),
 }
 
 # Real bugs that were written by accident. Reporting them is a true positive.
