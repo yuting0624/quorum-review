@@ -20,7 +20,7 @@ long-lived secret in your repository, one invoice.
 
 ---
 
-![hero image](image.png)
+![hero image](hero.png)
 
 > ### 📐 A reference implementation, not a product
 >
@@ -91,27 +91,7 @@ rhetorical; [`providers/vertex.py`](quorum_review/providers/vertex.py) is the fi
 
 ## 🔀 How a review runs
 
-```
-GitHub event ──▶ google-github-actions/auth ──▶ short-lived GCP credentials
-                                                          │
-                        ┌─────────────────────────────────┴───────────────┐
-                        │                                                 │
-                  scan: Gemini                                      scan: Claude
-                  (whole diff)                                      (whole diff)
-                        │        neither sees the other's output          │
-                        └────────────────────┬────────────────────────────┘
-                                             ▼
-                                     merge and compare
-                                             │
-                    ┌────────────────────────┴────────────────────────┐
-                    ▼                                                 ▼
-        both reported it                                   only one reported it
-        → agreed, no further call                          → the other one judges it
-                    │                                                 │
-                    └────────────────────────┬────────────────────────┘
-                                             ▼
-                    confirmed → inline · uncertain → advisory · refuted → dropped
-```
+![review architecture](architecture.png)
 
 Both models also get three read-only tools over the checkout — `read_file`,
 `search`, `list_files` — each on its own budget. That is what lets a reviewer
