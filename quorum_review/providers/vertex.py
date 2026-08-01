@@ -1,11 +1,18 @@
 """Gemini and Claude, both driven by one Google Cloud credential.
 
-This module is the point of the whole project. Every other cross-model reviewer
-we found stacks API keys from separate vendors; here the GitHub Actions OIDC
-token is exchanged once for short-lived Google Cloud credentials, and *both*
-models authenticate off those same Application Default Credentials. No
-long-lived secret is stored in the repository, billing lands on one invoice, and
-the code goes to Vertex rather than to two separate vendors.
+This module is the point of the whole project. The GitHub Actions OIDC token is
+exchanged **once** for short-lived Google Cloud credentials, and *both* models
+authenticate off those same Application Default Credentials. Billing lands on
+one invoice, and the code goes to one platform rather than to two vendors.
+
+The word doing the work is "once". This used to be stated as "no long-lived
+secret is stored in the repository", against cross-model reviewers that stacked
+API keys from separate vendors — and in June 2026 Anthropic shipped workload
+identity federation, so a two-vendor setup can reach Claude without a stored key
+too. The remaining difference is one trust relationship instead of two: one
+issuer registered, one set of claim conditions to get right, one place where a
+misconfiguration mints a token for the wrong workflow. Narrower than the
+original claim, and the honest version of it.
 
 That last point used to be written here as "the code never leaves the Vertex
 region", which was not true of the configuration it shipped with: the default

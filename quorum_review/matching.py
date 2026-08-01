@@ -28,6 +28,7 @@ term do not qualify.
 
 from __future__ import annotations
 
+import os
 import re
 import string
 from typing import NamedTuple
@@ -198,23 +199,57 @@ def same_defect(a: Report, b: Report) -> bool:
 #: callers need to recognise one: `dismissal`, handling the event, and
 #: `github_client`, reading a dismissal back out of a thread when the summary
 #: comment that recorded it has been deleted.
-DISMISSAL_TRIGGERS = (
-    "@quorum wontfix",
-    "@quorum false positive",
-    "@quorum 誤検知",
-)
+#: What people type to address the reviewer. Configurable because two of these
+#: can run in one repository — a team trying a second reviewer alongside this
+#: one, or an organisation that already answers to `@quorum` for something
+#: else. Read at call time, not at import, so a test can change it and so the
+#: value comes from the action input rather than from whenever the module
+#: happened to load.
+DEFAULT_MENTION = "@quorum"
 
-_DISMISSAL_RE = re.compile(
-    "|".join(re.escape(trigger) for trigger in DISMISSAL_TRIGGERS), re.IGNORECASE
-)
+
+def mention() -> str:
+    """The phrase this reviewer answers to.
+
+    Whitespace is collapsed rather than rejected: an input of `@ quorum` is a
+    typo with an obvious intent, and failing the run over it helps nobody. An
+    empty value falls back, because a trigger matching every comment would turn
+    every comment on the repository into a model call.
+    """
+    configured = " ".join(os.getenv("QUORUM_TRIGGER", "").split())
+    return configured or DEFAULT_MENTION
+
+
+#: Suffixes that retire a finding, in the languages the reviewer writes in.
+#: Japanese is here because `review-language` is an input and a reply should be
+#: able to match the language of the thread it is in.
+DISMISSAL_WORDS = ("wontfix", "false positive", "誤検知")
+
+
+def dismissal_triggers() -> tuple[str, ...]:
+    """Accepted ways to say it.
+
+    A function rather than a constant so the mention stays configurable. Two
+    callers need to recognise one: `dismissal`, handling the event, and
+    `github_client`, reading a dismissal back out of a thread when the summary
+    comment that recorded it has been deleted.
+    """
+    return tuple(f"{mention()} {word}" for word in DISMISSAL_WORDS)
+
+
+def _dismissal_re() -> re.Pattern[str]:
+    return re.compile(
+        "|".join(re.escape(trigger) for trigger in dismissal_triggers()),
+        re.IGNORECASE,
+    )
 
 
 def is_dismissal_text(body: str | None) -> bool:
     """Whether this comment body retires a finding."""
-    return bool(_DISMISSAL_RE.search(body or ""))
+    return bool(_dismissal_re().search(body or ""))
 
 
 def without_dismissal_trigger(body: str) -> str:
     """The explanation, with the trigger phrase removed."""
-    stripped = _DISMISSAL_RE.sub("", body or "").strip(string.whitespace + ":-—")
+    stripped = _dismissal_re().sub("", body or "").strip(string.whitespace + ":-—")
     return stripped or "no reason given"

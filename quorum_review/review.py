@@ -35,7 +35,14 @@ from . import (
 from . import ledger as ledger_mod
 from . import report as report_mod
 from . import workspace as workspace_mod
-from .github_client import GitHubClient, GitHubError, pr_number_from_event, read_event
+from .github_client import (
+    GitHubClient,
+    GitHubError,
+    StickyComment,
+    pr_number_from_event,
+    read_event,
+)
+from .matching import mention
 from .providers import ProviderUnavailable, build_provider
 from .providers.base import ReviewProvider
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
@@ -290,7 +297,7 @@ def wants_criteria_proposal(event: dict) -> bool:
     comment = event.get("comment")
     if not isinstance(comment, dict):
         return False
-    return "@quorum /criteria" in (comment.get("body") or "").lower()
+    return f"{mention()} /criteria" in (comment.get("body") or "").lower()
 
 
 async def propose_criteria(
@@ -541,6 +548,30 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # decode looks exactly like one that decoded fine.
         report.recovered = len(ledger.entries) if ledger.was_rebuilt else ledger.recovered
         report.ledger_lost = ledger.was_rebuilt
+
+        # Say that the review started, before spending three minutes not
+        # saying it. The sticky comment is edited in place, so a re-review
+        # otherwise produces no notification and no visible change until it is
+        # done — indistinguishable from a workflow that never triggered.
+        #
+        # Posted without the ledger marker on purpose: the marker is written
+        # with the result, and a placeholder carrying a stale one would be read
+        # back as the record if the run then died. Losing the notice is
+        # recoverable; losing the ledger re-reports every finding.
+        if not dry_run and ctx.diff.strip():
+            try:
+                sticky_id = await github.upsert_sticky_comment(
+                    number, report_mod.render_in_progress(ctx.head_sha, models), sticky
+                )
+                if sticky is None:
+                    sticky = StickyComment(comment_id=sticky_id, body="")
+                _note_in_progress(number, sticky, ctx.head_sha)
+            except GitHubError as error:
+                # Not worth failing a review over a progress notice.
+                print(
+                    f"warning: could not post the start notice: {error}",
+                    file=sys.stderr,
+                )
 
         report.renamed_files = diffs.renames(ctx.diff)
         if report.renamed_files:
@@ -884,6 +915,45 @@ def main(argv: list[str] | None = None) -> int:
         return _abort(str(error))
 
 
+#: Set once the start notice is on the pull request, cleared when the result
+#: replaces it. Module state rather than a parameter because the failure paths
+#: live in ``main``, outside the client that would be needed to undo it.
+_IN_PROGRESS: tuple[int, StickyComment, str] | None = None
+
+
+def _note_in_progress(number: int, sticky: StickyComment, head_sha: str) -> None:
+    global _IN_PROGRESS
+    _IN_PROGRESS = (number, sticky, head_sha)
+
+
+def _clear_in_progress() -> None:
+    global _IN_PROGRESS
+    _IN_PROGRESS = None
+
+
+async def _replace_notice(message: str) -> None:
+    """Say the run died, where the notice promised a result.
+
+    Without this a crash leaves "this comment will be replaced by the result"
+    on the pull request permanently — a worse state than the silence the notice
+    was added to fix, because it asserts that an answer is coming.
+
+    A second client, on a path where cost does not matter. Failing here is
+    ignored: the run has already failed, and a second error on top of the first
+    only hides it.
+    """
+    if _IN_PROGRESS is None:
+        return
+    number, sticky, head_sha = _IN_PROGRESS
+    try:
+        async with GitHubClient() as github:
+            await github.upsert_sticky_comment(
+                number, report_mod.render_crashed(head_sha, message), sticky
+            )
+    except Exception as error:  # noqa: BLE001 - the run already failed
+        print(f"warning: could not withdraw the start notice: {error}", file=sys.stderr)
+
+
 def _abort(message: str) -> int:
     """Fail loudly, and still leave a workflow something to branch on.
 
@@ -895,6 +965,7 @@ def _abort(message: str) -> int:
     """
     print(f"::error title=quorum-review::{message}")
     print(f"error: {message}", file=sys.stderr)
+    asyncio.run(_replace_notice(message))
     actions.write_outputs(report_mod.RunReport(scan_failures=[message]))
     return 1
 

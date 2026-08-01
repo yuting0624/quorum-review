@@ -838,3 +838,51 @@ def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
         f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review `{_version()}`</sub>",
     ]
     return "\n".join(lines)
+
+
+def render_in_progress(head_sha: str, models: list[str]) -> str:
+    """Placed before the models are called, and overwritten by the result.
+
+    A review takes a few minutes and posted nothing until it finished, so the
+    honest reading of a pull request during that window was "nothing happened".
+    Someone waiting cannot tell a run in progress from a workflow that never
+    triggered, and the sticky comment is edited in place on later runs — which
+    means a re-review sends no notification at all and looks even more like
+    silence.
+
+    Deliberately not a progress bar. There are two model calls and their
+    duration is not knowable in advance, so a percentage would be a decoration
+    that implies more than it knows. What a reader needs is: it started, on
+    this commit, and this comment is where the answer will appear.
+    """
+    return "\n".join(
+        [
+            "## Quorum review",
+            "",
+            f"Reviewing `{head_sha[:7]}` with "
+            + ", ".join(f"`{model}`" for model in models)
+            + " — both read the diff independently, so this takes a few minutes.",
+            "",
+            "This comment will be replaced by the result.",
+        ]
+    )
+
+
+def render_crashed(head_sha: str, message: str) -> str:
+    """Replaces the in-progress notice when the run dies.
+
+    Without this, a crash leaves "this comment will be replaced by the result"
+    on the pull request permanently, which is a worse state than the silence it
+    was introduced to fix: it asserts that an answer is coming.
+    """
+    return "\n".join(
+        [
+            "## Quorum review",
+            "",
+            f"**The review of `{head_sha[:7]}` did not finish.** "
+            "Nothing here is a statement about this change — it was not "
+            "reviewed. The workflow run has the error:",
+            "",
+            f"> {flatten(message, 500)}",
+        ]
+    )

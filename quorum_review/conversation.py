@@ -19,10 +19,9 @@ from . import prompts
 from . import workspace as workspace_mod
 from .github_client import GitHubClient
 from .ledger import FINDING_FOOTER, Ledger, LedgerEntry
+from .matching import mention
 from .providers.base import ReviewProvider
 from .schema import Discussion, PRContext
-
-MENTION = "@quorum"
 
 #: How much of a thread reaches the model, newest first. A thread is a place
 #: anyone can add text, and all of it was going into the prompt: fifty replies
@@ -34,8 +33,13 @@ MAX_TRANSCRIPT_CHARS = 4_000
 #: case?" — and the person asking is waiting for the reply in the thread.
 QUESTION_TOOL_CALLS = 8
 
+
 #: Handled elsewhere: a re-review request and a dismissal are not questions.
-_NOT_A_QUESTION = re.compile(r"@quorum\s+(/review|wontfix|false positive|誤検知)", re.I)
+def _not_a_question() -> re.Pattern[str]:
+    """A re-review request and a dismissal are handled elsewhere."""
+    return re.compile(
+        re.escape(mention()) + r"\s+(/review|wontfix|false positive|誤検知)", re.I
+    )
 
 
 def is_question(event: dict[str, Any]) -> bool:
@@ -45,9 +49,9 @@ def is_question(event: dict[str, Any]) -> bool:
         return False
 
     body = comment.get("body") or ""
-    if MENTION.lower() not in body.lower():
+    if mention().lower() not in body.lower():
         return False
-    return not _NOT_A_QUESTION.search(body)
+    return not _not_a_question().search(body)
 
 
 def owns_thread(comments: list[dict[str, Any]], root_id: int) -> bool:
@@ -167,7 +171,7 @@ async def handle(
             number,
             root_id,
             "This is not one of my threads, so I have no finding to discuss. "
-            "Ask under a review comment I posted, or `@quorum /review` to "
+            f"Ask under a review comment I posted, or `{mention()} /review` to "
             "re-review the pull request.",
         )
         return 0
@@ -204,6 +208,6 @@ async def handle(
         number,
         root_id,
         f"{answer.strip()}\n\n<sub>Answered by `{model}`, which reported this "
-        f"finding. Reply `@quorum wontfix — <reason>` to retire it.</sub>",
+        f"finding. Reply `{mention()} wontfix — <reason>` to retire it.</sub>",
     )
     return 0

@@ -318,3 +318,34 @@ def test_the_metadata_the_marketplace_requires_is_present():
     assert action["name"]
     assert action["branding"]["icon"]
     assert action["branding"]["color"]
+
+
+# -- concurrency is read before `if:` ---------------------------------------
+
+
+@pytest.mark.parametrize("path", ALL_WORKFLOWS, ids=lambda p: p.name)
+def test_a_bot_comment_cannot_cancel_a_running_review(path: Path):
+    """GitHub evaluates `concurrency` before the job's `if:`, so a run that
+    will be skipped still occupies the group and still cancels whatever is
+    running.
+
+    That went unnoticed until the reviewer started posting a notice when it
+    begins. The notice is a comment; the comment fires `issue_comment`; the
+    resulting run cancelled the review that had just posted it, thirty seconds
+    in, and then skipped. Every time.
+
+    The Bot check in `if:` stops the loop and cannot stop this, because it is
+    read too late. `cancel-in-progress` has to carry the same check.
+    """
+    document = load(path)
+    if not runs_this_action(document):
+        return
+    concurrency = document.get("concurrency")
+    if not concurrency:
+        return
+
+    cancel = str(concurrency.get("cancel-in-progress"))
+    assert "comment.user.type" in cancel, (
+        f"{path.name}: `cancel-in-progress: {cancel}` lets the reviewer's own "
+        f"comment cancel the run that posted it"
+    )

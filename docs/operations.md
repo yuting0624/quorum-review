@@ -90,6 +90,36 @@ does not separate words, so the whole title becomes one token — and character
 bigrams would merge 「削除エンドポイントに所有者チェックがない」with
 「パージエンドポイントに所有者チェックがない」, which are different bugs.
 
+## Dependency pull requests
+
+A pull request opened by Dependabot or Renovate is a normal pull request as far
+as this action is concerned — same repository, not a fork, so the trigger
+conditions admit it.
+
+**It will still fail, and not because of anything here.** GitHub runs workflows
+triggered by Dependabot with a read-only token and **no access to repository
+secrets**, so `WIF_PROVIDER` and `GOOGLE_CLOUD_PROJECT` arrive empty and
+authentication cannot start. The same applies to any bot GitHub treats that
+way.
+
+Three options, in the order I would try them:
+
+1. **Leave it.** Dependency bumps are the changes a cross-model reviewer adds
+   least to. The interesting question about them — is this version safe — is
+   answered by an advisory database, not by reading the diff.
+2. **Move the secrets to Dependabot's own store.** Repository settings has a
+   separate *Dependabot secrets* section; secrets there are visible to
+   Dependabot-triggered runs. This grants a bot-authored branch access to your
+   Google Cloud federation, so scope the federation to the repository first.
+3. **Review them on a schedule instead**, with `workflow_dispatch` or `cron`
+   and `pr-number`. The run is then triggered by you and has your secrets, and
+   the bot never touches the credential.
+
+There is deliberately no `allowed-bots` input. The bot check in the trigger
+conditions is about *comments* — it stops the reviewer's own comments from
+starting another run — and loosening it to admit a bot's `@quorum /review`
+would be a different question from whose pull requests get reviewed.
+
 ## Signals that the review did less than it looks like
 
 Any of these makes a clean result mean less than a clean result:

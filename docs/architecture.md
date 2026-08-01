@@ -62,11 +62,15 @@ The consequences are the reason a platform team cares:
 
 - No long-lived secret in the repository. Nothing to rotate or leak.
 - Both models are Vertex models, so `vertexai.allowedModels` governs both.
-- Inference stays in the Vertex region; code is not sent to a second vendor.
+- Inference stays on one platform; code is not sent to a second vendor.
 - One invoice, drawing on existing Google Cloud commitments.
+- **One trust relationship.** This is the part that survived June 2026, when
+  Anthropic shipped workload identity federation and "no stored keys" stopped
+  being exclusive to this arrangement. One issuer to register and one set of
+  claim conditions to get right is still fewer than two.
 
 [`quorum_review/providers/direct.py`](../quorum_review/providers/direct.py) implements the same
-review against two vendor API keys. It exists so the comparison can be read
+review against each vendor's own API. It exists so the comparison can be read
 rather than argued.
 
 ## Why both models scan
