@@ -142,6 +142,29 @@ def test_c3_the_audit_call_does_not_match_the_signature():
     )
 
 
+def test_c4_the_raw_join_is_guarded_by_its_only_caller():
+    """The shape a real false positive takes.
+
+    C1 has the validator call on the changed line, which is a strong "someone
+    thought about this" signal — and neither configuration ever flagged it. C4
+    removes that signal: the changed lines show a parameter joined into a path
+    with nothing guarding it, and the guard is at the HTTP boundary in a file
+    the pull request does not touch.
+
+    Flagging it is a false positive. Not flagging it *without having looked* is
+    luck rather than judgement, which is why the tool logs say which files were
+    opened.
+    """
+    call_site = source("reports.py")
+    assert "def write_named_report(" in call_site
+    assert "os.path.join(_user_dir(user), filename)" in call_site
+    assert "validators" not in call_site.split("def write_named_report(")[1]
+
+    boundary = source("api.py")
+    assert "validators.export_name(filename)" in boundary
+    assert "reports.write_named_report(" in boundary
+
+
 # -- decoys: these must stay correct ---------------------------------------
 
 
