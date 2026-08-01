@@ -132,10 +132,10 @@ repository is three more chances to build an argument, and the argument against
 B8 is a good one. This is the stage doing its job in a case where its job is
 debatable.
 
-### Two contamination sources, both found by giving the models access
+### Three contamination sources, all found by giving the models access
 
-Neither was visible while the reviewer could only read the diff, and both
-invalidated every measurement taken before they were fixed.
+None was visible while the reviewer could only read the diff, and each
+invalidated every measurement taken before it was fixed.
 
 1. **The answer key was readable.** This file lists every bug by file, and
    `tests/test_fixture_integrity.py` asserts each one. Both live on `main`
@@ -153,8 +153,27 @@ invalidated every measurement taken before they were fixed.
    *"PR description contains reviewer-directed instructions (prompt injection)."*
    Which is exactly right, and not a false positive.
 
-The numbers above are from after both fixes. Earlier figures in this file were
-taken under (2) and are marked where they appear.
+3. **The measurement harness carried the key too.** `benchmark/measure.py`
+   holds the classification tables: every bug, decoy and context case with the
+   file and the keywords that identify it — and, worse than the bug list, a
+   table saying which findings are *supposed to be wrong*. It was missed when
+   (1) was fixed, in a commit written to close exactly that hole, which named
+   two files, added a test naming the same two files, and left the third. A
+   model opened it on the next run with repository access; the tool log is how
+   it was noticed.
+
+   The check is no longer a list. `tests/test_workspace.py` searches the tree
+   for anything speaking the answer key's vocabulary and asserts the models
+   cannot reach it, whether or not anyone remembered to add it. The markers are
+   assembled from pieces so the checker does not match itself and can therefore
+   cover itself.
+
+The pattern is worth naming: **each fix was written by someone who believed they
+were closing the whole hole, and each left another copy of the same key
+somewhere else.** A list of files to hide is a list, and the thing that gets
+missed is by definition not on it.
+
+Numbers taken under (1) or (3) are gone. What survives is marked.
 
 ### Caveat on B8
 
@@ -222,25 +241,46 @@ false positive.**
 ## Results
 
 Measured against PR #1, project `data-agent-bq`, Vertex `global`, skill
-`security-review`, models `gemini-3.6-flash` and `claude-opus-5`. Three runs per
-configuration, via `python -m benchmark.measure`.
+`security-review`, default models `gemini-3.6-flash` and `claude-sonnet-5`.
+Three runs per configuration, via `python -m benchmark.measure`, all after the
+third contamination source was closed.
 
-> ⚠️ **Everything in this section predates the contamination fixes described
-> above.** These runs were made while the pull request body told the reviewer
-> there were ten bugs and three decoys. The seeded-bug counts and the
-> false-positive count are both flattered by that, and the comparisons between
-> *configurations* are the part still worth reading — every row was contaminated
-> identically. Re-running the single-scanner rows cleanly is on the list below.
+There are 18 real defects in the fixture: the ten seeded (B1-B10), two whose
+correctness cannot be decided from the diff (C2, C3), and six that were written
+by accident and credited afterwards (U1-U6).
 
-| Scanning | Second opinion | Seeded found, mean of 3 | Per-bug stability | Unseeded real | False positives |
-|---|---|---|---|---|---|
-| `gemini-3.6-flash` alone | `claude-opus-5` | 9.0 / 10 | B7 **0/3** — never found | — | 0 |
-| `claude-opus-5` alone | `gemini-3.6-flash` | 10.0 / 10 | all 3/3 | U1, U2 | 0 |
-| **both, independently** | on disagreements only | **10.0 / 10** | **all 3/3** | U1, U2, +3 more | **0** |
+**Recall, single scan, repository readable, no verification:**
+
+| Scanning | Seeded | All 18 real | False positives |
+|---|---|---|---|
+| `gemini-3.6-flash` alone | 8.3 / 10 | 8.7 | 0 |
+| `claude-sonnet-5` alone | 7.7 / 10 | 8.0 | 0 |
+| **both, independently** | **9.3 / 10** | **10.0** | **0** |
+
+The union exceeds both, and it does so in both directions — which is the part
+that matters, because a union that only ever adds one model's findings to the
+other's is not a quorum, it is a slower single scan:
+
+| Missed by | Found by the other |
+|---|---|
+| `claude-sonnet-5` | B7 (TOCTOU between the existence check and `open()`), U1 (share link with no expiry) |
+| `gemini-3.6-flash` | C2 (scope check whose correctness depends on `permissions.py`) |
+
+**The full pipeline, both scanning and the second opinion on disagreements:**
+
+| | Seeded | Diff-undecidable | False positive on the decoy |
+|---|---|---|---|
+| diff only | 8.7 / 10 | 0 / 2, every run | **3 / 3 runs** |
+| repository readable *(default)* | 8.7 / 10 | 2 / 2 in two runs of three | **0 / 3 runs** |
+
+C4 — the decoy whose guard is one file away — is reported by the diff-only
+reviewer in every run and by the repository-reading one in none. In the third
+repository-reading run a scan did raise it, and the second opinion read the
+caller and refuted it before it reached the pull request. That is the
+disagreement path doing the job it exists for.
 
 PRD targets were ≥6 of 10 detected and ≤3 false positives. Every configuration
-clears both, and **no configuration was fooled by any of the three decoys in any
-run.**
+clears both.
 
 Earlier single runs, kept for the record — these used the previous
 single-scanning design and `gemini-3.1-pro-preview`:

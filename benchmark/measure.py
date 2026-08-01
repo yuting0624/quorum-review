@@ -14,7 +14,7 @@ Usage:
 
     GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo GOOGLE_CLOUD_PROJECT=... \\
       python -m benchmark.measure --pr 1 --runs 3 \\
-        --primary claude-opus-5 --verifier gemini-3.6-flash
+        --primary gemini-3.6-flash --verifier claude-sonnet-5
 """
 
 from __future__ import annotations
@@ -253,9 +253,15 @@ async def main_async(args: argparse.Namespace) -> int:
     final_hits: list[set] = []
     transcript: list[dict[str, object]] = []
 
+    before = _usage_snapshot(provider)
+
     for index in range(1, args.runs + 1):
         reported, survived = await one_run(provider, ctx, skill, scanners, args.verify)
-        transcript.append({"reported": _dump(reported), "survived": _dump(survived)})
+        after = _usage_snapshot(provider)
+        spent, before = _usage_delta(before, after), after
+        transcript.append(
+            {"reported": _dump(reported), "survived": _dump(survived), "usage": spent}
+        )
         p_score, f_score = score(reported), score(survived)
         scan_hits.append(p_score["seeded"])  # type: ignore[arg-type]
         final_hits.append(f_score["seeded"])  # type: ignore[arg-type]
@@ -286,12 +292,78 @@ async def main_async(args: argparse.Namespace) -> int:
     mean_f = sum(len(h) for h in final_hits) / args.runs
     print(f"\nmean seeded found: scanned {mean_p:.1f}/10, survived {mean_f:.1f}/10")
 
+    _print_usage([run["usage"] for run in transcript], args.runs)
+
     if args.save:
         pathlib.Path(args.save).write_text(
             json.dumps(transcript, indent=2), encoding="utf-8"
         )
         print(f"findings written to {args.save}")
     return 0
+
+
+def _usage_snapshot(provider: object) -> dict[str, dict[str, int]]:
+    """Per-model counters as they stand right now.
+
+    The provider accumulates across runs, so a per-run figure is the difference
+    between two snapshots. Taken that way rather than by resetting, so the
+    harness does not reach into the provider's state to measure it.
+    """
+    return {
+        model: {
+            "calls": used.calls,
+            "input": used.input_tokens,
+            "cached_input": used.cached_input_tokens,
+            "output": used.output_tokens,
+        }
+        for model, used in getattr(provider, "usage", {}).items()
+    }
+
+
+def _usage_delta(
+    before: dict[str, dict[str, int]], after: dict[str, dict[str, int]]
+) -> dict[str, dict[str, int]]:
+    return {
+        model: {
+            field: value - before.get(model, {}).get(field, 0)
+            for field, value in counts.items()
+        }
+        for model, counts in after.items()
+    }
+
+
+def _print_usage(per_run: list[dict[str, dict[str, int]]], runs: int) -> None:
+    """What the configuration cost, in tokens.
+
+    Tokens rather than money, for the reason in ``ModelUsage``: prices differ
+    by model, platform and contract, so a figure computed here would be a guess
+    wearing the costume of a fact. What a comparison between configurations
+    needs is the quantity, and that is the part we observed.
+
+    Recall was the only axis this harness measured, which made "two models find
+    more" impossible to weigh against "one model costs less". Both halves are
+    on the same page now.
+    """
+    totals: dict[str, dict[str, int]] = {}
+    for run in per_run:
+        for model, counts in run.items():
+            entry = totals.setdefault(
+                model, {"calls": 0, "input": 0, "cached_input": 0, "output": 0}
+            )
+            for field, value in counts.items():
+                entry[field] += value
+
+    if not totals:
+        return
+
+    print("\nmean tokens per run")
+    print(f"  {'model':<20} {'calls':>6} {'input':>10} {'cached':>10} {'output':>9}")
+    for model, counts in sorted(totals.items()):
+        print(
+            f"  {model:<20} {counts['calls'] / runs:6.1f} "
+            f"{counts['input'] / runs:10,.0f} {counts['cached_input'] / runs:10,.0f} "
+            f"{counts['output'] / runs:9,.0f}"
+        )
 
 
 def _dump(findings: list[Finding]) -> list[dict[str, str]]:

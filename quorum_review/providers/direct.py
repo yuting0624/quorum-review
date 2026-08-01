@@ -39,7 +39,7 @@ from .vertex import (
 )
 
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
-DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 
 
 def _output_config(effort: str, schema: dict[str, Any] | None) -> dict[str, Any]:

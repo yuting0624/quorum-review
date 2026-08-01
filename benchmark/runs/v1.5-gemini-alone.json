@@ -1,0 +1,280 @@
+[
+  {
+    "reported": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "`delete_document` does not enforce administrative privileges",
+        "body": "`delete_document` executes a `DELETE` query for any given `doc_id` without verifying that `user` is an administrator or checking document ownership. Any authenticated caller can delete arbitrary documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "`purge_user` swallows admin authorization failure",
+        "body": "`purge_user` catches `Exception` when checking `_assert_admin(user)` and passes without re-raising or aborting. Any non-admin user can call this function and purge all documents and shares belonging to any target user."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "`SECRET_KEY` falls back to a static development secret",
+        "body": "`Config.SECRET_KEY` uses `os.getenv` with a default value `'dev-secret-change-me'`. If `QUORUM_DEMO_SECRET` is not set in production, signatures generated for sessions or share tokens will use a publicly known fallback key."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Removed page size cap allows unbounded memory allocation",
+        "body": "Removing `limit = min(int(limit), Config.MAX_PAGE_SIZE)` allows callers to pass arbitrarily large `limit` values, bypassing pagination constraints and potentially causing high memory usage or server slowdowns."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Directory traversal in `export_path`",
+        "body": "`export_path` joins `user_dir` directly with `filename` without sanitizing `filename` (e.g. using `validators.export_name`). Callers supplying paths containing `..` segments can write files outside the user's export directory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-Side Request Forgery (SSRF) in `fetch_remote_document`",
+        "body": "`fetch_remote_document` executes `requests.get` on arbitrary, user-supplied URLs without restricting allowed IP ranges or URL schemes, enabling SSRF attacks against internal network resources or cloud metadata services."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in full-text search query",
+        "body": "`search()` formats `term` and `user[\"id\"]` directly into an SQL query string instead of passing them as parameterized arguments to SQLite, leading to SQL injection."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Non-constant-time signature comparison in `resolve_share_link`",
+        "body": "`resolve_share_link` compares the share signature using standard `!=` equality (`expected != signature`) instead of constant-time comparison `hmac.compare_digest`."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "`delete_document` does not enforce administrative privileges",
+        "body": "`delete_document` executes a `DELETE` query for any given `doc_id` without verifying that `user` is an administrator or checking document ownership. Any authenticated caller can delete arbitrary documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "`purge_user` swallows admin authorization failure",
+        "body": "`purge_user` catches `Exception` when checking `_assert_admin(user)` and passes without re-raising or aborting. Any non-admin user can call this function and purge all documents and shares belonging to any target user."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "`SECRET_KEY` falls back to a static development secret",
+        "body": "`Config.SECRET_KEY` uses `os.getenv` with a default value `'dev-secret-change-me'`. If `QUORUM_DEMO_SECRET` is not set in production, signatures generated for sessions or share tokens will use a publicly known fallback key."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Removed page size cap allows unbounded memory allocation",
+        "body": "Removing `limit = min(int(limit), Config.MAX_PAGE_SIZE)` allows callers to pass arbitrarily large `limit` values, bypassing pagination constraints and potentially causing high memory usage or server slowdowns."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Directory traversal in `export_path`",
+        "body": "`export_path` joins `user_dir` directly with `filename` without sanitizing `filename` (e.g. using `validators.export_name`). Callers supplying paths containing `..` segments can write files outside the user's export directory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-Side Request Forgery (SSRF) in `fetch_remote_document`",
+        "body": "`fetch_remote_document` executes `requests.get` on arbitrary, user-supplied URLs without restricting allowed IP ranges or URL schemes, enabling SSRF attacks against internal network resources or cloud metadata services."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in full-text search query",
+        "body": "`search()` formats `term` and `user[\"id\"]` directly into an SQL query string instead of passing them as parameterized arguments to SQLite, leading to SQL injection."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Non-constant-time signature comparison in `resolve_share_link`",
+        "body": "`resolve_share_link` compares the share signature using standard `!=` equality (`expected != signature`) instead of constant-time comparison `hmac.compare_digest`."
+      }
+    ]
+  },
+  {
+    "reported": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Admin authorization check exception is swallowed in purge_user",
+        "body": "In purge_user, the call to _assert_admin(user) is wrapped in a try/except block that swallows any raised exception. When a non-admin user attempts to call purge_user, _assert_admin raises a Forbidden exception, but it is silently caught and ignored, allowing unauthorized non-admin users to purge all documents for any target_user_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Missing authorization check in delete_document",
+        "body": "delete_document executes a SQL DELETE query based solely on doc_id without verifying that the caller is either an administrator or the owner of the document. Any authenticated user can supply any doc_id and delete documents belonging to other users."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "Hardcoded secret key default fallback",
+        "body": "Config.SECRET_KEY uses os.getenv(\"QUORUM_DEMO_SECRET\", \"dev-secret-change-me\") which falls back to a static default secret key when the environment variable is not set. If deployed without setting QUORUM_DEMO_SECRET, the application silently uses a publicly known secret key, enabling attackers to forge signatures and session tokens."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Unbounded limit parameter allows memory exhaustion in list_documents",
+        "body": "The clamping of limit using min(int(limit), Config.MAX_PAGE_SIZE) was removed from list_documents. A caller can pass an arbitrarily large limit value (e.g., limit=10000000), causing the server to perform unbounded database queries and attempt to load huge datasets into memory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal in export_path allows arbitrary file write",
+        "body": "export_path constructs the output path using os.path.join(user_dir, filename) without validating or sanitizing filename. A malicious caller passing a filename with directory traversal sequences (such as ../../path/to/file) can escape the export root and overwrite arbitrary files accessible by the service process."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-Side Request Forgery (SSRF) in fetch_remote_document",
+        "body": "fetch_remote_document accepts an arbitrary URL from user input and passes it directly to requests.get(url, ...) without validating the URL scheme, hostname, or target IP address against an allowlist or blocking private/internal IP address ranges. An attacker can request internal endpoints, internal services, or cloud metadata endpoints."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in search function",
+        "body": "The search function constructs a SQL query string using f-string interpolation for user[\"id\"] and term directly into documents_fts MATCH '{term}'. Because term is not parameterised or escaped, an attacker can supply malicious input containing single quotes to inject arbitrary SQL statements."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Non-constant-time comparison for HMAC signature verification in resolve_share_link",
+        "body": "resolve_share_link verifies the share token signature using expected != signature instead of a constant-time comparison algorithm such as hmac.compare_digest. Standard string equality operators can leak timing information about signature characters, potentially enabling timing side-channel attacks."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Admin authorization check exception is swallowed in purge_user",
+        "body": "In purge_user, the call to _assert_admin(user) is wrapped in a try/except block that swallows any raised exception. When a non-admin user attempts to call purge_user, _assert_admin raises a Forbidden exception, but it is silently caught and ignored, allowing unauthorized non-admin users to purge all documents for any target_user_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Missing authorization check in delete_document",
+        "body": "delete_document executes a SQL DELETE query based solely on doc_id without verifying that the caller is either an administrator or the owner of the document. Any authenticated user can supply any doc_id and delete documents belonging to other users."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "Hardcoded secret key default fallback",
+        "body": "Config.SECRET_KEY uses os.getenv(\"QUORUM_DEMO_SECRET\", \"dev-secret-change-me\") which falls back to a static default secret key when the environment variable is not set. If deployed without setting QUORUM_DEMO_SECRET, the application silently uses a publicly known secret key, enabling attackers to forge signatures and session tokens."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Unbounded limit parameter allows memory exhaustion in list_documents",
+        "body": "The clamping of limit using min(int(limit), Config.MAX_PAGE_SIZE) was removed from list_documents. A caller can pass an arbitrarily large limit value (e.g., limit=10000000), causing the server to perform unbounded database queries and attempt to load huge datasets into memory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal in export_path allows arbitrary file write",
+        "body": "export_path constructs the output path using os.path.join(user_dir, filename) without validating or sanitizing filename. A malicious caller passing a filename with directory traversal sequences (such as ../../path/to/file) can escape the export root and overwrite arbitrary files accessible by the service process."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-Side Request Forgery (SSRF) in fetch_remote_document",
+        "body": "fetch_remote_document accepts an arbitrary URL from user input and passes it directly to requests.get(url, ...) without validating the URL scheme, hostname, or target IP address against an allowlist or blocking private/internal IP address ranges. An attacker can request internal endpoints, internal services, or cloud metadata endpoints."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in search function",
+        "body": "The search function constructs a SQL query string using f-string interpolation for user[\"id\"] and term directly into documents_fts MATCH '{term}'. Because term is not parameterised or escaped, an attacker can supply malicious input containing single quotes to inject arbitrary SQL statements."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Non-constant-time comparison for HMAC signature verification in resolve_share_link",
+        "body": "resolve_share_link verifies the share token signature using expected != signature instead of a constant-time comparison algorithm such as hmac.compare_digest. Standard string equality operators can leak timing information about signature characters, potentially enabling timing side-channel attacks."
+      }
+    ]
+  },
+  {
+    "reported": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via string interpolation of search term",
+        "body": "The search term and user ID are directly interpolated into the SQLite FTS query string using an f-string instead of parameterized query bindings. An attacker can craft a search term containing quotes and SQL syntax to execute arbitrary SQL queries."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document performs no admin or ownership check",
+        "body": "delete_document executes a SQL DELETE statement based solely on doc_id without checking whether the calling user is an administrator or the owner of the document. Any authenticated user can delete any document."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user swallows the admin authorization failure",
+        "body": "purge_user wraps _assert_admin(user) in a try-except block that silently catches and passes all exceptions. Consequently, non-admin callers bypass the authorization check and can purge all documents belonging to target_user_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal: export filename joined without validation",
+        "body": "export_path joins user_dir and filename using os.path.join without validating or sanitizing filename. A caller passing directory traversal sequences (such as ../..) or absolute paths in filename can target files outside the designated user export directory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "Insecure fallback secret key configured for signing",
+        "body": "Config.SECRET_KEY falls back to 'dev-secret-change-me' when QUORUM_DEMO_SECRET is unset. If deployed in an environment without this variable configured, the application uses a known static key for token and signature generation."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Expiration check missing when resolving share links",
+        "body": "create_share_link computes a TTL duration, but resolve_share_link never checks whether the share link has expired against the creation timestamp or current time. Created share links remain accessible indefinitely."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Share signature compared with non-constant-time operator",
+        "body": "resolve_share_link compares the expected signature with the user-supplied signature using standard inequality comparison (!=), which short-circuits on byte mismatches and exposes a timing side-channel attack vector."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument accumulates scopes across calls",
+        "body": "create_share_link uses a mutable list ([]) as a default value for scopes. Because scopes.append('read') mutates the list in place, state persists across invocations whenever callers omit the parameter."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "TOCTOU between existence check and file write in export_document",
+        "body": "export_document performs an os.path.exists check and then calls time.sleep(0.2) before opening the destination path for writing. This introduces a race condition window where the destination file can be modified or created prior to the write."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Unbounded limit parameter in list_documents allows memory exhaustion",
+        "body": "list_documents removed the min(int(limit), Config.MAX_PAGE_SIZE) clamping check. Callers can supply arbitrarily large limit parameters to fetch full tables into memory in a single query."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via string interpolation of search term",
+        "body": "The search term and user ID are directly interpolated into the SQLite FTS query string using an f-string instead of parameterized query bindings. An attacker can craft a search term containing quotes and SQL syntax to execute arbitrary SQL queries."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document performs no admin or ownership check",
+        "body": "delete_document executes a SQL DELETE statement based solely on doc_id without checking whether the calling user is an administrator or the owner of the document. Any authenticated user can delete any document."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user swallows the admin authorization failure",
+        "body": "purge_user wraps _assert_admin(user) in a try-except block that silently catches and passes all exceptions. Consequently, non-admin callers bypass the authorization check and can purge all documents belonging to target_user_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal: export filename joined without validation",
+        "body": "export_path joins user_dir and filename using os.path.join without validating or sanitizing filename. A caller passing directory traversal sequences (such as ../..) or absolute paths in filename can target files outside the designated user export directory."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "Insecure fallback secret key configured for signing",
+        "body": "Config.SECRET_KEY falls back to 'dev-secret-change-me' when QUORUM_DEMO_SECRET is unset. If deployed in an environment without this variable configured, the application uses a known static key for token and signature generation."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Expiration check missing when resolving share links",
+        "body": "create_share_link computes a TTL duration, but resolve_share_link never checks whether the share link has expired against the creation timestamp or current time. Created share links remain accessible indefinitely."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Share signature compared with non-constant-time operator",
+        "body": "resolve_share_link compares the expected signature with the user-supplied signature using standard inequality comparison (!=), which short-circuits on byte mismatches and exposes a timing side-channel attack vector."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument accumulates scopes across calls",
+        "body": "create_share_link uses a mutable list ([]) as a default value for scopes. Because scopes.append('read') mutates the list in place, state persists across invocations whenever callers omit the parameter."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "TOCTOU between existence check and file write in export_document",
+        "body": "export_document performs an os.path.exists check and then calls time.sleep(0.2) before opening the destination path for writing. This introduces a race condition window where the destination file can be modified or created prior to the write."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Unbounded limit parameter in list_documents allows memory exhaustion",
+        "body": "list_documents removed the min(int(limit), Config.MAX_PAGE_SIZE) clamping check. Callers can supply arbitrarily large limit parameters to fetch full tables into memory in a single query."
+      }
+    ]
+  }
+]
