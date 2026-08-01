@@ -18,11 +18,17 @@ from typing import Any
 from . import prompts
 from . import workspace as workspace_mod
 from .github_client import GitHubClient
-from .ledger import Ledger, LedgerEntry
+from .ledger import FINDING_FOOTER, Ledger, LedgerEntry
 from .providers.base import ReviewProvider
 from .schema import Discussion, PRContext
 
 MENTION = "@quorum"
+
+#: How much of a thread reaches the model, newest first. A thread is a place
+#: anyone can add text, and all of it was going into the prompt: fifty replies
+#: of padding cost real money and push the finding itself out of view.
+MAX_TRANSCRIPT_COMMENTS = 20
+MAX_TRANSCRIPT_CHARS = 4_000
 
 #: Tool calls one answer may make. A question is narrow — "does X cover this
 #: case?" — and the person asking is waiting for the reply in the thread.
@@ -44,18 +50,58 @@ def is_question(event: dict[str, Any]) -> bool:
     return not _NOT_A_QUESTION.search(body)
 
 
+def owns_thread(comments: list[dict[str, Any]], root_id: int) -> bool:
+    """Whether the reviewer is the one who started this thread.
+
+    ``@quorum`` in a reply used to answer anything, including a conversation
+    between two people that the reviewer had no part in. That is a model call
+    anyone able to comment can trigger, and the answer opens by referring to a
+    finding that never existed.
+
+    The footer alone does not settle it, which was the first attempt: anyone
+    can type ``<sub>`security` · id `deadbeef`</sub>`` into a comment and then
+    reply to themselves. A footer is a label, not a signature.
+
+    So the author has to be a bot as well. That part GitHub enforces — a person
+    commenting is ``type: User`` and cannot say otherwise — and both the
+    Actions app and a GitHub App token report ``Bot``. Running under a personal
+    token means this returns False and a thread with no ledger entry is
+    declined, which is the safe direction for a check that exists to stop work
+    being triggered on threads that are not ours.
+    """
+    root = next(
+        (c for c in comments if int(c.get("id") or 0) == root_id),
+        None,
+    )
+    if root is None:
+        return False
+    if ((root.get("user") or {}).get("type") or "") != "Bot":
+        return False
+    return bool(FINDING_FOOTER.search(root.get("body") or ""))
+
+
 def build_discussion(
     entry: LedgerEntry | None, comments: list[dict[str, Any]], fallback_path: str
 ) -> Discussion:
-    """Assemble the finding and the conversation so far."""
-    transcript = [
+    """Assemble the finding and the conversation so far.
+
+    Bounded, and the first comment is always kept. Taking the newest N was the
+    first attempt and it drops the root — which is the finding itself, and on a
+    thread whose ledger entry is gone it is the only place the finding exists.
+    Everything here is text somebody else wrote in a place anyone can write,
+    and all of it was reaching the prompt.
+    """
+    said = [
         (
             (comment.get("user") or {}).get("login", "someone"),
-            (comment.get("body") or "").strip(),
+            (comment.get("body") or "").strip()[:MAX_TRANSCRIPT_CHARS],
         )
         for comment in comments
         if (comment.get("body") or "").strip()
     ]
+    if len(said) > MAX_TRANSCRIPT_COMMENTS:
+        said = [said[0], *said[-(MAX_TRANSCRIPT_COMMENTS - 1) :]]
+    transcript = said
 
     # The finding's original wording is already the first message in the
     # thread, so `body` carries what the ledger knows and the comment does not:
@@ -112,6 +158,20 @@ async def handle(
 
     entry = find_entry(ledger, root_id)
     thread = await github.thread_comments(number, root_id)
+
+    # No finding here and no sign the reviewer started the thread. Answering
+    # would be a model call anybody can trigger on any conversation, and the
+    # reply would open by referring to a finding that never existed.
+    if entry is None and not owns_thread(thread, root_id):
+        await github.reply_to_comment(
+            number,
+            root_id,
+            "This is not one of my threads, so I have no finding to discuss. "
+            "Ask under a review comment I posted, or `@quorum /review` to "
+            "re-review the pull request.",
+        )
+        return 0
+
     discussion = build_discussion(entry, thread, comment.get("path") or "")
 
     model = answering_model(entry, list(provider.models))

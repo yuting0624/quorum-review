@@ -477,7 +477,7 @@ def assign_ids(findings: list[Finding]) -> list[Finding]:
 
 #: The footer every inline comment carries. It is how a posted finding can be
 #: recognised after the state that described it is gone.
-_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
+FINDING_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
 _TITLE = re.compile(r"^\s*\S*\s*\*\*(?P<title>.+?)\*\*", re.MULTILINE)
 
 
@@ -515,6 +515,13 @@ def rebuild(
     matters more than the rest: a re-raised finding is noise, but a re-raised
     finding somebody explicitly retired is the reviewer overruling a person.
 
+    Only comments **posted by a bot** are considered. A footer is a label, not
+    a signature: anyone able to comment can type ``id `deadbeef``` into one,
+    and a rebuilt entry suppresses — so without this, planting a comment at the
+    right path and line is enough to stop a real finding being reported there.
+    GitHub decides who is a bot; a person commenting is ``type: User`` and
+    cannot say otherwise.
+
     ``closed`` is the set whose threads the reviewer already replied to saying
     it no longer raises them. Without it every fixed finding comes back as
     open, and is then suppressed — so a real regression at that location goes
@@ -526,7 +533,9 @@ def rebuild(
     for comment in comments:
         if comment.get("in_reply_to_id"):
             continue
-        footer = _FOOTER.search(comment.get("body") or "")
+        if ((comment.get("user") or {}).get("type") or "") != "Bot":
+            continue
+        footer = FINDING_FOOTER.search(comment.get("body") or "")
         if footer is None:
             continue
 
