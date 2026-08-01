@@ -691,13 +691,18 @@ def _footer(report: RunReport) -> list[str]:
     lines = []
 
     if report.usage:
+        # The region belongs here rather than in the footer line. "Where did our
+        # source code go" is a question somebody has to answer in writing, so it
+        # is worth recording — but it is worth recording once, in the place a
+        # reader opens on purpose, not on the line every finding sits above.
         rows = [
-            "| Model | Calls | Input | Cached input | Output |",
-            "|---|--:|--:|--:|--:|",
+            "| Model | Region | Calls | Input | Cached input | Output |",
+            "|---|---|--:|--:|--:|--:|",
         ]
         for model, used in report.usage.items():
+            where = report.regions.get(model, "—")
             rows.append(
-                f"| `{model}` | {used.calls} | {used.input_tokens:,} | "
+                f"| `{model}` | `{where}` | {used.calls} | {used.input_tokens:,} | "
                 f"{used.cached_input_tokens:,} | {used.output_tokens:,} |"
             )
         lines += ["<details>", "<summary>Usage</summary>", ""]
@@ -708,23 +713,17 @@ def _footer(report: RunReport) -> list[str]:
         lines.append("")
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
-    # Which endpoint served each model, because "where did our source code go"
-    # is a question somebody has to answer in writing, and a run that answers
-    # it in its own output is easier to answer it from than one that does not.
-    # `global` is named as `global` rather than dressed up as a region: it
-    # routes to whichever region has capacity, and calling that a location
-    # would be the misleading part.
-    where = (
-        " · " + ", ".join(f"`{m}` in `{r}`" for m, r in sorted(report.regions.items()))
-        if report.regions
-        else ""
-    )
+    # Commit, version, models, duration. Nothing else: this line sits under
+    # every review, and each thing added to it makes the four that matter
+    # harder to find. The region moved into the Usage table above, and the
+    # "reference implementation" disclaimer belongs in the README, where
+    # someone deciding whether to adopt this will read it — not on the footer
+    # of a comment they are reading to find out what is wrong with their code.
     lines.append(
         f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
         f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
-        + f"{where}{elapsed} · quorum-review — a reference implementation, not "
-        "a supported product.</sub>"
+        + f"{elapsed}</sub>"
     )
     return lines
 
@@ -811,8 +810,6 @@ def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
         "",
         "---",
         "",
-        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
-        f"`{_version()}` · quorum-review — a reference implementation, not a "
-        f"supported product.</sub>",
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review `{_version()}`</sub>",
     ]
     return "\n".join(lines)

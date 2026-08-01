@@ -266,11 +266,17 @@ which is the behaviour you want, but it means the review degrades to one model
 rather than failing loudly. The summary names the model that dropped out.
 
 Every summary comment records where each model that ran was called, so the
-answer to "which region processed this pull request" is in the pull request:
+answer to "which region processed this pull request" is in the pull request —
+in the **Usage** section, which is collapsed by default:
 
-> Reviewed `abc1234` · quorum-review `1.5.0` · models `gemini-3.6-flash`,
-> `claude-opus-5` · `claude-opus-5` in `europe-west4`, `gemini-3.6-flash` in
-> `europe-west4` · 118s
+> | Model | Region | Calls | Input | Cached input | Output |
+> |---|---|--:|--:|--:|--:|
+> | `gemini-3.6-flash` | `europe-west4` | 4 | 91,204 | 38,110 | 1,902 |
+> | `claude-sonnet-5` | `europe-west4` | 6 | 63,551 | 12,880 | 8,417 |
+
+Only models that completed a call appear. Naming a region for one that was
+configured and never reached would be a claim about traffic that did not
+happen.
 
 A value that is not shaped like a region is refused at startup rather than
 turned into a hostname, because that failure otherwise arrives as a connection

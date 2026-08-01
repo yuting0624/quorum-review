@@ -112,22 +112,41 @@ def test_only_models_that_ran_are_named(monkeypatch):
     assert provider.regions == {}
 
 
+def usage_for(*models: str):
+    from quorum_review.schema import ModelUsage
+
+    return {model: ModelUsage(calls=1) for model in models}
+
+
 def test_the_summary_states_where_each_model_ran():
-    run = report.RunReport(models=["gemini-3.6-flash", "claude-opus-5"])
-    run.regions = {"gemini-3.6-flash": "europe-west4", "claude-opus-5": "us-east5"}
+    """In the Usage table, not the footer. The footer sits under every review
+    and carries four things; a fifth makes the four harder to find."""
+    run = report.RunReport(models=["gemini-3.6-flash", "claude-sonnet-5"])
+    run.usage = usage_for("gemini-3.6-flash", "claude-sonnet-5")
+    run.regions = {"gemini-3.6-flash": "europe-west4", "claude-sonnet-5": "us-east5"}
     rendered = report.render(run)
 
-    assert "`gemini-3.6-flash` in `europe-west4`" in rendered
-    assert "`claude-opus-5` in `us-east5`" in rendered
+    assert "europe-west4" in rendered
+    assert "us-east5" in rendered
+
+
+def test_the_footer_does_not_carry_it():
+    run = report.RunReport(models=["claude-sonnet-5"])
+    run.usage = usage_for("claude-sonnet-5")
+    run.regions = {"claude-sonnet-5": "europe-west4"}
+    footer = report.render(run).rsplit("<sub>", 1)[-1]
+
+    assert "europe-west4" not in footer
 
 
 def test_global_is_named_as_global_rather_than_dressed_up():
     """It routes to whichever region has capacity. Calling that a location
     would be the misleading part."""
-    run = report.RunReport(models=["claude-opus-5"])
-    run.regions = {"claude-opus-5": "global"}
+    run = report.RunReport(models=["claude-sonnet-5"])
+    run.usage = usage_for("claude-sonnet-5")
+    run.regions = {"claude-sonnet-5": "global"}
 
-    assert "`claude-opus-5` in `global`" in report.render(run)
+    assert "`global`" in report.render(run)
 
 
 def test_a_run_with_no_regions_recorded_still_renders():
