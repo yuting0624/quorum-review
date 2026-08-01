@@ -244,13 +244,33 @@ class Ledger:
         review is enough. The comments are there; nothing knows it, and the
         next review posts them again.
 
-        Matching is the same positional-and-wording rule used everywhere else,
-        so a finding the marker already tracks is not duplicated by its own
-        comment. Anything genuinely unknown is added with a
-        ``review_comment_id``, which is what stops a second copy going out.
+        Two rules, both learned from getting it wrong:
+
+        **Match on the comment ID first.** It is the only stable link between a
+        record and what is on the pull request. Path and finding ID both move:
+        ``follow_renames`` rewrites them when a file is renamed, while the
+        comment stays anchored where GitHub put it. Matching by position then
+        fails, and a phantom entry appears at the old path — tracked forever,
+        resolving never, and uploaded to code scanning as an open alert on a
+        file that no longer exists.
+
+        **Only take findings that still affect behaviour.** ``fixed`` entries
+        are history, and history is exactly what ``fit_to_comment`` discards
+        when the marker outgrows the comment. Absorbing them back would undo
+        the size relief on the next run, every run.
         """
+        seen = {
+            entry.review_comment_id
+            for entry in self.entries.values()
+            if entry.review_comment_id
+        }
+
         added = 0
         for entry in posted.entries.values():
+            if entry.status == "fixed":
+                continue
+            if entry.review_comment_id in seen:
+                continue
             if self.entries.get(entry.finding_id) is not None:
                 continue
             report = entry.as_report()

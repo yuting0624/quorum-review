@@ -385,3 +385,63 @@ def test_the_reconciliation_count_is_not_serialised():
     book = Ledger.empty(7)
     book.recovered = 3
     assert decode_marker(encode_marker(book)).recovered == 0
+
+
+def test_a_renamed_finding_is_not_absorbed_back_at_its_old_path():
+    """Reported by both models independently, which is the strongest signal
+    this design produces.
+
+    `follow_renames` rewrites an entry's path and ID; the comment stays
+    anchored where GitHub put it. Matching by position then fails and a phantom
+    appears at the old path — tracked forever, resolving never, and uploaded to
+    code scanning as an open alert on a file that no longer exists.
+    """
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    moved = entry_for("aa" * 8, path="app/old.py")
+    moved.review_comment_id = 11
+    recorded.entries["aa" * 8] = moved
+    recorded.follow_renames({"app/old.py": "app/new.py"})
+
+    posted_state = rebuild(7, [posted(11, "aa" * 8, path="app/old.py")], set())
+    assert recorded.absorb(posted_state) == 0
+    assert len(recorded.entries) == 1
+    assert next(iter(recorded.entries.values())).file_path == "app/new.py"
+
+
+def test_entries_dropped_for_size_are_not_absorbed_back():
+    """`fit_to_comment` discards fixed findings when the marker outgrows the
+    comment. Taking them back in would undo the relief on the next run, and
+    the run after that."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    comments = [
+        posted(11, "bb" * 8),
+        reply(12, 11, "No longer reported as of `abc1234`."),
+    ]
+    posted_state = rebuild(7, comments, dismissed=set(), closed={11})
+
+    assert recorded.absorb(posted_state) == 0
+    assert recorded.entries == {}
+
+
+def test_an_open_finding_dropped_from_the_record_is_still_absorbed():
+    """Only history is discarded for size; anything that still affects
+    suppression has to come back."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    posted_state = rebuild(7, [posted(11, "cc" * 8)], dismissed=set())
+    assert recorded.absorb(posted_state) == 1
+
+
+def test_a_dismissal_is_absorbed_even_though_it_is_not_open():
+    """It suppresses, so it affects behaviour."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    posted_state = rebuild(7, [posted(11, "dd" * 8)], dismissed={11})
+    assert recorded.absorb(posted_state) == 1
+    assert recorded.entries["dd" * 8].status == "wontfix"
