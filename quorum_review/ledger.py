@@ -477,7 +477,7 @@ def assign_ids(findings: list[Finding]) -> list[Finding]:
 
 #: The footer every inline comment carries. It is how a posted finding can be
 #: recognised after the state that described it is gone.
-_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
+FINDING_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
 _TITLE = re.compile(r"^\s*\S*\s*\*\*(?P<title>.+?)\*\*", re.MULTILINE)
 
 
@@ -526,7 +526,7 @@ def rebuild(
     for comment in comments:
         if comment.get("in_reply_to_id"):
             continue
-        footer = _FOOTER.search(comment.get("body") or "")
+        footer = FINDING_FOOTER.search(comment.get("body") or "")
         if footer is None:
             continue
 

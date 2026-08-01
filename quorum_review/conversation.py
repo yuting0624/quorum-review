@@ -18,11 +18,17 @@ from typing import Any
 from . import prompts
 from . import workspace as workspace_mod
 from .github_client import GitHubClient
-from .ledger import Ledger, LedgerEntry
+from .ledger import FINDING_FOOTER, Ledger, LedgerEntry
 from .providers.base import ReviewProvider
 from .schema import Discussion, PRContext
 
 MENTION = "@quorum"
+
+#: How much of a thread reaches the model, newest first. A thread is a place
+#: anyone can add text, and all of it was going into the prompt: fifty replies
+#: of padding cost real money and push the finding itself out of view.
+MAX_TRANSCRIPT_COMMENTS = 20
+MAX_TRANSCRIPT_CHARS = 4_000
 
 #: Tool calls one answer may make. A question is narrow — "does X cover this
 #: case?" — and the person asking is waiting for the reply in the thread.
@@ -44,18 +50,41 @@ def is_question(event: dict[str, Any]) -> bool:
     return not _NOT_A_QUESTION.search(body)
 
 
+def owns_thread(comments: list[dict[str, Any]], root_id: int) -> bool:
+    """Whether the reviewer is the one who started this thread.
+
+    ``@quorum`` in a reply used to answer anything, including a conversation
+    between two people that the reviewer had no part in. That is a model call
+    anyone able to comment can trigger, and the answer opens by referring to a
+    finding that never existed.
+
+    The root comment's own footer settles it — the same ``id`` the ledger reads
+    back when the summary comment has been deleted.
+    """
+    root = next(
+        (c for c in comments if int(c.get("id") or 0) == root_id),
+        None,
+    )
+    return root is not None and bool(FINDING_FOOTER.search(root.get("body") or ""))
+
+
 def build_discussion(
     entry: LedgerEntry | None, comments: list[dict[str, Any]], fallback_path: str
 ) -> Discussion:
-    """Assemble the finding and the conversation so far."""
-    transcript = [
+    """Assemble the finding and the conversation so far.
+
+    Bounded, newest last. Everything here is text somebody else wrote in a
+    place anyone can write, and all of it was reaching the prompt.
+    """
+    said = [
         (
             (comment.get("user") or {}).get("login", "someone"),
-            (comment.get("body") or "").strip(),
+            (comment.get("body") or "").strip()[:MAX_TRANSCRIPT_CHARS],
         )
         for comment in comments
         if (comment.get("body") or "").strip()
     ]
+    transcript = said[-MAX_TRANSCRIPT_COMMENTS:]
 
     # The finding's original wording is already the first message in the
     # thread, so `body` carries what the ledger knows and the comment does not:
@@ -112,6 +141,20 @@ async def handle(
 
     entry = find_entry(ledger, root_id)
     thread = await github.thread_comments(number, root_id)
+
+    # No finding here and no sign the reviewer started the thread. Answering
+    # would be a model call anybody can trigger on any conversation, and the
+    # reply would open by referring to a finding that never existed.
+    if entry is None and not owns_thread(thread, root_id):
+        await github.reply_to_comment(
+            number,
+            root_id,
+            "This is not one of my threads, so I have no finding to discuss. "
+            "Ask under a review comment I posted, or `@quorum /review` to "
+            "re-review the pull request.",
+        )
+        return 0
+
     discussion = build_discussion(entry, thread, comment.get("path") or "")
 
     model = answering_model(entry, list(provider.models))
