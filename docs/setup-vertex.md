@@ -198,11 +198,12 @@ and confirm the impersonated service account, not your user account, holds
 workflow's `permissions`, and note that pull requests from forks get a read-only
 token — those are unsupported.
 
-**Threads get a reply but never collapse.** Expected with the default
-`GITHUB_TOKEN`: GitHub does not let the Actions app call `resolveReviewThread`,
-and no `permissions:` setting changes that. Create a GitHub App with
-*Pull requests: Read & write*, mint a token with
-`actions/create-github-app-token`, and pass it as `github-token`.
+**Threads get a reply but never collapse.** Expected, and not fixed by
+creating a GitHub App — that is the thing everybody tries. `resolveReviewThread`
+requires `contents: write`, which this reviewer does not ask for because it
+never pushes a commit. See
+[Resolved threads stay open](operations.md#resolved-threads-stay-open) for the
+trade-off and for how to choose the other side of it.
 
 ## Governance
 

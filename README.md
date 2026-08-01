@@ -303,7 +303,7 @@ finding.
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
 | `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
-| `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
+| `github-token` | `GITHUB_TOKEN` | pass an App token to post under a name you chose |
 | `vertex-region` | `global` | pin both models to one region for data residency — see [security.md](docs/security.md#where-the-code-goes) |
 | `claude-vertex-region` | inherits | override just Claude; try `us-east5` if your entitlement is region-scoped |
 | `gemini-location` | inherits | override just Gemini |

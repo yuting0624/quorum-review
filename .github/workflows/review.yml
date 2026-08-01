@@ -5,12 +5,11 @@
 # same Application Default Credentials.
 #
 # The GitHub side is not the same story any more, and the header used to claim
-# it was. APP_PRIVATE_KEY is a long-lived secret: it is what mints the token
-# that can collapse a resolved thread, which the default GITHUB_TOKEN is not
-# permitted to do. It never leaves GitHub, it is scoped to this App's
-# installation, and the review degrades to GITHUB_TOKEN without it — but it is
-# a stored key, and a workflow that says otherwise is telling you the wrong
-# thing about what to protect.
+# it was. APP_PRIVATE_KEY is a long-lived secret: it mints the token that posts
+# these comments under a name we chose. It never leaves GitHub, it is scoped to
+# this App's installation, and the review degrades to GITHUB_TOKEN without it —
+# but it is a stored key, and a workflow that says otherwise is telling you the
+# wrong thing about what to protect.
 #
 # This uses Direct Workload Identity Federation — the workflow's own federated
 # identity holds the IAM role, with no service account to impersonate. One fewer
@@ -161,13 +160,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # A token from this repository's own GitHub App, because the default
-      # GITHUB_TOKEN cannot collapse a resolved thread: GitHub forbids
-      # `resolveReviewThread` for the Actions app, whatever `permissions:`
-      # says, and answers FORBIDDEN / "Resource not accessible by
-      # integration". The reply was posted and the thread stayed open, so a
-      # pull request accumulated a wall of settled comments — the thing this
-      # reviewer was partly built in reaction to.
+      # A token from this repository's own GitHub App, so comments arrive
+      # under a name we chose rather than "github-actions[bot]".
+      #
+      # Not for collapsing resolved threads, which is why it was originally
+      # added and does not work: `resolveReviewThread` needs `contents: write`
+      # on the App, not `pull_requests: write`. See docs/operations.md.
       #
       # `continue-on-error` because this is an improvement, not a requirement.
       # A fork, a revoked installation or an expired key should degrade the
@@ -193,9 +191,9 @@ jobs:
         shell: bash
         run: >-
           echo "::warning title=Falling back to GITHUB_TOKEN::The App token
-          could not be minted, so this review runs with GITHUB_TOKEN and cannot
-          collapse resolved threads. The usual cause is an App that exists but
-          is not installed on this repository."
+          could not be minted, so this review runs with GITHUB_TOKEN and posts
+          as github-actions. The usual cause is an App that exists but is not
+          installed on this repository."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -209,9 +207,8 @@ jobs:
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          # Falls back when the App is unavailable. The action reports which
-          # one it used by saying, or not saying, that threads could not be
-          # collapsed.
+          # Falls back when the App is unavailable. Which one was used is
+          # visible in who posted the comments.
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
