@@ -53,14 +53,15 @@ from .base import ProviderUnavailable
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 
-#: ``global``, or a Vertex location like ``europe-west4`` / ``us-east5``. Not a
-#: guess at which regions exist — the point is to reject a value that is not
-#: shaped like one at all, before it becomes a hostname.
-_REGION = re.compile(r"global|[a-z]+-[a-z]+\d+")
+#: A Vertex location: ``global``, a multi-region (``us``, ``eu``), or a region
+#: (``europe-west4``, ``us-east5``). Not a guess at which ones exist — the
+#: point is to reject a value that is not shaped like one at all, before it
+#: becomes a hostname and the failure arrives as a connection error.
+_REGION = re.compile(r"global|us|eu|[a-z]+-[a-z]+\d+")
 
 
-def _region(specific: str) -> str:
-    """Resolve a per-model region, falling back to the shared one, then global.
+def _location(*names: str) -> str:
+    """First value set among ``names``, then the shared region, then global.
 
     ``global`` is the recommended endpoint for both products and is the default
     because it is the one most likely to have the model available. It is
@@ -70,20 +71,26 @@ def _region(specific: str) -> str:
 
     The per-model override exists because Model Garden entitlements can be
     region-scoped, so Claude sometimes has to sit somewhere Gemini does not.
+
+    Two names each, and the ``QUORUM_`` one first: the action passes its inputs
+    under those, because an unset input arrives as ``""`` and writing
+    ``GOOGLE_CLOUD_LOCATION=""`` into the step environment would shadow
+    whatever the caller had set at the job level. Reading the vendor names as a
+    fallback keeps them working for anyone who sets them directly.
     """
-    return (
-        os.getenv(specific, "").strip()
-        or os.getenv("QUORUM_VERTEX_REGION", "").strip()
-        or "global"
-    )
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return os.getenv("QUORUM_VERTEX_REGION", "").strip() or "global"
 
 
 def gemini_location() -> str:
-    return _region("GOOGLE_CLOUD_LOCATION")
+    return _location("QUORUM_GEMINI_LOCATION", "GOOGLE_CLOUD_LOCATION")
 
 
 def claude_region() -> str:
-    return _region("CLAUDE_VERTEX_REGION")
+    return _location("QUORUM_CLAUDE_REGION", "CLAUDE_VERTEX_REGION")
 
 
 # Output budgets. `max_tokens` on Claude caps thinking *plus* response text, and
@@ -539,10 +546,12 @@ class VertexProvider:
 
     @property
     def regions(self) -> dict[str, str]:
-        """Where each model that ran was actually called.
+        """Where each model that was actually reached was called.
 
-        Only models that ran: naming a region for a model that was configured
-        and never reached would be a claim about traffic that did not happen.
+        Keyed on a completed call rather than on a constructed engine. An
+        engine is built before the first request and survives every one of them
+        failing, so listing it would put a region in the audit line for traffic
+        that never arrived — which is the one thing this line exists not to do.
         """
         return {
             model: (
@@ -550,7 +559,8 @@ class VertexProvider:
                 if model.startswith("claude")
                 else self._gemini_location
             )
-            for model in self._engines
+            for model, engine in self._engines.items()
+            if engine.usage.calls
         }
 
     def _engine(self, model: str) -> _Engine:

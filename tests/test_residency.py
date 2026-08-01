@@ -130,3 +130,64 @@ def test_a_run_with_no_regions_recorded_still_renders():
     """`direct` mode has no Vertex region, and the footer is not optional."""
     run = report.RunReport(models=["claude-opus-5"])
     assert "quorum-review" in report.render(run)
+
+
+# -- not shadowing what the caller set --------------------------------------
+
+
+def test_an_unset_input_does_not_shadow_the_vendor_variable(monkeypatch):
+    """The action passes its inputs under QUORUM_ names. An unset input arrives
+    as "", and writing GOOGLE_CLOUD_LOCATION="" into the step environment would
+    have overruled a value the caller set at the job level — the action
+    silently discarding the configuration it was given."""
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    monkeypatch.setenv("QUORUM_GEMINI_LOCATION", "")
+
+    assert gemini_location() == "europe-west4"
+
+
+def test_the_same_for_claude(monkeypatch):
+    monkeypatch.setenv("CLAUDE_VERTEX_REGION", "us-east5")
+    monkeypatch.setenv("QUORUM_CLAUDE_REGION", "")
+
+    assert claude_region() == "us-east5"
+
+
+def test_the_input_wins_when_it_is_set(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    monkeypatch.setenv("QUORUM_GEMINI_LOCATION", "asia-northeast1")
+
+    assert gemini_location() == "asia-northeast1"
+
+
+# -- multi-region locations -------------------------------------------------
+
+
+@pytest.mark.parametrize("multi", ["us", "eu"])
+def test_a_multi_region_is_a_location(monkeypatch, multi: str):
+    """Vertex serves `us` and `eu` as multi-regions. The first version of the
+    check rejected both, which would have refused a valid configuration at
+    startup."""
+    monkeypatch.setenv("QUORUM_VERTEX_REGION", multi)
+    assert VertexProvider()._claude_region == multi
+
+
+# -- only traffic that actually happened ------------------------------------
+
+
+def test_a_model_whose_calls_all_failed_is_not_listed(monkeypatch):
+    """The engine is built before the first request and survives every one of
+    them failing. Listing it would put a region in the audit line for traffic
+    that never arrived."""
+    provider = VertexProvider()
+    provider._engine("claude-opus-5")
+
+    assert provider.regions == {}
+
+
+def test_a_model_that_completed_a_call_is_listed(monkeypatch):
+    monkeypatch.setenv("QUORUM_VERTEX_REGION", "europe-west4")
+    provider = VertexProvider()
+    provider._engine("claude-opus-5").usage.calls = 1
+
+    assert provider.regions == {"claude-opus-5": "europe-west4"}

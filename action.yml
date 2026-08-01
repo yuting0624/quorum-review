@@ -291,9 +291,14 @@ runs:
         VERIFIER_MODEL: ${{ inputs.verifier-model }}
         REVIEW_LANGUAGE: ${{ inputs.review-language }}
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
+        # Under QUORUM_ names, not the vendor ones. An unset input arrives as
+        # "", and setting GOOGLE_CLOUD_LOCATION="" here would shadow a value
+        # the caller set at the job or workflow level — the action would
+        # silently overrule the configuration it was given. The resolver falls
+        # back to the vendor names, so setting those still works.
         QUORUM_VERTEX_REGION: ${{ inputs.vertex-region }}
-        CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
-        GOOGLE_CLOUD_LOCATION: ${{ inputs.gemini-location }}
+        QUORUM_CLAUDE_REGION: ${{ inputs.claude-vertex-region }}
+        QUORUM_GEMINI_LOCATION: ${{ inputs.gemini-location }}
         QUORUM_EXCLUDE: ${{ inputs.exclude }}
         QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}
