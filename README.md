@@ -147,10 +147,17 @@ findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
 **Reading past the diff decides whether it can be right about them:**
 
-| | Seeded bugs | Diff-undecidable bugs | Decoys flagged |
+| | Seeded bugs | Diff-undecidable bugs | False positive on the decoy |
 |---|---|---|---|
-| diff only | 10 / 10 | **0 / 2**, every run | 0 |
-| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
+| diff only | 10 / 10 | **0 / 2**, every run | **3 / 3 runs** |
+| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | **0 / 3 runs** |
+
+The decoy is a path join with nothing guarding it on the changed lines, whose
+every caller validates first — in a file the pull request does not touch. The
+diff-only reviewer reports it every time and is wrong every time; it is behaving
+correctly given what it can see. Reading the repository, two runs never raise it
+and the third has it **removed by the second opinion**, which went and read the
+caller.
 
 Re-measured at `v1.0.0`, forty commits after the first run, because a number
 attached to code that has since changed is a number about nothing. It held.
