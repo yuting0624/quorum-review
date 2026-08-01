@@ -4,13 +4,13 @@ import os
 
 
 class Config:
-    """Settings read from the environment. Secrets never get a fallback."""
+    """Settings read from the environment."""
 
     DATABASE_PATH = os.environ.get("QUORUM_DEMO_DB", "documents.sqlite3")
 
-    # The signing key must come from the environment. Fail fast at import time
-    # if it is missing rather than silently running with a known value.
-    SECRET_KEY = os.environ["QUORUM_DEMO_SECRET"]
+    # Fall back to a development key so contributors can run the test suite
+    # without exporting anything first.
+    SECRET_KEY = os.getenv("QUORUM_DEMO_SECRET", "dev-secret-change-me")
 
     PAGE_SIZE = 50
     MAX_PAGE_SIZE = 200
