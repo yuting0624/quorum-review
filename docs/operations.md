@@ -166,7 +166,7 @@ symptom is threads that never collapse and a run that reports success.
 
 Two things are worth checking before you roll it out:
 
-- **Vertex AI has to be reachable from the runner.** A self-hosted runner
+- **The Agent Platform has to be reachable from the runner.** A self-hosted runner
   inside a VPC usually is not. Private Google Access or a proxy is the fix; the
   action does not tunnel anything itself.
 - **The `codeql-action/upload-sarif` step needs GitHub Advanced Security.**

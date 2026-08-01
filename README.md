@@ -200,7 +200,7 @@ found with them. Recall and precision move together here, which is unusual and
 is the argument for the tools.
 
 Re-measured after the answer key turned out to be reachable a **third** time —
-[the harness itself carried a copy](benchmark/seeded-bugs/README.md#two-contamination-sources-both-found-by-giving-the-models-access).
+[the harness itself carried a copy](benchmark/seeded-bugs/README.md#three-contamination-sources-all-found-by-giving-the-models-access).
 Every number on this page is from a run made after that was closed; the earlier
 ones were discarded, as the two before them were.
 
@@ -239,11 +239,12 @@ looked at these same lines and said nothing, because neither bug is *in* a line.
 </details>
 
 > **Read this narrowly.** One fixture, written by the same person who wrote the
-> reviewer. Two rounds of results had to be thrown away when the models turned
-> out to be reading the answer key — [both contamination sources are documented
-> rather than quietly fixed](benchmark/seeded-bugs/README.md#two-contamination-sources-both-found-by-giving-the-models-access),
-> and one of them was found by the reviewer itself. Enough to justify the design;
-> not enough to rank the models.
+> reviewer. Three rounds of results have been thrown away because the models
+> turned out to be reading the answer key — [every source is documented rather
+> than quietly fixed](benchmark/seeded-bugs/README.md#three-contamination-sources-all-found-by-giving-the-models-access),
+> one of them was found by the reviewer itself, and the third was found in a
+> tool log while measuring for this table. Enough to justify the design; not
+> enough to rank the models.
 
 ## 🚀 Install
 

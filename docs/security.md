@@ -227,8 +227,9 @@ If none of that is acceptable in your environment, do not deploy
 
 ## Where the code goes
 
-The diff, and whatever the models read from the checkout, are sent to Vertex AI
-in your own Google Cloud project. Nothing is sent anywhere else: there is no
+The diff, and whatever the models read from the checkout, are sent to Gemini
+Enterprise Agent Platform — formerly Vertex AI — in your own Google Cloud
+project. Nothing is sent anywhere else: there is no
 service operated by this project, no telemetry, and no second vendor. The
 findings are written back to GitHub as comments and SARIF, which is the only
 other place the content lands.

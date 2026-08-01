@@ -34,7 +34,9 @@ gcloud services enable aiplatform.googleapis.com iamcredentials.googleapis.com \
 Claude on Vertex is a partner model and is off until someone accepts its terms
 for the project. There is no `gcloud` command; it is a console action.
 
-1. Open **Vertex AI → Model Garden** in the [Cloud Console](https://console.cloud.google.com/vertex-ai/model-garden).
+1. Open **Model Garden** in the [Cloud Console](https://console.cloud.google.com/vertex-ai/model-garden).
+   Searching for Vertex AI redirects to Agent Platform; the console path and
+   the URL both still work.
 2. Search for the Claude model you plan to use as the verifier.
 3. Click **Enable** and accept the terms.
 
