@@ -25,9 +25,7 @@ from .schema import SEVERITY_RANK, Finding
 
 
 def as_report(finding: Finding) -> Report:
-    return Report(
-        finding.file_path, finding.line, finding.code_snippet, finding.title
-    )
+    return Report(finding.file_path, finding.line, finding.code_snippet, finding.title)
 
 
 def looks_like_same(a: Finding, b: Finding) -> bool:

@@ -15,8 +15,14 @@ from quorum_review.ledger import rebuild
 from quorum_review.schema import Finding
 
 
-def posted(comment_id: int, finding_id: str, path="app/search.py", line=18,
-           title="SQL injection via f-string", category="security") -> dict:
+def posted(
+    comment_id: int,
+    finding_id: str,
+    path="app/search.py",
+    line=18,
+    title="SQL injection via f-string",
+    category="security",
+) -> dict:
     """An inline comment as `render_inline` writes it and GitHub returns it."""
     return {
         "id": comment_id,

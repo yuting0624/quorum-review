@@ -245,8 +245,7 @@ def _table(findings: list[Finding]) -> str:
         key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.file_path, f.line),
     )
     header = (
-        "| Severity | Category | Location | Finding | Evidence |\n"
-        "|---|---|---|---|---|"
+        "| Severity | Category | Location | Finding | Evidence |\n|---|---|---|---|---|"
     )
     return "\n".join([header, *(_row(finding) for finding in ordered)])
 
@@ -254,9 +253,7 @@ def _table(findings: list[Finding]) -> str:
 def _counts(findings: list[Finding]) -> str:
     """A one-line severity tally, so the headline does not need the table."""
     tally = Counter(finding.severity for finding in findings)
-    parts = [
-        f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)
-    ]
+    parts = [f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)]
     return ", ".join(parts)
 
 
@@ -742,8 +739,7 @@ def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
 
     lines += [
         "",
-        "No models were called. **This is not a clean review** — nothing was "
-        "examined.",
+        "No models were called. **This is not a clean review** — nothing was examined.",
         "",
         "---",
         "",

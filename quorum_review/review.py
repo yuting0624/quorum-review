@@ -246,7 +246,9 @@ def wants_criteria_proposal(event: dict) -> bool:
     return "@quorum /criteria" in (comment.get("body") or "").lower()
 
 
-async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -> int:
+async def propose_criteria(
+    github: GitHubClient, number: int, skill_name: str, event: dict | None = None
+) -> int:
     """Summarise dismissed findings into a suggested change to the criteria.
 
     Posted as a comment for a human to apply, never written to the skill file.
@@ -254,6 +256,35 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
     automatically would let someone argue the reviewer out of a category of
     finding by dismissing it convincingly a few times.
     """
+    pull = await github.pull_request(number)
+    # The same rule the review path applies, and applied before anything else
+    # this handler does. Criteria are instructions to a model and this path
+    # treats them as trusted, so a fork must not choose them — and this had
+    # been reading them at the head with no check, which made the "they are
+    # trusted, so unlabelled" argument false as well.
+    #
+    # Authorisation comes first because whether someone may ask is not a
+    # function of how many dismissals happen to be on record.
+    from_fork = forks.is_fork_payload(pull)
+    if from_fork:
+        # Detecting a fork for the ref and then proceeding anyway was half a
+        # check. This path spends a model call and posts a comment, so it needs
+        # the same authorisation as a review of the same pull request.
+        #
+        # The whole event goes through, not a `{"pull_request": pull}` stand-in:
+        # that synthetic payload has no `sender`, so the authorisation check
+        # fell back to GITHUB_ACTOR. It happens to be the commenter for
+        # `issue_comment`, but "happens to be" is not what an authorisation
+        # check should rest on, and the fallback exists for events that carry
+        # no sender at all. `pull_request` is still merged in so `refusal` does
+        # not refetch what we already have.
+        refusal = await forks.refusal(
+            github, number, {**(event or {}), "pull_request": pull}
+        )
+        if refusal:
+            await github.post_issue_comment(number, refusal)
+            return 0
+
     ledger, _sticky = await github.load_ledger(number)
     entries = learning.dismissed(ledger)
 
@@ -267,20 +298,6 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
         )
         return 0
 
-    pull = await github.pull_request(number)
-    # The same rule the review path applies. Criteria are instructions to a
-    # model and this path treats them as trusted, so a fork must not choose
-    # them — and this had been reading them at the head with no check, which
-    # made the "they are trusted, so unlabelled" argument false as well.
-    from_fork = forks.is_fork_payload(pull)
-    if from_fork:
-        # Detecting a fork for the ref and then proceeding anyway was half a
-        # check. This path spends a model call and posts a comment, so it needs
-        # the same authorisation as a review of the same pull request.
-        refusal = await forks.refusal(github, number, {"pull_request": pull})
-        if refusal:
-            await github.post_issue_comment(number, refusal)
-            return 0
     ref = pull["base"]["sha"] if from_fork else pull["head"]["sha"]
     skill = await criteria.resolve(skill_name, github, ref)
     provider = build_provider()
@@ -380,8 +397,10 @@ async def close_threads(
             await github.resolve_thread(thread.thread_id)
         except GitHubError as error:
             forbidden = True
-            print(f"note: threads cannot be collapsed by this token: {error}",
-                  file=sys.stderr)
+            print(
+                f"note: threads cannot be collapsed by this token: {error}",
+                file=sys.stderr,
+            )
 
     return forbidden
 
@@ -400,7 +419,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
     # posts a suggestion, so it is not a review either.
     if wants_criteria_proposal(event):
         async with GitHubClient() as github:
-            return await propose_criteria(github, number, skill_name)
+            return await propose_criteria(github, number, skill_name, event)
 
     # A question is one call to the model that made the claim, not a re-review.
     if conversation.is_question(event):
@@ -409,9 +428,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
             ctx, _skipped, _trimmed, _dropped = await github.load_context(
                 number, exclude_input=os.getenv("QUORUM_EXCLUDE", "")
             )
-            return await conversation.handle(
-                github, build_provider(), ctx, ledger, event
-            )
+            return await conversation.handle(github, build_provider(), ctx, ledger, event)
 
     provider = build_provider()
     models = list(provider.models)
@@ -468,9 +485,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # the file and immediately re-reports all of them at the new path.
         # Asked rather than inferred: a marker that is present but will not
         # decode looks exactly like one that decoded fine.
-        report.recovered = (
-            len(ledger.entries) if ledger.was_rebuilt else ledger.recovered
-        )
+        report.recovered = len(ledger.entries) if ledger.was_rebuilt else ledger.recovered
         report.ledger_lost = ledger.was_rebuilt
 
         report.renamed_files = diffs.renames(ctx.diff)
@@ -577,9 +592,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # by title overlap, so it can be wrong — and a summary that reports a
         # count gives a reader no way to notice. Collapsed, because the point
         # of suppression is that these are not worth reading twice.
-        report.suppressed_titles = [
-            f.title for f in findings if f not in fresh
-        ]
+        report.suppressed_titles = [f.title for f in findings if f not in fresh]
         report.suppressed = len(findings) - len(fresh)
 
         # -- consensus, then verify only what is unresolved --------------------
@@ -725,9 +738,7 @@ def _write_sarif(report: report_mod.RunReport, ledger: ledger_mod.Ledger) -> Non
     if not path:
         return
 
-    log = sarif.build(
-        sarif.open_findings(ledger), list(report.models), report.head_sha
-    )
+    log = sarif.build(sarif.open_findings(ledger), list(report.models), report.head_sha)
     # Checked here rather than left to the uploader. Code scanning rejects a
     # log wholesale for a schema violation, so one bad field loses every
     # finding — and the failure surfaces two steps later, in someone else's

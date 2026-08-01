@@ -171,7 +171,14 @@ def test_the_delimiter_is_matched_however_it_is_written(forged: str):
 
 def test_the_claim_block_is_labelled():
     """It carries the model's own title, derived from the diff. A <claim> block
-    it can close is the same hole one tag over."""
+    it can close is the same hole one tag over.
+
+    The first version of this test asserted only ``blocks(...) == 1`` and
+    passed against a prompt with no claim block at all: the single closing tag
+    it counted was the forged one from the title, interpolated raw. The
+    reviewer caught that. A count of one means nothing unless the block is
+    known to be there and the forgery is known to be gone.
+    """
     finding = Finding(
         file_path="a.py",
         line=1,
@@ -182,11 +189,30 @@ def test_the_claim_block_is_labelled():
         code_snippet="s",
     )
     rendered = prompts.verify_user(finding, ctx())
+
+    assert "<untrusted_claim>" in rendered
+    assert "</!untrusted_claim>" in rendered
     assert blocks(rendered, "claim") == 1
 
 
+def test_the_title_is_not_interpolated_outside_a_block():
+    """The failure mode the count alone missed."""
+    finding = Finding(
+        file_path="a.py",
+        line=1,
+        category="security",
+        severity="high",
+        title="t",
+        body="b",
+        code_snippet="s",
+    )
+    assert "<claim>" not in prompts.verify_user(finding, ctx())
+
+
 def test_the_verifier_still_learns_which_file_the_diff_is_for():
-    """Lost when the block stopped carrying a file= attribute."""
+    """Lost when the block stopped carrying a file= attribute. The path is
+    stated above the block now — an attribute sits where content could reach
+    it."""
     finding = Finding(
         file_path="app/search.py",
         line=1,
@@ -196,7 +222,7 @@ def test_the_verifier_still_learns_which_file_the_diff_is_for():
         body="b",
         code_snippet="s",
     )
-    assert "app/search.py" in prompts.verify_user(finding, ctx())
+    assert "The diff for `app/search.py`" in prompts.verify_user(finding, ctx())
 
 
 def test_the_verifier_still_does_not_see_the_reporters_reasoning():

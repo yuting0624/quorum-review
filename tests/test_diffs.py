@@ -170,9 +170,7 @@ def test_a_rename_with_no_content_change_is_still_seen():
 
 
 def test_several_renames_in_one_diff():
-    two = RENAMED + (
-        "diff --git a/x.py b/y.py\nrename from x.py\nrename to y.py\n"
-    )
+    two = RENAMED + ("diff --git a/x.py b/y.py\nrename from x.py\nrename to y.py\n")
     assert diffs.renames(two) == {
         "app/old_name.py": "app/new_name.py",
         "x.py": "y.py",

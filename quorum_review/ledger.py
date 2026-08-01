@@ -55,10 +55,9 @@ COMPRESS_ABOVE = 4_096
 #: before a genuine fix is acknowledged.
 MISSES_BEFORE_FIXED = 2
 
+
 def _report_of(finding: Finding) -> Report:
-    return Report(
-        finding.file_path, finding.line, finding.code_snippet, finding.title
-    )
+    return Report(finding.file_path, finding.line, finding.code_snippet, finding.title)
 
 
 def compute_finding_id(file_path: str, code_snippet: str) -> str:
@@ -275,8 +274,7 @@ class Ledger:
                 continue
             report = entry.as_report()
             if any(
-                same_defect(report, known.as_report())
-                for known in self.entries.values()
+                same_defect(report, known.as_report()) for known in self.entries.values()
             ):
                 continue
             self.entries[entry.finding_id] = entry

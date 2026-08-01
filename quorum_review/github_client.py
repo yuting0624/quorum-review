@@ -242,9 +242,7 @@ class GitHubClient:
         anything derived from one — is this a fork, does it carry a label — is
         reading null and getting an answer that looks confident.
         """
-        return (
-            await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
-        ).json()
+        return (await self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")).json()
 
     async def load_context(
         self,
@@ -578,10 +576,9 @@ class GitHubClient:
             payload["start_side"] = "RIGHT"
 
         response = await self._send(
-
             "POST",
-
-            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments", json=payload
+            f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+            json=payload,
         )
         if response.status_code == 422:
             return None
@@ -600,8 +597,7 @@ class GitHubClient:
 
     async def _graphql(self, query: str, **variables: Any) -> dict[str, Any]:
         response = await self._send(
-            "POST",
-            "/graphql", json={"query": query, "variables": variables}
+            "POST", "/graphql", json={"query": query, "variables": variables}
         )
         if response.status_code >= 400:
             raise GitHubError(f"GraphQL -> {response.status_code}: {response.text[:400]}")

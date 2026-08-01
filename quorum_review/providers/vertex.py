@@ -221,9 +221,7 @@ class _GeminiEngine:
         if toolbox is not None:
             await self._explore(contents, system, max_tokens, toolbox)
             closing = prompts.FINALISE if schema else prompts.FINALISE_PROSE
-            contents.append(
-                types.Content(role="user", parts=[types.Part(text=closing)])
-            )
+            contents.append(types.Content(role="user", parts=[types.Part(text=closing)]))
 
         response = await self._generate(
             contents,

@@ -16,9 +16,7 @@ from quorum_review.schema import ModelUsage
 def usage(**models: tuple[int, int, int]) -> dict[str, ModelUsage]:
     """`model=(input, output, cached)` for each."""
     return {
-        name: ModelUsage(
-            calls=1, input_tokens=i, output_tokens=o, cached_input_tokens=c
-        )
+        name: ModelUsage(calls=1, input_tokens=i, output_tokens=o, cached_input_tokens=c)
         for name, (i, o, c) in models.items()
     }
 

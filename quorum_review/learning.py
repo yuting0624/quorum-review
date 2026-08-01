@@ -92,10 +92,12 @@ Rather than silence each one separately, here is a proposed edit to \
 <details>
 <summary>The dismissals this is based on</summary>
 
-{chr(10).join(
-    f"- **{flatten(entry.title)}** — {flatten(entry.wontfix_reason or '', 300)}"
-    for entry in proposal.dismissals
-)}
+{
+        chr(10).join(
+            f"- **{flatten(entry.title)}** — {flatten(entry.wontfix_reason or '', 300)}"
+            for entry in proposal.dismissals
+        )
+    }
 
 </details>
 

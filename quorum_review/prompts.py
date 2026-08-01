@@ -269,13 +269,21 @@ def verify_user(finding: Finding, ctx: PRContext) -> str:
         file_diff = "(this file does not appear in the diff)"
 
     return (
-        f"<claim>\nFile: {finding.file_path}\nLine: {finding.line}\n"
-        f"Claim: {finding.title}\n</claim>\n\n"
+        f"File: {finding.file_path}\nLine: {finding.line}\n\n"
+        # The title is model output derived from the diff, so it is labelled
+        # like everything else. A <claim> block the content can close is the
+        # same hole one tag over — and the first attempt at this left the raw
+        # interpolation in place, which the test below did not catch.
+        + untrusted("claim", finding.title)
+        + "\n\n"
         # The snippet is the model's own quotation of attacker-controlled code,
         # so it is labelled too — it was not, and a claim is a shorter route to
         # the instructions than a diff.
         + untrusted("code_under_review", finding.code_snippet)
         + "\n\n"
+        # The path is stated outside the block rather than as an attribute on
+        # it: an attribute sits where the content could reach it.
+        + f"The diff for `{finding.file_path}`:\n"
         + untrusted("diff", file_diff)
         + "\n\nDoes the claim hold?\n"
     )

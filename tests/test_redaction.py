@@ -97,8 +97,7 @@ def test_ordinary_code_is_left_alone(code: str):
 def test_a_base64_blob_is_not_assumed_to_be_a_secret():
     """The ledger marker is base64, and it appears in this project's own diffs."""
     marker = (
-        "<!-- quorum-state: z:"
-        "H4sIAAAAAAAAA6tWKkotLsnMS1eyUvIvyixJzUsvSizJzM9TsgIA -->"
+        "<!-- quorum-state: z:H4sIAAAAAAAAA6tWKkotLsnMS1eyUvIvyixJzUsvSizJzM9TsgIA -->"
     )
     text, found = redaction.redact(marker)
     assert text == marker

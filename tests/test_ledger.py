@@ -83,14 +83,21 @@ def test_corrupt_marker_is_treated_as_absent():
 
 def tracked(fid, status, line, path="a.py"):
     return ledger.LedgerEntry(
-        fid, path, "security", "high", "t", line=line, snippet=f"x = {line}",
+        fid,
+        path,
+        "security",
+        "high",
+        "t",
+        line=line,
+        snippet=f"x = {line}",
         status=status,
     )
 
 
 def reported(fid, line, path="a.py"):
-    return Finding(path, line, "security", "high", "t", "b", f"x = {line}",
-                   finding_id=fid)
+    return Finding(
+        path, line, "security", "high", "t", "b", f"x = {line}", finding_id=fid
+    )
 
 
 def test_open_and_wontfix_are_suppressed_but_fixed_is_not():
@@ -116,8 +123,14 @@ def test_suppression_survives_the_model_quoting_the_bug_differently():
     book.record(tracked("original-id", "open", 42))
 
     requoted = Finding(
-        "a.py", 43, "security", "high", "t", "b",
-        "something = entirely_different()", finding_id="a-brand-new-id",
+        "a.py",
+        43,
+        "security",
+        "high",
+        "t",
+        "b",
+        "something = entirely_different()",
+        finding_id="a-brand-new-id",
     )
     assert book.is_suppressed(requoted)
 

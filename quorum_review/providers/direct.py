@@ -113,9 +113,8 @@ class DirectProvider:
                 model,
                 input_tokens=getattr(message.usage, "input_tokens", 0) or 0,
                 output_tokens=getattr(message.usage, "output_tokens", 0) or 0,
-                cached_input_tokens=getattr(
-                    message.usage, "cache_read_input_tokens", 0
-                ) or 0,
+                cached_input_tokens=getattr(message.usage, "cache_read_input_tokens", 0)
+                or 0,
             )
             if message.stop_reason == "refusal":
                 raise ValueError(f"{model} declined the request")

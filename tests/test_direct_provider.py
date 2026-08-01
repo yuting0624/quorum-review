@@ -177,9 +177,7 @@ def test_the_dispatch_is_on_the_model_id_not_a_configured_role():
     """Any model in any role is what makes the arrangement measurable, and it
     has to hold here too or the control case is not comparable."""
     provider, _gemini, claude = wired(claude_text=VERDICT_JSON)
-    asyncio.run(
-        provider.verify("claude-opus-5", a_finding(reported_by=["gemini"]), CTX)
-    )
+    asyncio.run(provider.verify("claude-opus-5", a_finding(reported_by=["gemini"]), CTX))
     assert len(claude.calls) == 1
 
 

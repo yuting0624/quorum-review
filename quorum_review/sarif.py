@@ -75,8 +75,7 @@ RULES: dict[str, tuple[str, str]] = {
     ),
     "reliability": (
         "Reliability defect",
-        "A change that works until load, latency, or partial failure makes it "
-        "not work.",
+        "A change that works until load, latency, or partial failure makes it not work.",
     ),
     "performance": (
         "Performance defect",

@@ -38,9 +38,7 @@ def test_the_reason_survives_without_the_trigger():
         dismissal.extract_reason("@quorum wontfix — the caller already validates this")
         == "the caller already validates this"
     )
-    assert (
-        dismissal.extract_reason("@quorum 誤検知: 上流で検証済み") == "上流で検証済み"
-    )
+    assert dismissal.extract_reason("@quorum 誤検知: 上流で検証済み") == "上流で検証済み"
 
 
 def test_a_bare_trigger_still_records_something():
