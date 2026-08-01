@@ -34,6 +34,8 @@ from typing import NamedTuple
 
 _COMMENT = re.compile(r"(#|//).*$", re.MULTILINE)
 _WHITESPACE = re.compile(r"\s+")
+#: Latin words and identifiers. Deliberately not `\w+`: see `title_tokens`
+#: for what this does not cover and why widening it would not help.
 _WORD = re.compile(r"[a-z_]+")
 
 #: How far apart two reports of the same defect may sit on position alone.
@@ -109,7 +111,34 @@ def _stem(word: str) -> str:
 
 
 def title_tokens(title: str) -> set[str]:
-    """The content words of a title, stemmed."""
+    r"""The content words of a title, stemmed.
+
+    **Latin script only, and that is a real limitation** — `review-language`
+    is an input, so a project can and does configure this reviewer to write in
+    Japanese, and a Japanese title yields no tokens at all. `_same_wording`
+    then returns False for every pair, and matching falls back to position.
+
+    Widening the pattern to `\w+` does not fix it. Japanese does not separate
+    words, so the whole title becomes one token and nothing ever overlaps.
+    Character bigrams would produce overlap, and would also merge
+    「削除エンドポイントに所有者チェックがない」with
+    「パージエンドポイントに所有者チェックがない」— two different bugs sharing
+    every character but three. That is the exact failure `TITLE_MIN_SHARED`
+    exists to prevent in English, made worse: the distinguishing part of a CJK
+    title is a smaller fraction of it.
+
+    So the honest state is: for a language this cannot tokenise, duplicate
+    suppression is position-only. That is the *conservative* direction — more
+    duplicate comments, never a swallowed finding — and it is what this project
+    picks when it has no measurement to tune against. Titles that quote an
+    identifier or a filename still tokenise, because those are Latin whatever
+    the prose around them is.
+
+    Fixing it properly needs a fixture in the target language, scored the same
+    way as the English one. Until that exists, tuning a CJK matcher would be
+    guessing, and the thing it would be guessing at is which findings to
+    discard.
+    """
     words = _WORD.findall(title.lower())
     return {_stem(word) for word in words if len(word) > 2 and word not in _STOPWORDS}
 
