@@ -1,12 +1,20 @@
-"""The same two models, reached with two vendor API keys instead.
+"""The same two models, reached through each vendor's own API instead.
 
 This exists so the tool can be tried without a Google Cloud project, and as the
-control case for the argument the project is making: compare the environment
-block here — two secrets from two vendors, two bills, two sets of terms — with
-``vertex.py``, where the same review runs on one federated credential and
-nothing long-lived is stored in the repository.
+control case for the argument the project makes: compare the environment block
+here — two vendors, two bills, two sets of terms — with ``vertex.py``, where
+the same review runs on one federated credential.
 
-Kept deliberately plain. ``vertex.py`` is the file worth reading.
+The argument used to be sharper than it is. Until June 2026 this file needed
+two long-lived API keys and ``vertex.py`` needed none, which was the whole
+comparison. Anthropic then shipped workload identity federation, so the Claude
+half of a two-vendor setup can be keyless too — a GitHub Actions OIDC token
+exchanged for a short-lived credential. ``GEMINI_API_KEY`` below is still a
+stored key, because the AI Studio API takes one.
+
+So what ``vertex.py`` buys is one trust relationship rather than zero stored
+secrets: one issuer, one set of claim conditions, one place to get wrong.
+Narrower, and still the reason to read that file rather than this one.
 """
 
 from __future__ import annotations

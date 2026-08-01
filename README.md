@@ -8,8 +8,8 @@ Where they agree independently, that is the result. Where only one found
 something, the other is asked to judge it.
 
 **Gemini and Claude both run on Gemini Enterprise Agent Platform** — Google
-Cloud's platform, formerly Vertex AI — off **one credential**. No API keys, no
-long-lived secret in your repository, one invoice.
+Cloud's platform, formerly Vertex AI — off **one credential**. One federation
+to set up instead of two, no API keys, one invoice.
 
 [![CI](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml/badge.svg)](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
@@ -70,16 +70,32 @@ That is the whole basis of this project: two vendors' models, one platform, one
 credential, one invoice.
 
 Cross-model consensus, incremental review, and second-opinion verification all
-exist elsewhere. What did not exist is running the models on **one cloud
-credential**: every implementation we found stacks API keys from separate
-vendors.
+exist elsewhere. What did not exist is running both models on **one cloud
+credential**.
 
-| | Two vendor API keys | quorum-review |
+| | Two vendors, separately | quorum-review |
 |---|---|---|
-| **Secrets in the repo** | two long-lived keys | **none** — OIDC federation, short-lived credentials |
+| **Trust to configure** | two federations, or two long-lived keys | **one** — the Google Cloud one you already have |
+| **Secrets in the repo** | none, if both vendors support federation | **none** |
 | **Billing** | two invoices, two contracts | one, against existing Google Cloud commitments |
 | **Where the code goes** | two vendors' infrastructure | one platform, in your own project — [pin the region](docs/security.md#where-the-code-goes) and it stays there |
 | **Model governance** | per-vendor, ad hoc | one org policy covers both |
+
+> **This table used to say "two long-lived keys" against "none", and that was
+> the whole argument.** It stopped being true in June 2026, when Anthropic
+> shipped [workload identity federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation):
+> a GitHub Actions OIDC token can be exchanged for a short-lived Anthropic
+> credential, so the Claude half no longer needs a stored key either. The
+> Gemini half of a two-vendor setup still does, because the AI Studio API takes
+> an API key — but "two stored secrets" is now "one".
+>
+> What survives is narrower and, I think, still worth having: **one trust
+> relationship instead of two.** One issuer to register, one set of claim
+> conditions to get right, one place where a misconfiguration lets the wrong
+> workflow mint a token. Plus the invoice and the governance surface. If you
+> only care about "no keys in the repository", federate both vendors and you
+> are done — this project is about the number of things you have to get right,
+> not the number of secrets.
 
 The whole trick is what these two lines *don't* contain:
 

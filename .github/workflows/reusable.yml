@@ -120,6 +120,15 @@ on:
         type: string
         required: false
         default: yuting0624/quorum-review
+      trigger-phrase:
+        description: >-
+          What people type to address the reviewer. Used both in this job's
+          `if:` condition and by the action itself, so setting it here changes
+          both — which is the sort of thing this workflow exists to keep in one
+          place.
+        type: string
+        required: false
+        default: "@quorum"
       vertex-region:
         description: >-
           Pin both models to one Vertex region, for data residency. Empty uses
@@ -192,13 +201,13 @@ jobs:
        github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'pull_request_review_comment' &&
         github.event.comment.user.type != 'Bot' &&
-        contains(github.event.comment.body, '@quorum') &&
+        contains(github.event.comment.body, inputs.trigger-phrase) &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
                  github.event.comment.author_association)) ||
        (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        (contains(github.event.comment.body, '@quorum /criteria') ||
-         (contains(github.event.comment.body, '@quorum /review') &&
+        (contains(github.event.comment.body, format('{0} /criteria', inputs.trigger-phrase)) ||
+         (contains(github.event.comment.body, format('{0} /review', inputs.trigger-phrase)) &&
           github.event.issue.state == 'open')) &&
         github.event.comment.user.type != 'Bot' &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
@@ -294,6 +303,7 @@ jobs:
           verifier-model: ${{ inputs.verifier-model }}
           max-diff-characters: ${{ inputs.max-diff-characters }}
           vertex-region: ${{ inputs.vertex-region }}
+          trigger-phrase: ${{ inputs.trigger-phrase }}
 
       # `always()` so a failed gate still uploads what it failed on — but only
       # if there is something to upload. A review that died before writing the

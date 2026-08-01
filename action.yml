@@ -77,6 +77,15 @@ inputs:
       empty uses 'global'.
     required: false
     default: ""
+  trigger-phrase:
+    description: >-
+      What people type to address the reviewer in a comment — `@quorum /review`,
+      `@quorum wontfix`, or a bare mention to ask a question. Change it when two
+      reviewers run in one repository, or when the default already means
+      something else to your organisation. The workflow's own `if:` condition
+      has to match, so set it in both places.
+    required: false
+    default: "@quorum"
   github-token:
     description: Token used to read the diff and post comments.
     required: false
@@ -303,6 +312,7 @@ runs:
         QUORUM_VERTEX_REGION: ${{ inputs.vertex-region }}
         QUORUM_CLAUDE_REGION: ${{ inputs.claude-vertex-region }}
         QUORUM_GEMINI_LOCATION: ${{ inputs.gemini-location }}
+        QUORUM_TRIGGER: ${{ inputs.trigger-phrase }}
         QUORUM_EXCLUDE: ${{ inputs.exclude }}
         QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}

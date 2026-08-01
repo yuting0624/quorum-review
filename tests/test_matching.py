@@ -216,3 +216,61 @@ def test_the_english_path_is_unchanged():
     b = Report("app/sharing.py", 40, "b = 2", "Share link expiry check missing on read")
 
     assert same_defect(a, b)
+
+
+# -- the phrase the reviewer answers to -------------------------------------
+
+
+def test_the_default_mention(monkeypatch):
+    from quorum_review.matching import mention
+
+    monkeypatch.delenv("QUORUM_TRIGGER", raising=False)
+    assert mention() == "@quorum"
+
+
+def test_a_configured_mention_reaches_the_dismissal_triggers(monkeypatch):
+    """Two reviewers in one repository is the case this exists for. If the
+    mention were configurable and the dismissal phrases were not, `@bot
+    wontfix` would be recognised as a question instead."""
+    from quorum_review.matching import dismissal_triggers, is_dismissal_text
+
+    monkeypatch.setenv("QUORUM_TRIGGER", "@reviewer2")
+
+    assert dismissal_triggers() == (
+        "@reviewer2 wontfix",
+        "@reviewer2 false positive",
+        "@reviewer2 誤検知",
+    )
+    assert is_dismissal_text("@reviewer2 wontfix — guarded upstream")
+    assert not is_dismissal_text("@quorum wontfix — guarded upstream")
+
+
+def test_an_empty_setting_falls_back(monkeypatch):
+    """An action input left unset arrives as "". A trigger that matches every
+    comment would turn every comment on the repository into a model call."""
+    from quorum_review.matching import mention
+
+    monkeypatch.setenv("QUORUM_TRIGGER", "")
+    assert mention() == "@quorum"
+
+    monkeypatch.setenv("QUORUM_TRIGGER", "   ")
+    assert mention() == "@quorum"
+
+
+def test_a_typo_with_an_obvious_intent_is_collapsed(monkeypatch):
+    from quorum_review.matching import mention
+
+    monkeypatch.setenv("QUORUM_TRIGGER", "@ quorum ")
+    assert mention() == "@ quorum"
+
+
+def test_the_trigger_is_read_at_call_time(monkeypatch):
+    """Not at import. A value bound when the module loaded would freeze
+    whatever the environment said then, which is how the action's inputs would
+    fail to reach it."""
+    from quorum_review.matching import mention
+
+    monkeypatch.setenv("QUORUM_TRIGGER", "@one")
+    assert mention() == "@one"
+    monkeypatch.setenv("QUORUM_TRIGGER", "@two")
+    assert mention() == "@two"

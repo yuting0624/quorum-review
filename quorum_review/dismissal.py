@@ -25,14 +25,16 @@ from typing import Any
 from .github_client import GitHubClient
 from .ledger import LedgerEntry, replace_marker
 from .matching import (
-    DISMISSAL_TRIGGERS,
+    dismissal_triggers,
     is_dismissal_text,
     without_dismissal_trigger,
 )
 
 #: Re-exported; the phrases live in `matching` so that `github_client` can
-#: recognise one without importing this module, which imports it.
-TRIGGERS = DISMISSAL_TRIGGERS
+#: recognise one without importing this module, which imports it. A function
+#: rather than a tuple, because the mention is configurable and a tuple bound
+#: at import time would freeze whatever the environment said back then.
+TRIGGERS = dismissal_triggers
 
 
 def is_dismissal(event: dict[str, Any]) -> bool:
