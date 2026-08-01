@@ -55,15 +55,11 @@ class _Callback(http.server.BaseHTTPRequestHandler):
         # The state parameter is what stops another page in your browser from
         # driving this callback with a code of its choosing.
         if not code or received_state != type(self).state:
-            self._respond(
-                400, "Something went wrong. Close this and try again."
-            )
+            self._respond(400, "Something went wrong. Close this and try again.")
             return
 
         type(self).code = code
-        self._respond(
-            200, "App created. Close this tab and return to the terminal."
-        )
+        self._respond(200, "App created. Close this tab and return to the terminal.")
 
     def _respond(self, status: int, message: str) -> None:
         body = (

@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .ledger import Ledger, LedgerEntry
+from .prompts import untrusted
 from .report import flatten
 
 #: Below this there is not enough signal to distinguish a pattern from a
@@ -51,42 +52,30 @@ def dismissed(ledger: Ledger) -> list[LedgerEntry]:
 
 
 def render_prompt(skill_name: str, skill_body: str, entries: list[LedgerEntry]) -> str:
-    """Ask a model to turn dismissals into a concrete criteria edit."""
+    """The user turn for a criteria proposal.
+
+    The finding titles quote code from the diff, so the block carrying them is
+    labelled ``<untrusted_*>`` like every other place model-derived text
+    reaches a model. The instructions live in ``prompts.criteria_system``,
+    behind the base instructions — this path used to have neither, and it is
+    the worst one to leave open: its output is an edit to the criteria, offered
+    to a human to paste in.
+    """
     cases = "\n\n".join(
         f"- **{flatten(entry.title)}** (`{entry.file_path}`, {entry.severity} "
         f"{entry.category})\n  Dismissed because: {entry.wontfix_reason}"
         for entry in entries
     )
 
-    return f"""\
-These findings were reported by a code reviewer and then explicitly dismissed
-by a maintainer of the repository. Each dismissal is a statement about what
-this codebase does not consider a problem.
-
-<dismissed_findings>
-{cases}
-</dismissed_findings>
-
-Here are the review criteria that produced them:
-
-<current_criteria name="{skill_name}">
-{skill_body}
-</current_criteria>
-
-Propose a change to the criteria that would stop these specific findings being
-reported, without blinding the reviewer to the real problems the criteria
-exist to catch.
-
-- If the dismissals share a cause, say what it is in one sentence.
-- Give the edit as a short Markdown snippet ready to paste into the criteria,
-  usually an addition to a "Do not report" section.
-- If a dismissal looks like a one-off rather than a pattern, say so and leave
-  it out. Narrowing the criteria for a single case costs more than it saves.
-- If the criteria are fine and the model simply misapplied them, say that
-  instead of inventing an edit.
-
-Reply as plain Markdown. Be brief.
-"""
+    return (
+        untrusted("dismissals", cases)
+        + "\n\n"
+        # The criteria are the repository's own, read at the base ref, so they
+        # are the trusted half — and labelling trusted input as untrusted
+        # teaches the model the tag means nothing.
+        + f'<current_criteria name="{skill_name}">\n{skill_body}\n</current_criteria>'
+        + "\n\nPropose the change.\n"
+    )
 
 
 def render_comment(proposal: Proposal) -> str:
@@ -103,10 +92,12 @@ Rather than silence each one separately, here is a proposed edit to \
 <details>
 <summary>The dismissals this is based on</summary>
 
-{chr(10).join(
-    f"- **{flatten(entry.title)}** — {flatten(entry.wontfix_reason or '', 300)}"
-    for entry in proposal.dismissals
-)}
+{
+        chr(10).join(
+            f"- **{flatten(entry.title)}** — {flatten(entry.wontfix_reason or '', 300)}"
+            for entry in proposal.dismissals
+        )
+    }
 
 </details>
 

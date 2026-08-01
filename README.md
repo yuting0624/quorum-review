@@ -147,17 +147,29 @@ findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
 **Reading past the diff decides whether it can be right about them:**
 
-| | Seeded bugs | Diff-undecidable bugs | Decoys flagged |
+| | Seeded bugs | Diff-undecidable bugs | False positive on the decoy |
 |---|---|---|---|
-| diff only | 10 / 10 | **0 / 2**, every run | 0 |
-| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
+| diff only | 10 / 10 | **0 / 2**, every run | **3 / 3 runs** |
+| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | **0 / 3 runs** |
+
+The decoy is a path join with nothing guarding it on the changed lines, whose
+every caller validates first — in a file the pull request does not touch. The
+diff-only reviewer reports it every time and is wrong every time; it is behaving
+correctly given what it can see. Reading the repository, two runs never raise it
+and the third has it **removed by the second opinion**, which went and read the
+caller.
 
 Re-measured at `v1.0.0`, forty commits after the first run, because a number
 attached to code that has since changed is a number about nothing. It held.
 
-Both configurations also found real bugs nobody planted — and one of those,
-a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
-repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
+Both configurations also found real bugs nobody planted, and two of those are
+themselves undecidable from a diff — found in **8 of 9** runs with repository
+access and **0 of 9** without. One of them cannot be reached from a diff at all:
+a registry mapping every export format to a module under `app.formatters`, and
+no such package exists. That is a fact about the filesystem, not about any line
+of code.
+
+Unplanted bugs are better evidence than planted ones. Nobody chose them. Live from Actions: **0% re-report rate**
 on an unchanged pull request.
 
 <details>
@@ -269,7 +281,9 @@ finding.
 | `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
-| `claude-vertex-region` | `global` | try `us-east5` if your entitlement is region-scoped |
+| `vertex-region` | `global` | pin both models to one region for data residency — see [security.md](docs/security.md#where-the-code-goes) |
+| `claude-vertex-region` | inherits | override just Claude; try `us-east5` if your entitlement is region-scoped |
+| `gemini-location` | inherits | override just Gemini |
 
 **Cost tiers**, roughly, per review:
 

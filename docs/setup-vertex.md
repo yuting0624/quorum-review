@@ -42,6 +42,11 @@ Note which regions the enablement covers. If it is region-scoped rather than
 global, set `claude-vertex-region` on the action to match — see
 [Troubleshooting](#troubleshooting).
 
+If your organisation has to keep source in one jurisdiction, this is the step
+where you find out whether it is possible: both models have to be available in
+the same region for `vertex-region` to pin them together. See
+[Where the code goes](security.md#where-the-code-goes).
+
 While you are here, confirm your Gemini model ID. Availability varies by project
 and release channel, and a stale ID is the most common first-run failure:
 

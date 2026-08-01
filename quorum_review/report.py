@@ -60,6 +60,17 @@ class RunReport:
     #: `trimmed_files` because they mean different things to a reader: a
     #: trimmed file was partly reviewed, a dropped one was never looked at.
     dropped_files: list[str] = field(default_factory=list)
+    #: Paths a model reported against that this change does not touch. Usually
+    #: honest — it read the repository with tools and found something there —
+    #: and occasionally a path the model invented outright. Either way the
+    #: finding cannot be posted: there is no diff line to anchor it to. Named
+    #: rather than counted, because silence here reads as "nothing was found in
+    #: that file".
+    off_diff_paths: list[str] = field(default_factory=list)
+    #: ``{model: vertex region}`` for the models that actually ran. Reported
+    #: because "where did our source code go" is a question somebody has to
+    #: answer in writing, and the run is the cheapest place to answer it from.
+    regions: dict[str, str] = field(default_factory=dict)
     #: ``{old path: new path}`` for files this change moves. Reported because a
     #: reader seeing findings appear at a path they did not edit deserves to
     #: know the reviewer followed a rename rather than invented them.
@@ -225,6 +236,33 @@ def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
     return _bound(escaped, limit)
 
 
+def code_span(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """Make a value safe to put between two backticks, and wrap it in them.
+
+    ``flatten`` handles the HTML and the newlines; it does not handle the
+    delimiter of the span the value is going into. A path containing a backtick
+    closes the span early and the rest renders as prose — which, for a value
+    the model chose, is a way back out into the summary.
+
+    A backtick inside a span cannot be escaped in Markdown; the only fix is a
+    longer fence, so the fence is sized to be longer than the longest run in
+    the content. The spaces keep a leading or trailing backtick in the content
+    from merging with the fence.
+    """
+    inner = flatten(text, limit)
+    if not inner:
+        # Two adjacent backticks are not an empty span; Markdown reads them as
+        # an opening delimiter and swallows the following text up to the next
+        # one. The value that reaches here should never be empty — `clean_path`
+        # drops a finding whose path cleans away — but "should never" is how
+        # the last three of these started.
+        return "`(empty)`"
+    longest = max((len(run) for run in re.findall(r"`+", inner)), default=0)
+    fence = "`" * (longest + 1)
+    padding = " " if longest else ""
+    return f"{fence}{padding}{inner}{padding}{fence}"
+
+
 def _row(finding: Finding) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     return (
@@ -245,8 +283,7 @@ def _table(findings: list[Finding]) -> str:
         key=lambda f: (SEVERITY_RANK.get(f.severity, 99), f.file_path, f.line),
     )
     header = (
-        "| Severity | Category | Location | Finding | Evidence |\n"
-        "|---|---|---|---|---|"
+        "| Severity | Category | Location | Finding | Evidence |\n|---|---|---|---|---|"
     )
     return "\n".join([header, *(_row(finding) for finding in ordered)])
 
@@ -254,9 +291,7 @@ def _table(findings: list[Finding]) -> str:
 def _counts(findings: list[Finding]) -> str:
     """A one-line severity tally, so the headline does not need the table."""
     tally = Counter(finding.severity for finding in findings)
-    parts = [
-        f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)
-    ]
+    parts = [f"{tally[name]} {name}" for name in SEVERITIES if tally.get(name)]
     return ", ".join(parts)
 
 
@@ -547,6 +582,25 @@ def render(report: RunReport) -> str:
             f"or raise `max-diff-characters`.",
         ]
 
+    if report.off_diff_paths:
+        # `flatten`, unlike every other path list here. Those come from the
+        # diff; this one is the model's own text, and it is on this list
+        # *because* it did not match anything GitHub sent. Echoing it raw put
+        # attacker-influenced content into the same comment that carries
+        # `<!-- quorum-state: ... -->`, where a forged marker would be read
+        # back as the ledger on the next run.
+        shown = ", ".join(code_span(p, 200) for p in report.off_diff_paths[:10])
+        if len(report.off_diff_paths) > 10:
+            shown += f", and {len(report.off_diff_paths) - 10} more"
+        lines += [
+            "",
+            f"> Findings were raised against {len(report.off_diff_paths)} path(s) "
+            f"this change does not touch, and were dropped: {shown}. A model "
+            f"reading the repository can find real problems outside the diff, "
+            f"but there is no line here to attach a comment to. If one of these "
+            f"looks like a file you did edit, the path is wrong.",
+        ]
+
     if report.recovered and report.ledger_lost:
         lines += [
             "",
@@ -654,12 +708,23 @@ def _footer(report: RunReport) -> list[str]:
         lines.append("")
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
+    # Which endpoint served each model, because "where did our source code go"
+    # is a question somebody has to answer in writing, and a run that answers
+    # it in its own output is easier to answer it from than one that does not.
+    # `global` is named as `global` rather than dressed up as a region: it
+    # routes to whichever region has capacity, and calling that a location
+    # would be the misleading part.
+    where = (
+        " · " + ", ".join(f"`{m}` in `{r}`" for m, r in sorted(report.regions.items()))
+        if report.regions
+        else ""
+    )
     lines.append(
         f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
         f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
-        + f"{elapsed} · quorum-review — a reference implementation, not a "
-        "supported product.</sub>"
+        + f"{where}{elapsed} · quorum-review — a reference implementation, not "
+        "a supported product.</sub>"
     )
     return lines
 
@@ -742,8 +807,7 @@ def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
 
     lines += [
         "",
-        "No models were called. **This is not a clean review** — nothing was "
-        "examined.",
+        "No models were called. **This is not a clean review** — nothing was examined.",
         "",
         "---",
         "",

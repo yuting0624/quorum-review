@@ -83,9 +83,7 @@ def degraded(report: RunReport) -> bool:
 
     A dropped file does count. Nothing about it was read.
     """
-    return bool(
-        report.scan_failures or report.verifier_error or report.dropped_files
-    )
+    return bool(report.scan_failures or report.verifier_error or report.dropped_files)
 
 
 def exit_code(report: RunReport) -> int:
@@ -101,9 +99,7 @@ def exit_code(report: RunReport) -> int:
         return 0
 
     limit = SEVERITY_RANK[threshold]
-    return int(
-        any(SEVERITY_RANK.get(f.severity, 99) <= limit for f in posted(report))
-    )
+    return int(any(SEVERITY_RANK.get(f.severity, 99) <= limit for f in posted(report)))
 
 
 def gate_message(report: RunReport) -> str:

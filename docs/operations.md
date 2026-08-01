@@ -154,6 +154,50 @@ them; neither fix would have reached a repository that copied the file first.
 Pin `action-ref` to a commit SHA in a regulated environment. A tag can be moved
 to point at new code, and the job holds a write-scoped token.
 
+## GitHub Enterprise Server
+
+Nothing needs configuring: Actions sets `GITHUB_API_URL` on the runner, and
+both REST and GraphQL are derived from it. GraphQL is derived rather than
+joined because it does not live under the REST root — on GHES the REST API is
+at `https://host/api/v3` and GraphQL is at `https://host/api/graphql`, a
+sibling of `v3` rather than a child. Getting that wrong fails silently: thread
+resolution is the only GraphQL caller and it already degrades quietly, so the
+symptom is threads that never collapse and a run that reports success.
+
+Two things are worth checking before you roll it out:
+
+- **Vertex AI has to be reachable from the runner.** A self-hosted runner
+  inside a VPC usually is not. Private Google Access or a proxy is the fix; the
+  action does not tunnel anything itself.
+- **The `codeql-action/upload-sarif` step needs GitHub Advanced Security.**
+  Without it, the upload is skipped and the findings stay in the pull request
+  comments — which is a degraded mode, not a failure, and the summary says so.
+
+## Behind a TLS-intercepting proxy
+
+`HTTPS_PROXY` and `NO_PROXY` work as they do everywhere else. The corporate CA
+is the part that needs saying: `httpx` verifies against `certifi` and does not
+read the environment for anything else, so on a network that terminates TLS at
+a proxy every call fails at the handshake with an error that reads like the
+host is unreachable.
+
+Set one of these to a PEM bundle and the GitHub client will use it:
+
+| Variable | Note |
+|---|---|
+| `QUORUM_CA_BUNDLE` | This project's own; wins over the rest |
+| `REQUESTS_CA_BUNDLE` | Already set on most runners behind a proxy |
+| `SSL_CERT_FILE` | OpenSSL's convention |
+| `CURL_CA_BUNDLE` | |
+
+A path that does not exist is ignored rather than fatal — a stale value left
+over from an earlier image should not break a setup that works.
+
+The Google and Anthropic clients are separate stacks with their own TLS
+handling. `REQUESTS_CA_BUNDLE` and `SSL_CERT_FILE` cover them in practice; if
+Vertex calls fail at the handshake while GitHub calls succeed, that is the
+difference.
+
 ## Versions
 
 `v1` is a moving alias for the latest `v1.x.y`, which is the GitHub Actions

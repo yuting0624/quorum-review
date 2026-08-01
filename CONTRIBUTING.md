@@ -57,6 +57,16 @@ Tests need no credentials — model calls are not made in the suite.
 - **Sharing one exploration budget between the two scans.** Each gets its own.
   Otherwise how much the second model can investigate depends on what the first
   one did, and their agreement stops being independent.
+- **Arguing with a future reviewer in a comment.** The models read this
+  repository with tools, so a docstring saying "a reviewer objected to this and
+  was wrong" is an instruction not to raise it again, sitting in the code it
+  protects. Record *why* the code is the way it is — the failure mode, the
+  thing that broke — and leave the adjudication in the commit message and the
+  pull request, where it belongs and where a model looking at some other
+  change will not read it.
+
+  This one was found by the reviewer, in a docstring added two commits earlier
+  that did exactly that.
 
 ## If you find a false positive worth fixing
 

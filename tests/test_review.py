@@ -83,11 +83,10 @@ def test_every_model_scans():
 
 
 def test_a_failing_scanner_does_not_sink_the_review():
-    provider = FakeProvider(scans={"model-b": [finding(by=["model-b"])]},
-                            fail_scan=["model-a"])
-    scans, failures = asyncio.run(
-        review.scan_all(provider, provider.models, CTX, SKILL)
+    provider = FakeProvider(
+        scans={"model-b": [finding(by=["model-b"])]}, fail_scan=["model-a"]
     )
+    scans, failures = asyncio.run(review.scan_all(provider, provider.models, CTX, SKILL))
     assert len(scans) == 1
     assert "model-a" in failures[0]
 
@@ -167,8 +166,10 @@ def test_reviewer_for_never_picks_a_reporting_model():
     assert consensus.reviewer_for(finding(by=["model-a"]), ["model-a", "model-b"]) == (
         "model-b"
     )
-    assert consensus.reviewer_for(finding(by=["model-a", "model-b"]),
-                                  ["model-a", "model-b"]) is None
+    assert (
+        consensus.reviewer_for(finding(by=["model-a", "model-b"]), ["model-a", "model-b"])
+        is None
+    )
 
 
 def test_verifier_severity_overrides_the_reporters_rating():
@@ -218,8 +219,9 @@ def test_one_broken_call_does_not_sink_the_others():
 
 
 def test_dedupe_collapses_identical_ids():
-    assert {f.finding_id for f in review.dedupe([finding("a"), finding("a"),
-                                                 finding("b")])} == {"a", "b"}
+    assert {
+        f.finding_id for f in review.dedupe([finding("a"), finding("a"), finding("b")])
+    } == {"a", "b"}
 
 
 def test_by_severity_orders_worst_first():

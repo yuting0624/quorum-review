@@ -89,10 +89,16 @@ def test_a_reset_in_the_past_does_not_produce_a_negative_wait():
 
 def test_a_reset_with_quota_remaining_is_ignored():
     """Every response carries the header; only an exhausted one means anything."""
-    assert gh._retry_after(
-        response(200, "", **{"x-ratelimit-reset": "99999999999",
-                             "x-ratelimit-remaining": "4000"})
-    ) == 0.0
+    assert (
+        gh._retry_after(
+            response(
+                200,
+                "",
+                **{"x-ratelimit-reset": "99999999999", "x-ratelimit-remaining": "4000"},
+            )
+        )
+        == 0.0
+    )
 
 
 def test_a_nonsense_header_falls_back_rather_than_raising():
@@ -168,9 +174,7 @@ def test_the_last_response_is_returned_rather_than_raised(monkeypatch):
 
 @pytestmark_loop
 def test_a_dropped_connection_is_retried():
-    client = client_with(
-        [httpx.ConnectError("reset"), response(200, "ok")]
-    )
+    client = client_with([httpx.ConnectError("reset"), response(200, "ok")])
     assert asyncio.run(client._send("GET", "/x")).status_code == 200
 
 

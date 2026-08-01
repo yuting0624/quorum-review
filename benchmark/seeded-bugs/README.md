@@ -49,13 +49,19 @@ them — it can only guess.
 
 | # | Type | Depends on | Description |
 |---|---|---|---|
-| C1 | **decoy** | `app/validators.py` | `os.path.join` on user input looks like traversal, but `safe_export_name` has already reduced it to one path segment. **Flagging it is a false positive.** |
+| C1 | **decoy** | `app/validators.py` | `os.path.join` on user input looks like traversal, but `export_name` has already reduced it to one path segment. **Flagging it is a false positive.** |
+| C4 | **decoy** | `app/api.py` | `write_named_report` joins a parameter into a path with nothing guarding it. Every caller validates first, at the HTTP boundary, in a file the pull request does not touch. **Flagging it is a false positive.** |
 | C2 | **bug** (security, high) | `app/permissions.py` | The scope check reads correctly and passes for everyone: `"document.report"` is absent from `REQUIRED_SCOPES`, and `has_scope` returns True for unlisted actions — as its docstring warns |
 | C3 | **bug** (correctness, medium) | `app/audit.py` | `audit.record(user, "document.report", doc_id)` — the signature is `(action, user_id, doc_id)`, so this writes a useless row rather than raising |
 
-C1 is the one that matters most. "Is this input validated upstream?" is the
-commonest cause of false positives in code review, and it is exactly the
-question a diff cannot answer.
+"Is this input validated upstream?" is the commonest cause of false positives in
+code review, and it is exactly the question a diff cannot answer. C1 was written
+to test that and never fired for either configuration — twice over, because
+renaming `safe_export_name` to `export_name` did not change it either. The
+remaining tell is that the validator is *called on the changed line*: whatever
+it is named, the reviewer has been shown that somebody thought about this.
+
+C4 removes the tell, and it is the case that finally discriminates.
 
 ### What they measured
 
@@ -88,19 +94,36 @@ found to always found. Neither is subtle once you can see the other file —
 are simply undecidable from the diff, and the diff-only reviewer was correct to
 stay quiet about them. It just could not do the job.
 
-**One more real bug appeared, and only with access.** `export_document` performs
-no `document.export` scope check. Reported in 2 of 3 runs with the repository
-readable, and in **0 of 3** without it — the same shape of finding as C2, and
-one nobody had planted.
+**Two more real bugs appeared, and only with access** — U4 and U5, tabulated
+above. Neither was planted, which makes them better evidence than the ones that
+were.
 
-**The false-positive half of the hypothesis was not tested.** C1 was designed to
-catch a reviewer guessing that an unvalidated-looking `os.path.join` is
-traversal. Neither configuration ever flagged it, so the decoy discriminated
-nothing. The likely reason is that the call reads
-`validators.safe_export_name(filename)`, and a name that says `safe_` is already
-most of the answer. A stronger version of this case would give the validator a
-neutral name — `normalise`, say — so that reading it is the only way to know.
-Until then, "no false positives" here is a weaker claim than it looks.
+**The false-positive half of the hypothesis, finally tested.** C1 never fired,
+so for a long time "no false positives" rested on a case nobody was really
+asking. Two attempts fixed that. Renaming `safe_export_name` to `export_name`
+changed nothing — still 0/3 either way. What was actually giving the answer
+away is that the validator is *called on the changed line*, so C4 was added
+with the guard moved to the HTTP boundary, out of the diff.
+
+| | C4 raised by a scan | C4 survived to the reader |
+|---|---|---|
+| diff only | **3 / 3** | **3 / 3** |
+| repository readable | 1 / 3 | **0 / 3** |
+
+Three runs each. This is the strongest single result in this file, and it is the
+one the design was argued from rather than measured on until now:
+
+- A diff-only reviewer reports it **every time**, and nothing removes it. It is
+  behaving correctly given what it can see — the changed lines really do join a
+  parameter into a path — and it is wrong every time.
+- With the repository readable, two scans out of three never raise it at all.
+  The third does, and **the second opinion removes it**: shown the code but not
+  the reasoning, the other model went and read `api.py`.
+
+That last case is worth more than the two clean ones. It is the only place in
+this benchmark where verification demonstrably subtracts something false rather
+than something arguable — every earlier removal concerned B8, which the fixture
+[admits is ambiguous](#caveat-on-b8).
 
 **Verification became slightly more willing to subtract.** Survived dropped to
 9.7 because B8 was refuted in one run, which is the finding the fixture is
@@ -158,6 +181,32 @@ not a false one.**
 |---|---|---|---|
 | U1 | `app/sharing.py` | `expires_in` is stored on the share row and never checked, so share links never expire | both configurations |
 | U2 | `app/sharing.py` | `resolve_share_link` ignores the share's `scopes` and returns the entire document row | Claude only |
+| U3 | `app/fetcher.py` | The remote response body is read with no size limit | both, occasionally |
+| U4 | `app/plugins.py` | `FORMATTERS` maps every format to a module under `app.formatters`, and no such package exists — every call to `load_formatter` raises | **only with the repository readable** |
+| U5 | `app/export.py` | `export_document` never checks the `document.export` scope, which *is* in `REQUIRED_SCOPES` | **only with the repository readable** |
+| U6 | `app/admin.py` | `purge_user` deletes orphaned shares for every user, not only the target | both, occasionally |
+
+### The two that were only ever found with the repository readable
+
+U4 and U5 are the same class as the planted C2 and C3 — undecidable from the
+diff — and they are better evidence, because nobody planted them. There is no
+authoring bias in a bug the fixture created by accident.
+
+Across every saved run in [`../runs/`](../runs), nine per configuration:
+
+| | U4 | U5 |
+|---|---|---|
+| diff only | **0 / 9** | **0 / 9** |
+| repository readable | **8 / 9** | 3 / 9 |
+
+U4 cannot be reached from a diff at all. `FORMATTERS` maps to
+`app.formatters.markdown` and there is no `app/formatters/` directory — that is
+a fact about the filesystem, not about any line of code. A reviewer that cannot
+list a directory cannot know it, however carefully it reads.
+
+They went uncredited for a long time, showing up run after run as
+"unclassified", because the answer key only listed what had been planted. That
+is a bias worth naming: a fixture scores what its author thought of.
 
 ## Decoys (suspicious-looking but correct)
 
@@ -316,9 +365,6 @@ ledger. They only appeared once the thing actually posted twice.
   body stopped announcing the answer. The dual-scan-versus-single comparison
   probably survives — the contamination applied equally to both — but the
   absolute numbers do not.
-- **A decoy that actually discriminates.** C1 was never flagged by either
-  configuration, so it measured nothing. Rename `safe_export_name` to something
-  neutral and the case starts asking the question it was written to ask.
 - Re-review after genuinely fixing some seeded bugs. The 0% above proves nothing
   is re-posted on an unchanged PR; it does not prove a real fix is recognised as
   one. Note also that one finding appeared under "no longer reported" purely
