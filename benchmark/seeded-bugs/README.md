@@ -94,10 +94,9 @@ found to always found. Neither is subtle once you can see the other file —
 are simply undecidable from the diff, and the diff-only reviewer was correct to
 stay quiet about them. It just could not do the job.
 
-**One more real bug appeared, and only with access.** `export_document` performs
-no `document.export` scope check. Reported in 2 of 3 runs with the repository
-readable, and in **0 of 3** without it — the same shape of finding as C2, and
-one nobody had planted.
+**Two more real bugs appeared, and only with access** — U4 and U5, tabulated
+above. Neither was planted, which makes them better evidence than the ones that
+were.
 
 **The false-positive half of the hypothesis, finally tested.** C1 never fired,
 so for a long time "no false positives" rested on a case nobody was really
@@ -182,6 +181,32 @@ not a false one.**
 |---|---|---|---|
 | U1 | `app/sharing.py` | `expires_in` is stored on the share row and never checked, so share links never expire | both configurations |
 | U2 | `app/sharing.py` | `resolve_share_link` ignores the share's `scopes` and returns the entire document row | Claude only |
+| U3 | `app/fetcher.py` | The remote response body is read with no size limit | both, occasionally |
+| U4 | `app/plugins.py` | `FORMATTERS` maps every format to a module under `app.formatters`, and no such package exists — every call to `load_formatter` raises | **only with the repository readable** |
+| U5 | `app/export.py` | `export_document` never checks the `document.export` scope, which *is* in `REQUIRED_SCOPES` | **only with the repository readable** |
+| U6 | `app/admin.py` | `purge_user` deletes orphaned shares for every user, not only the target | both, occasionally |
+
+### The two that were only ever found with the repository readable
+
+U4 and U5 are the same class as the planted C2 and C3 — undecidable from the
+diff — and they are better evidence, because nobody planted them. There is no
+authoring bias in a bug the fixture created by accident.
+
+Across every saved run in [`../runs/`](../runs), nine per configuration:
+
+| | U4 | U5 |
+|---|---|---|
+| diff only | **0 / 9** | **0 / 9** |
+| repository readable | **8 / 9** | 3 / 9 |
+
+U4 cannot be reached from a diff at all. `FORMATTERS` maps to
+`app.formatters.markdown` and there is no `app/formatters/` directory — that is
+a fact about the filesystem, not about any line of code. A reviewer that cannot
+list a directory cannot know it, however carefully it reads.
+
+They went uncredited for a long time, showing up run after run as
+"unclassified", because the answer key only listed what had been planted. That
+is a bias worth naming: a fixture scores what its author thought of.
 
 ## Decoys (suspicious-looking but correct)
 

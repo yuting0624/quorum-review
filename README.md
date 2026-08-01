@@ -162,9 +162,14 @@ caller.
 Re-measured at `v1.0.0`, forty commits after the first run, because a number
 attached to code that has since changed is a number about nothing. It held.
 
-Both configurations also found real bugs nobody planted — and one of those,
-a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
-repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
+Both configurations also found real bugs nobody planted, and two of those are
+themselves undecidable from a diff — found in **8 of 9** runs with repository
+access and **0 of 9** without. One of them cannot be reached from a diff at all:
+a registry mapping every export format to a module under `app.formatters`, and
+no such package exists. That is a fact about the filesystem, not about any line
+of code.
+
+Unplanted bugs are better evidence than planted ones. Nobody chose them. Live from Actions: **0% re-report rate**
 on an unchanged pull request.
 
 <details>

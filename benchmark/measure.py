@@ -82,6 +82,11 @@ UNSEEDED = {
     "U1": ("app/sharing.py", ("expir", "ttl", "never expire")),
     "U2": ("app/sharing.py", ("scope",)),
     "U3": ("app/fetcher.py", ("size limit", "unbounded", "memory")),
+    # Found by the models in run after run and credited to nobody, because the
+    # answer key only listed what was planted. All three are real.
+    "U4": ("app/plugins.py", ("do not exist", "does not exist", "registry")),
+    "U5": ("app/export.py", ("document.export", "scope check", "scope")),
+    "U6": ("app/admin.py", ("orphan", "all users", "globally", "every user")),
 }
 
 
