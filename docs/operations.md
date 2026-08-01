@@ -64,6 +64,32 @@ difference is that it starts succeeding.
 A GitHub App is still worth having for the other reason: comments arrive under
 a name and avatar you chose rather than `github-actions[bot]`.
 
+## Reviewing in a language other than English
+
+`review-language: Japanese` works, and the findings come back in Japanese.
+Dismissing one works too — `@quorum 誤検知` is recognised alongside the English
+forms.
+
+**One thing degrades.** A finding is suppressed on a re-review if it matches
+something already reported, and that match is made on position *or* on the
+words in the title. The title half is Latin-script only: a Japanese title
+produces no tokens, so only the position half runs.
+
+The effect is more duplicate comments when the same defect is reported at
+different lines across runs — a share expiry reported at the storage on one run
+and at the check on the next, for instance. It is not a lost finding. The
+matcher fails in the direction that repeats itself rather than the direction
+that goes quiet, which is the trade this project takes everywhere.
+
+Titles that quote an identifier still match, because identifiers are Latin
+whatever the prose is, and most findings name the function they are about.
+
+Fixing it properly needs a fixture written in the target language and scored
+the way the English one is. Widening the tokeniser does not work — Japanese
+does not separate words, so the whole title becomes one token — and character
+bigrams would merge 「削除エンドポイントに所有者チェックがない」with
+「パージエンドポイントに所有者チェックがない」, which are different bugs.
+
 ## Signals that the review did less than it looks like
 
 Any of these makes a clean result mean less than a clean result:

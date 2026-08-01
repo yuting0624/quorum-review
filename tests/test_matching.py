@@ -163,3 +163,56 @@ def test_known_limitation_two_instances_described_identically_do_merge():
 
 def test_adjacent_lines_match_without_needing_the_title():
     assert same_defect(r(ADMIN, 10, "one thing"), r(ADMIN, 11, "another thing"))
+
+
+# -- what the tokeniser cannot do -------------------------------------------
+
+
+def test_a_japanese_title_yields_no_tokens():
+    """`review-language` is an input, so this is a configuration people use,
+    not a hypothetical. Pinned so the limitation is known rather than
+    discovered: for a language this cannot tokenise, duplicate suppression is
+    position-only."""
+    from quorum_review.matching import title_tokens
+
+    assert title_tokens("共有リンクの有効期限が検証されていない") == set()
+
+
+def test_identifiers_survive_whatever_the_prose_is():
+    """A title that quotes code still tokenises, because identifiers are Latin
+    whatever the language around them. Partial coverage, and worth knowing
+    before concluding the matcher does nothing outside English.
+
+    Stemmed to five characters like every other word, so `share_token` arrives
+    as `share` — which is enough to collide with another report naming the same
+    thing, and is all this is for.
+    """
+    from quorum_review.matching import title_tokens
+
+    assert title_tokens("`share_token` の有効期限が検証されていない") == {"share"}
+    assert title_tokens("`validate_export_name` が呼ばれていない") == {"valid"}
+
+
+def test_two_japanese_titles_fall_back_to_position():
+    """Not merged on wording — and that is the safe direction. Character
+    bigrams would merge these, and would also merge two titles differing only
+    in `削除` versus `パージ`, which are different bugs."""
+    from quorum_review.matching import Report, same_defect
+
+    a = Report("app/sharing.py", 10, "a = 1", "共有リンクの有効期限が検証されていない")
+    b = Report("app/sharing.py", 40, "b = 2", "共有リンクの期限チェックが欠落している")
+
+    assert not same_defect(a, b)
+
+    near = Report("app/sharing.py", 11, "c = 3", "共有リンクの期限チェックが欠落している")
+    assert same_defect(a, near)
+
+
+def test_the_english_path_is_unchanged():
+    """The documentation above must not have moved the behaviour it describes."""
+    from quorum_review.matching import Report, same_defect
+
+    a = Report("app/sharing.py", 10, "a = 1", "Share link expiry is never checked")
+    b = Report("app/sharing.py", 40, "b = 2", "Share link expiry check missing on read")
+
+    assert same_defect(a, b)

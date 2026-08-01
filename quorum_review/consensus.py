@@ -47,7 +47,24 @@ def _absorb(target: Finding, other: Finding) -> None:
     if SEVERITY_RANK.get(other.severity, 99) < SEVERITY_RANK.get(target.severity, 99):
         target.severity = other.severity
 
-    # Prefer the more substantial explanation; a one-line body helps nobody.
+    # Which explanation to keep, when two models wrote one for the same defect.
+    #
+    # Length, and it is the weakest rule in this file. Severity takes the worse
+    # of two because "worse" is defined; `reported_by` takes the union because
+    # both are true. There is no comparable ordering on prose, so this stands in
+    # for one — and longer is not better, it is only more.
+    #
+    # It is kept because the alternatives are worse rather than because it is
+    # good. Asking a model which explanation is better is a third call per
+    # merged finding, on the stage that exists to avoid per-finding calls, and
+    # it would be answered by a model that wrote one of them. Keeping the first
+    # is arbitrary in a way that depends on scan order. Keeping both doubles
+    # every agreed finding in the comment a human reads.
+    #
+    # What bounds the damage is that this only runs when both models already
+    # agree the defect is real — the disagreement, which is the interesting
+    # case, never reaches here. And both names are on the comment, so a reader
+    # who finds the explanation thin can see there was another.
     if len(other.body) > len(target.body):
         target.title, target.body = other.title, other.body
 
