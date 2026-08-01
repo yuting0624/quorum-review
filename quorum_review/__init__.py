@@ -5,4 +5,4 @@ Google Cloud credential. Pull request review is the subject matter, not the
 product.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
