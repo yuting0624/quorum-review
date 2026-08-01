@@ -192,3 +192,53 @@ def test_the_sarif_upload_checks_there_is_something_to_upload():
         if step.get("name") == "Upload SARIF"
     )
     assert "steps.sarif.outputs.found" in str(upload["if"])
+
+
+# -- the App token, and its silent fallback ---------------------------------
+
+
+APP_TOKEN_FILES = [
+    WORKFLOWS / "review.yml",
+    Path(__file__).resolve().parent.parent / "examples" / "review-vertex-app.yml",
+]
+
+
+@pytest.mark.parametrize("path", APP_TOKEN_FILES, ids=lambda p: p.name)
+def test_a_failed_mint_is_not_silent(path: Path):
+    """`continue-on-error` reports the step as successful whatever happened, so
+    a mint that failed leaves a green run and comments still posted by
+    github-actions. That is exactly what an App created, configured and never
+    *installed* looks like, and the reason was four hundred lines into a log.
+
+    `outcome` is the real result; `conclusion` is the one continue-on-error
+    rewrites. The check has to be on `outcome`."""
+    steps = dict(steps_of(load(path)))
+    warn = [
+        step
+        for _job, step in steps_of(load(path))
+        if "could not be minted" in str(step.get("name", ""))
+    ]
+    assert warn, f"{path.name}: a failed mint would be invisible"
+    assert "steps.app-token.outcome" in str(warn[0]["if"]), (
+        "must key on `outcome`; `conclusion` is rewritten by continue-on-error"
+    )
+    assert steps is not None
+
+
+@pytest.mark.parametrize("path", APP_TOKEN_FILES, ids=lambda p: p.name)
+def test_the_review_falls_back_rather_than_stopping(path: Path):
+    """A fork, a revoked installation or an expired key should degrade the
+    review, not end it."""
+    mint = next(
+        step for _job, step in steps_of(load(path)) if step.get("id") == "app-token"
+    )
+    assert mint.get("continue-on-error") is True
+
+    review = next(
+        step
+        for _job, step in steps_of(load(path))
+        if step.get("name") == "Review" or str(step.get("uses", "")).startswith("./")
+    )
+    token = str(review["with"]["github-token"])
+    assert "steps.app-token.outputs.token" in token
+    assert "github.token" in token

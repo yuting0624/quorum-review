@@ -78,12 +78,30 @@ jobs:
               || github.event.inputs.pr }}/merge
           fetch-depth: 2
 
+      # `continue-on-error` because the App is an improvement, not a
+      # requirement: a revoked installation or an expired key should degrade
+      # the review to GITHUB_TOKEN rather than stop it.
       - name: Mint a token from the App
         id: app-token
+        continue-on-error: true
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      # `continue-on-error` reports the step as *successful* whatever happened,
+      # so a mint that failed is invisible in the run summary — which is how an
+      # App that was created and configured but never installed on the
+      # repository went unnoticed: secrets set, step green, comments still from
+      # github-actions, and the reason four hundred lines into a log.
+      #
+      # `outcome` is the real result. `conclusion` is the one continue-on-error
+      # rewrites.
+      - name: Say so if the App token could not be minted
+        if: steps.app-token.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Falling back to GITHUB_TOKEN::The App token           could not be minted, so this review runs with GITHUB_TOKEN and cannot           collapse resolved threads. The usual cause is an App that exists but           is not installed on this repository."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -95,6 +113,6 @@ jobs:
         uses: yuting0624/quorum-review@v1
         with:
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          github-token: ${{ steps.app-token.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
