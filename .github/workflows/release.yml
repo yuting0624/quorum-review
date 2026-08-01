@@ -54,3 +54,14 @@ jobs:
           git tag -f "$major" "$GITHUB_SHA"
           git push -f origin "refs/tags/$major"
           echo "::notice::$major now points at $GITHUB_REF_NAME ($GITHUB_SHA)"
+
+      # From the tag's own message, so there is one place to write it and no
+      # second chance to write something different. Doing this by hand is how
+      # the first four releases went unpublished for a day: the tags carried
+      # the notes and nothing surfaced them.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME"             --title "$GITHUB_REF_NAME" --notes-file notes.md
