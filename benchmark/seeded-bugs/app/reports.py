@@ -20,7 +20,7 @@ def write_report(user: dict, doc_id: int, filename: str) -> str:
         raise Forbidden("document.report")
 
     doc = get_document(doc_id, user)
-    destination = os.path.join(_user_dir(user), validators.safe_export_name(filename))
+    destination = os.path.join(_user_dir(user), validators.export_name(filename))
 
     with open(destination, "w", encoding="utf-8") as handle:
         json.dump({"title": doc["title"], "body": doc.get("body", "")}, handle)
