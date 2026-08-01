@@ -5,7 +5,12 @@ we found stacks API keys from separate vendors; here the GitHub Actions OIDC
 token is exchanged once for short-lived Google Cloud credentials, and *both*
 models authenticate off those same Application Default Credentials. No
 long-lived secret is stored in the repository, billing lands on one invoice, and
-the code never leaves the Vertex region.
+the code goes to Vertex rather than to two separate vendors.
+
+That last point used to be written here as "the code never leaves the Vertex
+region", which was not true of the configuration it shipped with: the default
+endpoint is ``global``, which routes to whichever region has capacity. Setting
+``QUORUM_VERTEX_REGION`` makes it true. See ``_region``.
 
 Which model plays which role is configuration, not structure. ``PRIMARY_MODEL``
 and ``VERIFIER_MODEL`` are resolved to an engine by model-ID prefix, so running
@@ -17,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -46,6 +52,39 @@ from .base import ProviderUnavailable
 # relying on this value — `python -m src.review --list-models` prints the list.
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+
+#: ``global``, or a Vertex location like ``europe-west4`` / ``us-east5``. Not a
+#: guess at which regions exist — the point is to reject a value that is not
+#: shaped like one at all, before it becomes a hostname.
+_REGION = re.compile(r"global|[a-z]+-[a-z]+\d+")
+
+
+def _region(specific: str) -> str:
+    """Resolve a per-model region, falling back to the shared one, then global.
+
+    ``global`` is the recommended endpoint for both products and is the default
+    because it is the one most likely to have the model available. It is
+    explicitly *not* a data-residency guarantee: it routes to whichever region
+    has capacity. An organisation that has to keep source in one jurisdiction
+    sets ``QUORUM_VERTEX_REGION`` and gets a regional endpoint for both models.
+
+    The per-model override exists because Model Garden entitlements can be
+    region-scoped, so Claude sometimes has to sit somewhere Gemini does not.
+    """
+    return (
+        os.getenv(specific, "").strip()
+        or os.getenv("QUORUM_VERTEX_REGION", "").strip()
+        or "global"
+    )
+
+
+def gemini_location() -> str:
+    return _region("GOOGLE_CLOUD_LOCATION")
+
+
+def claude_region() -> str:
+    return _region("CLAUDE_VERTEX_REGION")
+
 
 # Output budgets. `max_tokens` on Claude caps thinking *plus* response text, and
 # thinking is on by default on Opus 5 — a budget sized for the JSON alone
@@ -472,13 +511,16 @@ class VertexProvider:
             raise ProviderUnavailable(
                 "GOOGLE_CLOUD_PROJECT is not set; vertex mode needs a project ID"
             )
+        for region in (gemini_location(), claude_region()):
+            if not _REGION.fullmatch(region):
+                raise ProviderUnavailable(
+                    f"{region!r} is not a Vertex region. Expected 'global' or "
+                    f"something like 'europe-west4'."
+                )
 
         self._project = project
-        # 'global' is the recommended endpoint for both products. Claude's
-        # entitlement in Model Garden can be region-scoped, so it gets its own
-        # override — try us-east5 if a global call comes back 404.
-        self._gemini_location = os.getenv("GOOGLE_CLOUD_LOCATION", "global").strip()
-        self._claude_region = os.getenv("CLAUDE_VERTEX_REGION", "global").strip()
+        self._gemini_location = gemini_location()
+        self._claude_region = claude_region()
 
         # Two configured slots, but both models do both jobs. The names are
         # kept because they are the documented inputs; the order only decides
@@ -494,6 +536,22 @@ class VertexProvider:
     def usage(self) -> dict[str, ModelUsage]:
         """Per-model token and call counts, for models actually used."""
         return {model: engine.usage for model, engine in self._engines.items()}
+
+    @property
+    def regions(self) -> dict[str, str]:
+        """Where each model that ran was actually called.
+
+        Only models that ran: naming a region for a model that was configured
+        and never reached would be a claim about traffic that did not happen.
+        """
+        return {
+            model: (
+                self._claude_region
+                if model.startswith("claude")
+                else self._gemini_location
+            )
+            for model in self._engines
+        }
 
     def _engine(self, model: str) -> _Engine:
         """Resolve a model ID to an engine, constructing it on first use.

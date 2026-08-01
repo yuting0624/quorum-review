@@ -547,6 +547,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
         if not ctx.diff.strip():
             report.repo_access = "off: nothing to review"
             report.usage = dict(provider.usage)
+            report.regions = dict(getattr(provider, "regions", {}))
             report.elapsed_seconds = time.monotonic() - started
             body = report_mod.render_nothing_to_review(report, skipped_files)
             if dry_run:
@@ -699,6 +700,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         # -- write back --------------------------------------------------------
         report.usage = dict(provider.usage)
+        report.regions = dict(getattr(provider, "regions", {}))
         report.elapsed_seconds = time.monotonic() - started
 
         if dry_run:
@@ -759,6 +761,7 @@ async def run(skill_name: str, dry_run: bool) -> int:
 
         ledger.last_reviewed_sha = ctx.head_sha
         report.usage = dict(provider.usage)
+        report.regions = dict(getattr(provider, "regions", {}))
         report.budget_note = budget.note(provider.usage)
         report.elapsed_seconds = time.monotonic() - started
         body = report_mod.render(report)

@@ -50,12 +50,29 @@ inputs:
     description: Google Cloud project ID. Required in vertex mode.
     required: false
     default: ""
+  vertex-region:
+    description: >-
+      Pin both models to one Vertex region, for data residency. Empty means the
+      'global' endpoint, which routes to whichever region has capacity and is
+      therefore not a residency guarantee. Set this to a region such as
+      'europe-west4' or 'us-east5' and your code stays in it — check that both
+      models are actually served there first, because a region that does not
+      offer one of them returns 404 rather than falling back.
+    required: false
+    default: ""
   claude-vertex-region:
     description: >-
-      Vertex region for Claude. 'global' is recommended; try 'us-east5' if your
-      Model Garden entitlement is region-scoped.
+      Vertex region for Claude, overriding `vertex-region`. Model Garden
+      entitlements can be region-scoped, so Claude sometimes has to sit
+      somewhere Gemini does not. Leaving both empty uses 'global'.
     required: false
-    default: global
+    default: ""
+  gemini-location:
+    description: >-
+      Vertex location for Gemini, overriding `vertex-region`. Leaving both
+      empty uses 'global'.
+    required: false
+    default: ""
   github-token:
     description: Token used to read the diff and post comments.
     required: false
@@ -274,7 +291,9 @@ runs:
         VERIFIER_MODEL: ${{ inputs.verifier-model }}
         REVIEW_LANGUAGE: ${{ inputs.review-language }}
         GOOGLE_CLOUD_PROJECT: ${{ inputs.google-cloud-project }}
+        QUORUM_VERTEX_REGION: ${{ inputs.vertex-region }}
         CLAUDE_VERTEX_REGION: ${{ inputs.claude-vertex-region }}
+        GOOGLE_CLOUD_LOCATION: ${{ inputs.gemini-location }}
         QUORUM_EXCLUDE: ${{ inputs.exclude }}
         QUORUM_INCREMENTAL: ${{ inputs.incremental }}
         QUORUM_SCAN: ${{ inputs.scan }}

@@ -218,6 +218,52 @@ If none of that is acceptable in your environment, do not deploy
   per-caller, so exhausting one does not silence the other model.
 - A 20-minute ceiling on the whole run.
 
+## Where the code goes
+
+The diff, and whatever the models read from the checkout, are sent to Vertex AI
+in your own Google Cloud project. Nothing is sent anywhere else: there is no
+service operated by this project, no telemetry, and no second vendor. The
+findings are written back to GitHub as comments and SARIF, which is the only
+other place the content lands.
+
+**The default is not a residency guarantee.** Both models default to the
+`global` endpoint, which routes to whichever region has capacity. That is the
+right default for getting started — it is the endpoint most likely to have the
+model available — and it is the wrong one if you have to state a jurisdiction
+in writing.
+
+Pin it:
+
+```yaml
+with:
+  vertex-region: europe-west4     # both models
+  # claude-vertex-region: us-east5  # override one, if the entitlement demands it
+```
+
+Check that both models are actually served in the region before you rely on it.
+A region that does not offer one of them returns 404 rather than falling back —
+which is the behaviour you want, but it means the review degrades to one model
+rather than failing loudly. The summary names the model that dropped out.
+
+Every summary comment records where each model that ran was called, so the
+answer to "which region processed this pull request" is in the pull request:
+
+> Reviewed `abc1234` · quorum-review `1.5.0` · models `gemini-3.6-flash`,
+> `claude-opus-5` · `claude-opus-5` in `europe-west4`, `gemini-3.6-flash` in
+> `europe-west4` · 118s
+
+A value that is not shaped like a region is refused at startup rather than
+turned into a hostname, because that failure otherwise arrives as a connection
+error and reads like the network.
+
+Two things this does *not* control, and which belong in the same assessment:
+
+- **Prompt caching** is on for the system prompt. It is Vertex-side, within the
+  same project and endpoint, and it holds the criteria rather than your diff.
+- **Model training.** Whether prompts sent to Vertex are used for training is
+  governed by your Google Cloud terms, not by this action. Check them; the
+  answer differs between the Google-published and third-party models.
+
 ## Operational guidance
 
 **Grant the service account `roles/aiplatform.user` and nothing more.** Any

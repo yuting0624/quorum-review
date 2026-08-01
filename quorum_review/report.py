@@ -67,6 +67,10 @@ class RunReport:
     #: rather than counted, because silence here reads as "nothing was found in
     #: that file".
     off_diff_paths: list[str] = field(default_factory=list)
+    #: ``{model: vertex region}`` for the models that actually ran. Reported
+    #: because "where did our source code go" is a question somebody has to
+    #: answer in writing, and the run is the cheapest place to answer it from.
+    regions: dict[str, str] = field(default_factory=dict)
     #: ``{old path: new path}`` for files this change moves. Reported because a
     #: reader seeing findings appear at a path they did not edit deserves to
     #: know the reviewer followed a rename rather than invented them.
@@ -704,12 +708,23 @@ def _footer(report: RunReport) -> list[str]:
         lines.append("")
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
+    # Which endpoint served each model, because "where did our source code go"
+    # is a question somebody has to answer in writing, and a run that answers
+    # it in its own output is easier to answer it from than one that does not.
+    # `global` is named as `global` rather than dressed up as a region: it
+    # routes to whichever region has capacity, and calling that a location
+    # would be the misleading part.
+    where = (
+        " · " + ", ".join(f"`{m}` in `{r}`" for m, r in sorted(report.regions.items()))
+        if report.regions
+        else ""
+    )
     lines.append(
         f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
         f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
-        + f"{elapsed} · quorum-review — a reference implementation, not a "
-        "supported product.</sub>"
+        + f"{where}{elapsed} · quorum-review — a reference implementation, not "
+        "a supported product.</sub>"
     )
     return lines
 
