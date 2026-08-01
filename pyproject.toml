@@ -27,7 +27,15 @@ dependencies = [
 # `cryptography` generates a throwaway CA in the tests rather than shipping a
 # certificate that expires. It arrives transitively; declared so the suite does
 # not depend on that continuing to be true.
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "cryptography>=42"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "cryptography>=42",
+    # The workflow files are checked as data, because GitHub does not fail
+    # loudly on one it cannot parse.
+    "pyyaml>=6",
+]
 
 # The entry point is `python -m quorum_review.review`, run from a checkout of this
 # repository, so the package name matches the directory rather than the project.
