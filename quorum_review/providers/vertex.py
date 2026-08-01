@@ -81,12 +81,11 @@ def _location(specific: str, vendor: str) -> str:
     whatever the caller had set at the job level.
 
     The vendor variable is read, but *below* the shared pin rather than above
-    it. A reviewer reported that ordering the other way round lets an ambient
-    ``GOOGLE_CLOUD_LOCATION`` — from a runner image, an org-level ``env:``, a
-    devcontainer — silently defeat a ``vertex-region`` written in the workflow.
-    The second model refuted it as the documented design, and it was; the
-    reporter was right that the design was wrong. A residency pin someone wrote
-    down has to beat something they inherited, or it is not a pin.
+    it. Ordered the other way round, an ambient ``GOOGLE_CLOUD_LOCATION`` —
+    from a runner image, an organisation-level ``env:``, a devcontainer —
+    silently defeats a ``vertex-region`` written into the workflow. A residency
+    pin someone wrote down has to beat something they inherited, or it is not a
+    pin.
     """
     return (
         os.getenv(specific, "").strip()

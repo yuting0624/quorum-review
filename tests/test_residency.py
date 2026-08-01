@@ -165,11 +165,10 @@ def test_the_input_wins_when_it_is_set(monkeypatch):
 
 
 def test_a_pin_beats_a_variable_that_was_merely_inherited(monkeypatch):
-    """A reviewer reported this and the second model refuted it as the
-    documented design. It was the documented design, and the design was wrong:
-    an ambient GOOGLE_CLOUD_LOCATION — a runner image, an org-level `env:`, a
-    devcontainer — silently defeated a `vertex-region` written in the workflow.
-    A residency pin someone wrote down has to beat something they inherited."""
+    """An ambient GOOGLE_CLOUD_LOCATION — a runner image, an org-level `env:`,
+    a devcontainer — used to sit above the shared pin, so it silently defeated
+    a `vertex-region` written into the workflow. A residency pin someone wrote
+    down has to beat something they inherited."""
     monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
     monkeypatch.setenv("QUORUM_VERTEX_REGION", "europe-west4")
 
