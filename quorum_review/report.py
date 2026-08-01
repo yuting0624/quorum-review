@@ -552,7 +552,13 @@ def render(report: RunReport) -> str:
         ]
 
     if report.off_diff_paths:
-        shown = ", ".join(f"`{p}`" for p in report.off_diff_paths[:10])
+        # `flatten`, unlike every other path list here. Those come from the
+        # diff; this one is the model's own text, and it is on this list
+        # *because* it did not match anything GitHub sent. Echoing it raw put
+        # attacker-influenced content into the same comment that carries
+        # `<!-- quorum-state: ... -->`, where a forged marker would be read
+        # back as the ledger on the next run.
+        shown = ", ".join(f"`{flatten(p, 200)}`" for p in report.off_diff_paths[:10])
         if len(report.off_diff_paths) > 10:
             shown += f", and {len(report.off_diff_paths) - 10} more"
         lines += [

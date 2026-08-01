@@ -7,9 +7,13 @@ this repository's own CI, so both are asserted here instead.
 
 from __future__ import annotations
 
+import datetime
+import ssl
+
+import certifi
 import pytest
 
-from quorum_review.github_client import ca_bundle, graphql_url
+from quorum_review.github_client import ca_bundle, graphql_url, ssl_context
 
 # -- GraphQL is not under the REST root on Enterprise Server ---------------
 
@@ -112,3 +116,83 @@ def test_it_falls_through_a_stale_entry_to_a_real_one(monkeypatch, tmp_path):
 def test_a_directory_is_not_a_bundle(monkeypatch, tmp_path):
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(tmp_path))
     assert ca_bundle() == ""
+
+
+# -- adding to the trust store, not replacing it ----------------------------
+
+
+def test_no_bundle_means_httpx_defaults():
+    assert ssl_context() is True
+
+
+def test_a_bundle_produces_a_context_that_still_trusts_public_roots(
+    monkeypatch, tmp_path
+):
+    """`verify=<path>` was the first attempt and *replaces* the trust store.
+    On a runner where REQUESTS_CA_BUNDLE holds the proxy root alone, that turns
+    a working connection to a public host into a handshake failure — setting a
+    variable meant to fix reachability would have broken it instead."""
+    bundle = tmp_path / "corp.pem"
+    bundle.write_bytes(_self_signed())
+    monkeypatch.setenv("QUORUM_CA_BUNDLE", str(bundle))
+
+    context = ssl_context()
+    assert isinstance(context, ssl.SSLContext)
+
+    subjects = {cert["subject"] for cert in context.get_ca_certs()}
+    baseline = ssl.create_default_context(cafile=certifi.where())
+    assert len(subjects) > len(baseline.get_ca_certs()), (
+        "the corporate root should be added to the public ones, not replace them"
+    )
+
+
+def test_the_corporate_root_is_actually_in_there(monkeypatch, tmp_path):
+    bundle = tmp_path / "corp.pem"
+    bundle.write_bytes(_self_signed())
+    monkeypatch.setenv("QUORUM_CA_BUNDLE", str(bundle))
+
+    context = ssl_context()
+    names = [
+        value
+        for cert in context.get_ca_certs()
+        for rdn in cert["subject"]
+        for key, value in rdn
+        if key == "commonName"
+    ]
+    assert "quorum-review test proxy" in names
+
+
+def test_an_unreadable_bundle_falls_back_rather_than_failing(monkeypatch, tmp_path):
+    """A convenience over variables the operator set for other tools must not
+    be able to take the run down."""
+    bundle = tmp_path / "corp.pem"
+    bundle.write_text("this is not a certificate")
+    monkeypatch.setenv("QUORUM_CA_BUNDLE", str(bundle))
+
+    assert ssl_context() is True
+
+
+def _self_signed() -> bytes:
+    """A throwaway CA certificate, generated so the test does not ship one that
+    expires."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "quorum-review test proxy")]
+    )
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime(2020, 1, 1))
+        .not_valid_after(datetime.datetime(2038, 1, 1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return certificate.public_bytes(serialization.Encoding.PEM)

@@ -9,11 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ssl
 import sys
 import time
 from dataclasses import dataclass
 from typing import Any
 
+import certifi
 import httpx
 
 from . import diffs
@@ -58,6 +60,36 @@ def ca_bundle() -> str:
         if path and os.path.isfile(path):
             return path
     return ""
+
+
+def ssl_context() -> ssl.SSLContext | bool:
+    """Verification settings for outbound HTTPS: the defaults, plus any
+    corporate CA. ``True`` when there is nothing to add.
+
+    Passing the bundle to httpx as ``verify=<path>`` was the first attempt and
+    is not the same thing — it *replaces* the trust store. On a runner where
+    ``REQUESTS_CA_BUNDLE`` points at the proxy's root alone, that turns a
+    working connection to a public host into a handshake failure, so setting a
+    variable meant to fix reachability would have broken it instead. Adding is
+    the only behaviour that is safe to apply automatically.
+
+    A bundle that cannot be loaded is skipped rather than fatal, for the same
+    reason a missing one is: this is a convenience over variables the operator
+    set for other tools, and it must not be able to take the run down.
+    """
+    bundle = ca_bundle()
+    if not bundle:
+        return True
+
+    context = ssl.create_default_context(cafile=certifi.where())
+    try:
+        context.load_verify_locations(cafile=bundle)
+    except (OSError, ssl.SSLError) as error:
+        print(
+            f"::warning::ignoring unreadable CA bundle {bundle}: {error}", file=sys.stderr
+        )
+        return True
+    return context
 
 
 def graphql_url(api_root: str = "") -> str:
@@ -202,13 +234,12 @@ class GitHubClient:
             raise GitHubError("GITHUB_REPOSITORY must look like 'owner/repo'")
         self.owner, self.repo = repository.split("/", 1)
 
-        bundle = ca_bundle()
         self._http = httpx.AsyncClient(
             base_url=os.getenv("GITHUB_API_URL") or API_ROOT,
             timeout=_TIMEOUT,
             # `trust_env` already covers HTTPS_PROXY and NO_PROXY; the CA
-            # bundle is the part httpx does not read. See ``ca_bundle``.
-            verify=bundle or True,
+            # bundle is the part httpx does not read. See ``ssl_context``.
+            verify=ssl_context(),
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",

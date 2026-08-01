@@ -153,9 +153,18 @@ def anchored(findings: list[Finding], diff: str) -> tuple[list[Finding], list[st
     returned rather than discarded, and the summary says so. Silence here would
     read as "nothing was found in that file".
     """
+    moves = diffs.renames(diff)
     known = set(diffs.split_by_file(diff))
     kept, dropped = [], []
     for finding in findings:
+        # A rename shows the old path in the diff header and is keyed on the
+        # new one, so a model that read the header and reported `a/old.py` is
+        # naming a file this change genuinely touches. Dropping it here would
+        # have undone the rename following added earlier: the finding would
+        # vanish instead of moving with the file.
+        moved_to = moves.get(finding.file_path)
+        if moved_to in known:
+            finding.file_path = moved_to
         if finding.file_path in known:
             kept.append(finding)
         else:
