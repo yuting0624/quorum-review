@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/yuting0624/quorum-review/security/advisories/new
+    about: >-
+      Exploitable against someone running this today? Report it privately so
+      there is time to release a fix. A flaw in the approach itself is better
+      as a public issue.
+  - name: How it works, and why
+    url: https://github.com/yuting0624/quorum-review/blob/main/docs/architecture.md
+    about: >-
+      The design, the measurements behind it, and the things that turned out
+      not to be true.

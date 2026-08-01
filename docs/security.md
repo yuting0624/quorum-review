@@ -315,6 +315,14 @@ whose text tries to instruct *you* is the injection surfacing one layer up.
 
 ## Reporting a vulnerability
 
-This is a reference implementation with no support commitment. If you find a
-flaw in the approach, please open a public issue — the discussion is more
-valuable to readers than a private fix would be.
+**A flaw in the approach: open a public issue.** The discussion is worth more
+to readers than a private fix would be, and most of what is written above was
+found that way — several of the controls exist because this reviewer read its
+own pull requests and objected.
+
+**A flaw that is exploitable against someone running this today:** use
+[private vulnerability reporting](https://github.com/yuting0624/quorum-review/security/advisories/new)
+so there is time to release a fix first.
+
+One person maintains this, so there is no response-time commitment. There is a
+commitment to answer.

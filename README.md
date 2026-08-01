@@ -22,14 +22,18 @@ long-lived secret in your repository, one invoice.
 
 ![hero image](hero.png)
 
-> ### 📐 A reference implementation, not a product
+> ### 📐 Built to be read as well as run
 >
-> This is a worked example of running Gemini and Claude together on Gemini
-> Enterprise Agent Platform.
-> Pull request review is the subject matter, chosen because it makes the example
-> concrete and testable — not an attempt to compete with the review tools that
-> already exist. Read it expecting to learn the arrangement. No support channel,
-> no compatibility promise.
+> This started as a worked example of running Gemini and Claude together on
+> Gemini Enterprise Agent Platform, and it still reads like one: the
+> arrangement is the interesting part, and
+> [`providers/vertex.py`](quorum_review/providers/vertex.py) is written to be
+> understood rather than skimmed.
+>
+> It is also in use, on this repository, on every pull request — including the
+> ones that change it. **Issues and pull requests are welcome and get answered.**
+> One person maintains it, so it is not a vendor: expect a considered reply, not
+> a support contract.
 
 ## ⚡ What it looks like
 
