@@ -22,6 +22,7 @@ def posted(comment_id: int, finding_id: str, path="app/search.py", line=18,
         "id": comment_id,
         "path": path,
         "line": line,
+        "user": {"login": "github-actions[bot]", "type": "Bot"},
         "body": (
             f"\U0001f534 **{title}**\n\n"
             "The search term reaches the query unparameterised.\n\n"
@@ -132,6 +133,7 @@ def test_a_title_that_cannot_be_read_is_marked_as_such():
         "id": 40,
         "path": "a.py",
         "line": 1,
+        "user": {"login": "github-actions[bot]", "type": "Bot"},
         "body": "no bold\n\n<sub>`security` \u00b7 id `cccccccccccccccc`</sub>",
     }
     entry = rebuild(7, [odd], dismissed=set()).entries["cccccccccccccccc"]
@@ -297,7 +299,7 @@ def test_a_closure_reply_from_anyone_else_is_not_trusted():
     fixed is excluded from the SARIF upload, so a fake closure would close a
     code-scanning alert."""
     comments = [
-        {**posted(11, "5e" * 8), "user": {"login": "github-actions[bot]"}},
+        {**posted(11, "5e" * 8)},
         by(12, 11, "drive-by", "No longer reported as of `abc1234`."),
     ]
     book, _ = rebuild_via_client(comments, writers=set())
@@ -306,7 +308,7 @@ def test_a_closure_reply_from_anyone_else_is_not_trusted():
 
 def test_a_closure_reply_from_the_reviewer_is_trusted():
     comments = [
-        {**posted(11, "6f" * 8), "user": {"login": "github-actions[bot]"}},
+        {**posted(11, "6f" * 8)},
         by(12, 11, "github-actions[bot]", "No longer reported as of `abc1234`."),
     ]
     book, _ = rebuild_via_client(comments, writers=set())
@@ -445,3 +447,35 @@ def test_a_dismissal_is_absorbed_even_though_it_is_not_open():
     posted_state = rebuild(7, [posted(11, "dd" * 8)], dismissed={11})
     assert recorded.absorb(posted_state) == 1
     assert recorded.entries["dd" * 8].status == "wontfix"
+
+
+def test_a_comment_a_person_wrote_is_never_rebuilt_into_a_finding():
+    """Reported by the reviewer, one level above where I had fixed it.
+
+    `owns_thread` checks the author, but `find_entry` runs first and its ledger
+    may itself have been rebuilt from comments — so the check had to be here,
+    at the source. It matters more here too: a rebuilt entry *suppresses*, so
+    planting a comment at the right path and line would stop a real finding
+    being reported there.
+    """
+    forged = {
+        "id": 99,
+        "path": "app/search.py",
+        "line": 18,
+        "user": {"login": "drive-by", "type": "User"},
+        "body": "**Looks fine**\n\n<sub>`security` · id `deadbeefdeadbeef`</sub>",
+    }
+    assert rebuild(7, [forged], dismissed=set()).entries == {}
+
+
+def test_a_forged_comment_cannot_suppress_a_real_finding():
+    """The consequence, rather than the predicate."""
+    forged = {
+        "id": 99,
+        "path": "app/search.py",
+        "line": 18,
+        "user": {"login": "drive-by", "type": "User"},
+        "body": "**Nothing to see**\n\n<sub>`security` · id `deadbeefdeadbeef`</sub>",
+    }
+    book = rebuild(7, [forged], dismissed=set())
+    assert not book.is_suppressed(finding("abc123def4560000"))
