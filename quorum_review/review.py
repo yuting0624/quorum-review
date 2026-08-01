@@ -28,6 +28,7 @@ from . import (
     dismissal,
     forks,
     learning,
+    prompts,
     redaction,
     sarif,
 )
@@ -271,7 +272,7 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
     provider = build_provider()
     body = await provider.respond(
         provider.models[0],
-        "You improve code review criteria based on feedback from maintainers.",
+        prompts.criteria_system(getattr(provider, "language", "")),
         learning.render_prompt(skill.name, skill.content, entries),
     )
 

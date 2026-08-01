@@ -36,6 +36,17 @@ embedded instructions as a `security` finding rather than act on them.
 
 See `BASE_INSTRUCTIONS` in [`quorum_review/schema.py`](../quorum_review/schema.py).
 
+Every prompt the project sends is built in
+[`prompts.py`](../quorum_review/prompts.py) and every one of them starts with
+those instructions. That was not true for a while: the `@quorum /criteria` path
+built its own system prompt, one line long, and put finding titles — which
+quote code from the diff — beside its instructions as peers. It is the worst
+place to have left open, because the output is an edit to the review criteria
+offered to a human to paste in. A successful injection there is not one wrong
+comment; it is a permanent blind spot, installed by someone who thought they
+were tidying up false positives. That path is also now told never to propose
+removing a whole category.
+
 This is a mitigation, not a guarantee. Prompt injection is not a solved problem
 and instruction-hierarchy prompting can be defeated. The controls below assume
 it sometimes will be.

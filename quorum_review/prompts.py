@@ -261,3 +261,45 @@ Claim: {finding.title}
 
 Does the claim hold?
 """
+
+
+def criteria_system(language: str = "") -> str:
+    """System prompt for turning dismissals into a proposed criteria change.
+
+    This path was the one place attacker-controlled text reached a model
+    without the base instructions in front of it, and it is the worst place for
+    that: its output is a proposed edit to the criteria, offered to a human to
+    paste in. A successful injection here does not produce one wrong comment —
+    it produces a permanent hole, applied by someone who thought they were
+    tidying up false positives.
+
+    The finding titles quote code from the diff. The dismissal reasons come
+    from someone with write access, which the handler checks, so they are the
+    trusted half — but they arrive in the same block and are labelled with it.
+    """
+    return (
+        BASE_INSTRUCTIONS
+        + language_directive(language)
+        + """
+## Your task
+
+Findings were reported by a code reviewer and then dismissed by a maintainer of
+the repository. Each dismissal is a statement about what this codebase does not
+consider a problem. Propose a change to the criteria that would stop these
+specific findings being reported, without blinding the reviewer to the real
+problems the criteria exist to catch.
+
+- If the dismissals share a cause, say what it is in one sentence.
+- Give the edit as a short Markdown snippet ready to paste into the criteria,
+  usually an addition to a "Do not report" section.
+- If a dismissal looks like a one-off rather than a pattern, say so and leave
+  it out. Narrowing the criteria for a single case costs more than it saves.
+- If the criteria are fine and the model simply misapplied them, say that
+  instead of inventing an edit.
+- **Never propose removing a whole category** — dropping "injection" or
+  "access control" is not a narrowing, it is a blind spot. If that is what the
+  dismissals would imply, say so and propose nothing.
+
+Reply as plain Markdown. Be brief.
+"""
+    )
