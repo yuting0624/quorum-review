@@ -63,6 +63,23 @@ The **Evidence** column is the point. *Both models, independently* means two
 models that could not see each other's output reached the same conclusion —
 better than either one's self-reported confidence, and it costs nothing extra.
 
+**And here is where that stops working.** Independent agreement is evidence
+about what both models could see. It says nothing about context neither of them
+has, because the thing they are missing is the same thing — the independence is
+in the reasoning, not in the evidence.
+
+A concrete case, from someone adopting this: a workflow passes
+`pr-number: ${{ github.event.inputs.pr }}`, which is empty on every trigger
+except `workflow_dispatch`. That is correct — the action unsets an empty value
+and derives the number from the event payload — but the code that makes it
+correct lives in *this* repository, outside the checkout a reviewer's tools can
+read. Both models flagged it as a bug, independently, so it arrived in the
+confirmed table with the strongest evidence this project can produce. Four
+model reviews in total, all agreeing, all wrong, all for the same reason.
+
+Two scans buy you insurance against one model's blind spot. They do not buy
+insurance against a blind spot in what you handed both of them.
+
 ## 💡 Why
 
 Claude is available on **Gemini Enterprise Agent Platform** alongside Gemini.

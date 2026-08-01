@@ -349,3 +349,89 @@ def test_a_bot_comment_cannot_cancel_a_running_review(path: Path):
         f"{path.name}: `cancel-in-progress: {cancel}` lets the reviewer's own "
         f"comment cancel the run that posted it"
     )
+
+
+# -- guards that have to work on every trigger ------------------------------
+
+
+NON_FORK_WORKFLOWS = [
+    p for p in ALL_WORKFLOWS if p.name not in {"review-fork.yml", "review-apikey.yml"}
+]
+
+
+@pytest.mark.parametrize("path", NON_FORK_WORKFLOWS, ids=lambda p: p.name)
+def test_a_fork_is_refused_before_anything_is_cloned(path: Path):
+    """`github.event.pull_request` exists on `pull_request` and
+    `pull_request_review_comment` and nowhere else, so the `if:` guard reading
+    `head.repo.fork != true` passes on `issue_comment` and `workflow_dispatch`
+    — `null != true`. A maintainer typing the trigger phrase on an outside
+    contributor's pull request is an ordinary thing to do, and it reached the
+    checkout.
+
+    The action refuses the review, but only after this job has put the fork's
+    merge commit on the runner. So the guard has to resolve fork-ness the same
+    way the action does, and has to do it first.
+    """
+    document = load(path)
+    if not runs_this_action(document):
+        return
+
+    steps = [step for _job, step in steps_of(document)]
+    names = [str(step.get("name", "")) for step in steps]
+    assert "Refuse a fork" in names, f"{path.name}: nothing resolves fork-ness"
+
+    guard = names.index("Refuse a fork")
+    first_clone = next(
+        i
+        for i, s in enumerate(steps)
+        if str(s.get("uses", "")).startswith("actions/checkout")
+    )
+    assert guard < first_clone, (
+        f"{path.name}: the fork check runs after the checkout it exists to prevent"
+    )
+
+    condition = " ".join(str(steps[guard]["if"]).split())
+    for event in ("issue_comment", "workflow_dispatch"):
+        assert event in condition, f"{path.name}: {event} is not covered"
+
+
+@pytest.mark.parametrize("path", NON_FORK_WORKFLOWS, ids=lambda p: p.name)
+def test_nothing_clones_a_pull_request_with_credentials_persisted(path: Path):
+    """`persist-credentials` defaults to true, which writes the token into the
+    clone's git config — inside a tree written by whoever opened the pull
+    request."""
+    for job, step in steps_of(load(path)):
+        with_ = step.get("with") or {}
+        if "refs/pull/" not in str(with_.get("ref", "")):
+            continue
+        assert with_.get("persist-credentials") is False, (
+            f"{path.name}: job {job!r} clones a pull request with the token persisted"
+        )
+
+
+@pytest.mark.parametrize("path", ALL_WORKFLOWS, ids=lambda p: p.name)
+def test_every_comment_the_reviewer_posts_is_covered(path: Path):
+    """Not just the summary. The reviewer posts one inline comment per finding,
+    each firing `pull_request_review_comment: created`, so a review with N
+    findings had N+1 chances to cancel itself rather than one.
+
+    `github.event.comment.user.type` is present on both comment events, so the
+    same expression covers both — asserted rather than assumed, because the
+    two events carry different payloads and it would be easy to key on
+    something that only exists on one.
+    """
+    document = load(path)
+    if not runs_this_action(document):
+        return
+    concurrency = document.get("concurrency")
+    if not concurrency:
+        return
+
+    triggers = document[True] if True in document else document["on"]
+    if "pull_request_review_comment" not in triggers:
+        return
+
+    cancel = str(concurrency["cancel-in-progress"])
+    assert "github.event.comment.user.type" in cancel, (
+        f"{path.name}: keys on something that does not exist on both comment events"
+    )
