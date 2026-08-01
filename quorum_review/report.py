@@ -690,7 +690,15 @@ def _footer(report: RunReport) -> list[str]:
     """
     lines = []
 
-    if report.usage:
+    # Models that were actually reached. A provider reports usage for every
+    # engine it constructed, including one whose every call failed, and such a
+    # row reads as "this model ran and did nothing" — with an em dash where the
+    # region should be, because `regions` already filters on a completed call.
+    # A model that never answered is named in the degraded-run notice above,
+    # which is where it belongs.
+    reached = {model: used for model, used in report.usage.items() if used.calls}
+
+    if reached:
         # The region belongs here rather than in the footer line. "Where did our
         # source code go" is a question somebody has to answer in writing, so it
         # is worth recording — but it is worth recording once, in the place a
@@ -699,7 +707,7 @@ def _footer(report: RunReport) -> list[str]:
             "| Model | Region | Calls | Input | Cached input | Output |",
             "|---|---|--:|--:|--:|--:|",
         ]
-        for model, used in report.usage.items():
+        for model, used in reached.items():
             where = report.regions.get(model, "—")
             rows.append(
                 f"| `{model}` | `{where}` | {used.calls} | {used.input_tokens:,} | "
@@ -707,6 +715,18 @@ def _footer(report: RunReport) -> list[str]:
             )
         lines += ["<details>", "<summary>Usage</summary>", ""]
         lines += [*rows, "", "</details>", ""]
+    elif report.regions:
+        # Regions recorded but no usage to hang them on — a provider that does
+        # not count tokens, or a report rebuilt without them. The audit line is
+        # the promise; the table is only where it usually lives. Losing it
+        # silently because the other thing was missing is the failure mode this
+        # whole section exists to avoid.
+        lines.append(
+            "<sub>Ran in "
+            + ", ".join(f"`{m}` ({r})" for m, r in sorted(report.regions.items()))
+            + ".</sub>"
+        )
+        lines.append("")
 
     if report.budget_note:
         lines.append(f"<sub>Token ceiling: {report.budget_note}.</sub>")

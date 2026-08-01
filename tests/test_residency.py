@@ -241,3 +241,38 @@ def test_a_model_that_completed_a_call_is_listed(monkeypatch):
     provider._engine("claude-opus-5").usage.calls = 1
 
     assert provider.regions == {"claude-opus-5": "europe-west4"}
+
+
+def test_a_model_that_never_answered_is_not_given_a_region_row():
+    """A provider reports usage for every engine it built, including one whose
+    every call failed. Such a row reads as "this model ran and did nothing",
+    with an em dash where the region should be — and the degraded-run notice
+    above already names it."""
+    from quorum_review.schema import ModelUsage
+
+    run = report.RunReport(models=["gemini-3.6-flash", "claude-sonnet-5"])
+    run.usage = {
+        "gemini-3.6-flash": ModelUsage(calls=2, input_tokens=100),
+        "claude-sonnet-5": ModelUsage(calls=0),
+    }
+    run.regions = {"gemini-3.6-flash": "europe-west4"}
+    rendered = report.render(run)
+
+    assert "`gemini-3.6-flash` | `europe-west4`" in rendered
+    assert "| `claude-sonnet-5` |" not in rendered
+
+
+def test_the_region_survives_a_report_with_no_usage():
+    """The audit line is the promise; the Usage table is only where it usually
+    lives. Losing it because the other thing was missing is the failure this
+    section exists to avoid — and it is what moving the region into the table
+    introduced."""
+    run = report.RunReport(models=["claude-sonnet-5"])
+    run.regions = {"claude-sonnet-5": "europe-west4"}
+
+    assert "europe-west4" in report.render(run)
+
+
+def test_no_usage_and_no_regions_says_nothing():
+    run = report.RunReport(models=["claude-sonnet-5"])
+    assert "Ran in" not in report.render(run)

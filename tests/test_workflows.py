@@ -244,14 +244,32 @@ def test_the_review_falls_back_rather_than_stopping(path: Path):
     assert "github.token" in token
 
 
-ALL_ENTRY_POINTS = FILES + EXAMPLES
+def runs_this_action(document: dict) -> bool:
+    """Whether any step in this workflow invokes the reviewer.
+
+    By what the file *does*, not by what it is called. The first version
+    selected on `"review" in path.name` and skipped anything without a job
+    named `review` — so a workflow named something else, or with the job named
+    something else, would have been waved through by the check written to
+    catch it. Two ways to be silently exempt, in a test about a permission
+    whose absence only shows up at the first comment.
+    """
+    return any(
+        str(step.get("uses", "")).startswith("./")
+        or "quorum-review@" in str(step.get("uses", ""))
+        for _job, step in steps_of(document)
+    )
 
 
-@pytest.mark.parametrize(
-    "path",
-    [p for p in ALL_ENTRY_POINTS if "review" in p.name],
-    ids=lambda p: p.name,
-)
+ALL_WORKFLOWS = FILES + EXAMPLES
+
+
+def test_some_workflow_runs_the_action():
+    """A predicate that matches nothing passes every test that uses it."""
+    assert [p for p in ALL_WORKFLOWS if runs_this_action(load(p))]
+
+
+@pytest.mark.parametrize("path", ALL_WORKFLOWS, ids=lambda p: p.name)
 def test_every_workflow_that_posts_can_post(path: Path):
     """`pull-requests: write` wherever a review runs, including the App-token
     example — especially there. The App normally does the posting, so it is
@@ -259,6 +277,6 @@ def test_every_workflow_that_posts_can_post(path: Path):
     and fails on the first comment. A fallback that cannot do the job is not a
     fallback."""
     document = load(path)
-    if "review" not in (document.get("jobs") or {}):
-        pytest.skip("not a review workflow")
+    if not runs_this_action(document):
+        return
     assert (document.get("permissions") or {}).get("pull-requests") == "write"
