@@ -51,7 +51,7 @@ from .base import ProviderUnavailable
 # `-preview` suffixes. Confirm what your project can actually call before
 # relying on this value — `python -m src.review --list-models` prints the list.
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
-DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 
 #: A Vertex location: ``global``, a multi-region (``us``, ``eu``), or a region
 #: (``europe-west4``, ``us-east5``). Not a guess at which ones exist — the

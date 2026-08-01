@@ -192,3 +192,91 @@ def test_the_sarif_upload_checks_there_is_something_to_upload():
         if step.get("name") == "Upload SARIF"
     )
     assert "steps.sarif.outputs.found" in str(upload["if"])
+
+
+# -- the App token, and its silent fallback ---------------------------------
+
+
+APP_TOKEN_FILES = [
+    WORKFLOWS / "review.yml",
+    Path(__file__).resolve().parent.parent / "examples" / "review-vertex-app.yml",
+]
+
+
+@pytest.mark.parametrize("path", APP_TOKEN_FILES, ids=lambda p: p.name)
+def test_a_failed_mint_is_not_silent(path: Path):
+    """`continue-on-error` reports the step as successful whatever happened, so
+    a mint that failed leaves a green run and comments still posted by
+    github-actions. That is exactly what an App created, configured and never
+    *installed* looks like, and the reason was four hundred lines into a log.
+
+    `outcome` is the real result; `conclusion` is the one continue-on-error
+    rewrites. The check has to be on `outcome`."""
+    steps = dict(steps_of(load(path)))
+    warn = [
+        step
+        for _job, step in steps_of(load(path))
+        if "could not be minted" in str(step.get("name", ""))
+    ]
+    assert warn, f"{path.name}: a failed mint would be invisible"
+    assert "steps.app-token.outcome" in str(warn[0]["if"]), (
+        "must key on `outcome`; `conclusion` is rewritten by continue-on-error"
+    )
+    assert steps is not None
+
+
+@pytest.mark.parametrize("path", APP_TOKEN_FILES, ids=lambda p: p.name)
+def test_the_review_falls_back_rather_than_stopping(path: Path):
+    """A fork, a revoked installation or an expired key should degrade the
+    review, not end it."""
+    mint = next(
+        step for _job, step in steps_of(load(path)) if step.get("id") == "app-token"
+    )
+    assert mint.get("continue-on-error") is True
+
+    review = next(
+        step
+        for _job, step in steps_of(load(path))
+        if step.get("name") == "Review" or str(step.get("uses", "")).startswith("./")
+    )
+    token = str(review["with"]["github-token"])
+    assert "steps.app-token.outputs.token" in token
+    assert "github.token" in token
+
+
+def runs_this_action(document: dict) -> bool:
+    """Whether any step in this workflow invokes the reviewer.
+
+    By what the file *does*, not by what it is called. The first version
+    selected on `"review" in path.name` and skipped anything without a job
+    named `review` — so a workflow named something else, or with the job named
+    something else, would have been waved through by the check written to
+    catch it. Two ways to be silently exempt, in a test about a permission
+    whose absence only shows up at the first comment.
+    """
+    return any(
+        str(step.get("uses", "")).startswith("./")
+        or "quorum-review@" in str(step.get("uses", ""))
+        for _job, step in steps_of(document)
+    )
+
+
+ALL_WORKFLOWS = FILES + EXAMPLES
+
+
+def test_some_workflow_runs_the_action():
+    """A predicate that matches nothing passes every test that uses it."""
+    assert [p for p in ALL_WORKFLOWS if runs_this_action(load(p))]
+
+
+@pytest.mark.parametrize("path", ALL_WORKFLOWS, ids=lambda p: p.name)
+def test_every_workflow_that_posts_can_post(path: Path):
+    """`pull-requests: write` wherever a review runs, including the App-token
+    example — especially there. The App normally does the posting, so it is
+    tempting to drop the permission; then the fallback runs with GITHUB_TOKEN
+    and fails on the first comment. A fallback that cannot do the job is not a
+    fallback."""
+    document = load(path)
+    if not runs_this_action(document):
+        return
+    assert (document.get("permissions") or {}).get("pull-requests") == "write"

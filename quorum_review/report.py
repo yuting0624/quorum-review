@@ -523,10 +523,15 @@ def render(report: RunReport) -> str:
         if report.threads_not_collapsible:
             lines += [
                 "",
-                "> ℹ️ Their threads were replied to but left open: the default "
-                "`GITHUB_TOKEN` is not allowed to resolve review threads, "
-                "whatever `permissions:` says. Supply a GitHub App token via "
-                "`github-token` to have them collapse automatically.",
+                "> ℹ️ Their threads were replied to but left open. Resolving a "
+                "review thread requires `contents: write`, which this reviewer "
+                "does not ask for: it never pushes a commit, and holding write "
+                "access to your repository is a much larger thing to hand a "
+                "process that reads pull requests from strangers. Collapse "
+                "them yourself, or grant it — see "
+                "[the note on thread resolution]"
+                "(https://github.com/yuting0624/quorum-review/blob/main/docs/"
+                "operations.md#resolved-threads-stay-open).",
             ]
 
     if report.unanchored:
@@ -690,41 +695,60 @@ def _footer(report: RunReport) -> list[str]:
     """
     lines = []
 
-    if report.usage:
+    # Models that were actually reached. A provider reports usage for every
+    # engine it constructed, including one whose every call failed, and such a
+    # row reads as "this model ran and did nothing" — with an em dash where the
+    # region should be, because `regions` already filters on a completed call.
+    # A model that never answered is named in the degraded-run notice above,
+    # which is where it belongs.
+    reached = {model: used for model, used in report.usage.items() if used.calls}
+
+    if reached:
+        # The region belongs here rather than in the footer line. "Where did our
+        # source code go" is a question somebody has to answer in writing, so it
+        # is worth recording — but it is worth recording once, in the place a
+        # reader opens on purpose, not on the line every finding sits above.
         rows = [
-            "| Model | Calls | Input | Cached input | Output |",
-            "|---|--:|--:|--:|--:|",
+            "| Model | Region | Calls | Input | Cached input | Output |",
+            "|---|---|--:|--:|--:|--:|",
         ]
-        for model, used in report.usage.items():
+        for model, used in reached.items():
+            where = report.regions.get(model, "—")
             rows.append(
-                f"| `{model}` | {used.calls} | {used.input_tokens:,} | "
+                f"| `{model}` | `{where}` | {used.calls} | {used.input_tokens:,} | "
                 f"{used.cached_input_tokens:,} | {used.output_tokens:,} |"
             )
         lines += ["<details>", "<summary>Usage</summary>", ""]
         lines += [*rows, "", "</details>", ""]
+    elif report.regions:
+        # Regions recorded but no usage to hang them on — a provider that does
+        # not count tokens, or a report rebuilt without them. The audit line is
+        # the promise; the table is only where it usually lives. Losing it
+        # silently because the other thing was missing is the failure mode this
+        # whole section exists to avoid.
+        lines.append(
+            "<sub>Ran in "
+            + ", ".join(f"`{m}` ({r})" for m, r in sorted(report.regions.items()))
+            + ".</sub>"
+        )
+        lines.append("")
 
     if report.budget_note:
         lines.append(f"<sub>Token ceiling: {report.budget_note}.</sub>")
         lines.append("")
 
     elapsed = f" · {report.elapsed_seconds:.0f}s" if report.elapsed_seconds else ""
-    # Which endpoint served each model, because "where did our source code go"
-    # is a question somebody has to answer in writing, and a run that answers
-    # it in its own output is easier to answer it from than one that does not.
-    # `global` is named as `global` rather than dressed up as a region: it
-    # routes to whichever region has capacity, and calling that a location
-    # would be the misleading part.
-    where = (
-        " · " + ", ".join(f"`{m}` in `{r}`" for m, r in sorted(report.regions.items()))
-        if report.regions
-        else ""
-    )
+    # Commit, version, models, duration. Nothing else: this line sits under
+    # every review, and each thing added to it makes the four that matter
+    # harder to find. The region moved into the Usage table above, and the
+    # "reference implementation" disclaimer belongs in the README, where
+    # someone deciding whether to adopt this will read it — not on the footer
+    # of a comment they are reading to find out what is wrong with their code.
     lines.append(
         f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
         f"`{_version()}` · models "
         + ", ".join(f"`{m}`" for m in report.models)
-        + f"{where}{elapsed} · quorum-review — a reference implementation, not "
-        "a supported product.</sub>"
+        + f"{elapsed}</sub>"
     )
     return lines
 
@@ -811,8 +835,6 @@ def render_nothing_to_review(report: RunReport, skipped: list[str]) -> str:
         "",
         "---",
         "",
-        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review "
-        f"`{_version()}` · quorum-review — a reference implementation, not a "
-        f"supported product.</sub>",
+        f"<sub>Reviewed `{report.head_sha[:7]}` · quorum-review `{_version()}`</sub>",
     ]
     return "\n".join(lines)

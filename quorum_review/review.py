@@ -398,17 +398,24 @@ async def close_threads(
     entries: list[ledger_mod.LedgerEntry],
     head_sha: str,
 ) -> bool:
-    """Reply to and collapse the threads of findings that are no longer raised.
+    """Reply in the threads of findings that are no longer raised, and try to
+    collapse them.
 
     Leaving them open is the failure mode this project was built partly in
     reaction to: a reviewer that keeps a wall of resolved comments open teaches
     people to stop reading it.
 
-    Returns True when collapsing was refused. The default ``GITHUB_TOKEN``
-    cannot call ``resolveReviewThread`` — GitHub forbids it for the Actions app
-    whatever `permissions:` says — so this is an ordinary configuration state,
-    not a bug, and the summary explains it rather than the logs swallowing it.
-    The reply is still posted either way.
+    Returns True when collapsing was refused, which is the normal case rather
+    than an error. ``resolveReviewThread`` requires ``contents: write``, and
+    this reviewer does not ask for it: nothing here pushes a commit, and write
+    access is a large thing to hold for a process whose input is written by
+    anyone who can open a pull request. Not ``pull_requests: write``, which is
+    the permission everyone expects and which returns FORBIDDEN.
+
+    So the call is made every run and allowed to fail. Granting the permission
+    is all it takes to make it start succeeding, and the summary says which
+    happened rather than the logs swallowing it. The reply is posted either
+    way.
     """
     anchored = [entry for entry in entries if entry.review_comment_id]
     if not anchored:

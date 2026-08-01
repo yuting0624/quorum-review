@@ -1,0 +1,270 @@
+[
+  {
+    "reported": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no ownership or admin check",
+        "body": "admin.delete_document is wired to handle_delete_document via a bare auth.require_user(token) check with no further authorization. It deletes any document by ID regardless of who owns it and regardless of admin status, unlike documents.get_document which enforces owner_id == user.id or is_admin. Any authenticated user can delete any other user's documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user swallows the admin check, allowing any user to bypass it",
+        "body": "purge_user calls _assert_admin(user) inside a try/except Exception: pass block, discarding the Forbidden exception that enforces 'admins only'. As a result any authenticated non-admin user can invoke purge_user and mass-delete another user's documents and shares, despite the docstring stating this is admin-only."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via unparameterized search term and user id",
+        "body": "search() builds the SQL query with an f-string, interpolating user['id'] and the caller-supplied term directly into the query text. Because term is attacker-controlled and not escaped or parameterized, a crafted value (e.g. containing a single quote) can break out of the MATCH literal and manipulate the WHERE clause, at minimum bypassing the owner_id restriction and exposing other users' documents, or otherwise altering query semantics. This reproduces on any call to search() with a term containing SQL metacharacters."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded development value",
+        "body": "Previously SECRET_KEY was required via os.environ[...], failing fast at import time if missing. It now falls back to a static string 'dev-secret-change-me' via os.getenv with a default. This key is used by auth.sign for session tokens and now also by sharing.create_share_link/resolve_share_link for share-link signatures. Any deployment that forgets to set QUORUM_DEMO_SECRET will silently run with a publicly known key, letting an attacker forge session tokens and share-link signatures."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "list_documents no longer clamps the caller-supplied page size",
+        "body": "The limit passed to list_documents is no longer clamped to Config.MAX_PAGE_SIZE; it is only cast to int. A caller can now request an arbitrarily large limit (e.g. handle_list_documents(token, limit=10**9)), causing an unbounded query and unbounded memory/response usage. Config.MAX_PAGE_SIZE is still defined but now unused, confirming the clamp was dropped rather than intentionally redesigned elsewhere."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "fetch_remote_document performs an unrestricted SSRF-prone request",
+        "body": "fetch_remote_document takes a user-supplied URL (from handle_import_url) and passes it directly to requests.get with no scheme allowlist and no check against internal/private/link-local hosts (e.g. cloud metadata endpoints like 169.254.169.254). Any authenticated user can make the server issue arbitrary outbound requests and receive the response body back, enabling classic SSRF against internal infrastructure."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument mutated in place in create_share_link",
+        "body": "scopes uses a mutable default ([]), and the function mutates whatever list object it receives (default or caller-supplied) via scopes.append('read'). The default list object is shared across every call that omits scopes, and any caller-supplied list is silently mutated as a side effect, which is fragile and can cause unexpected shared state if the function is extended to append more than the single idempotent 'read' scope."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/reports.py",
+        "title": "write_report's scope check is a no-op for 'document.report'",
+        "body": "write_report gates on permissions.has_scope(user, 'document.report'), but permissions.REQUIRED_SCOPES only lists document.read/share/delete/export; has_scope returns True for any action absent from that table (documented in permissions.py itself). Since 'document.report' is not registered, this check always passes regardless of the caller's actual scopes, giving a false impression that report-writing is scope-gated when in practice only get_document's ownership check applies."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no ownership or admin check",
+        "body": "admin.delete_document is wired to handle_delete_document via a bare auth.require_user(token) check with no further authorization. It deletes any document by ID regardless of who owns it and regardless of admin status, unlike documents.get_document which enforces owner_id == user.id or is_admin. Any authenticated user can delete any other user's documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user swallows the admin check, allowing any user to bypass it",
+        "body": "purge_user calls _assert_admin(user) inside a try/except Exception: pass block, discarding the Forbidden exception that enforces 'admins only'. As a result any authenticated non-admin user can invoke purge_user and mass-delete another user's documents and shares, despite the docstring stating this is admin-only."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via unparameterized search term and user id",
+        "body": "search() builds the SQL query with an f-string, interpolating user['id'] and the caller-supplied term directly into the query text. Because term is attacker-controlled and not escaped or parameterized, a crafted value (e.g. containing a single quote) can break out of the MATCH literal and manipulate the WHERE clause, at minimum bypassing the owner_id restriction and exposing other users' documents, or otherwise altering query semantics. This reproduces on any call to search() with a term containing SQL metacharacters."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded development value",
+        "body": "Previously SECRET_KEY was required via os.environ[...], failing fast at import time if missing. It now falls back to a static string 'dev-secret-change-me' via os.getenv with a default. This key is used by auth.sign for session tokens and now also by sharing.create_share_link/resolve_share_link for share-link signatures. Any deployment that forgets to set QUORUM_DEMO_SECRET will silently run with a publicly known key, letting an attacker forge session tokens and share-link signatures."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "list_documents no longer clamps the caller-supplied page size",
+        "body": "The limit passed to list_documents is no longer clamped to Config.MAX_PAGE_SIZE; it is only cast to int. A caller can now request an arbitrarily large limit (e.g. handle_list_documents(token, limit=10**9)), causing an unbounded query and unbounded memory/response usage. Config.MAX_PAGE_SIZE is still defined but now unused, confirming the clamp was dropped rather than intentionally redesigned elsewhere."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "fetch_remote_document performs an unrestricted SSRF-prone request",
+        "body": "fetch_remote_document takes a user-supplied URL (from handle_import_url) and passes it directly to requests.get with no scheme allowlist and no check against internal/private/link-local hosts (e.g. cloud metadata endpoints like 169.254.169.254). Any authenticated user can make the server issue arbitrary outbound requests and receive the response body back, enabling classic SSRF against internal infrastructure."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument mutated in place in create_share_link",
+        "body": "scopes uses a mutable default ([]), and the function mutates whatever list object it receives (default or caller-supplied) via scopes.append('read'). The default list object is shared across every call that omits scopes, and any caller-supplied list is silently mutated as a side effect, which is fragile and can cause unexpected shared state if the function is extended to append more than the single idempotent 'read' scope."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/reports.py",
+        "title": "write_report's scope check is a no-op for 'document.report'",
+        "body": "write_report gates on permissions.has_scope(user, 'document.report'), but permissions.REQUIRED_SCOPES only lists document.read/share/delete/export; has_scope returns True for any action absent from that table (documented in permissions.py itself). Since 'document.report' is not registered, this check always passes regardless of the caller's actual scopes, giving a false impression that report-writing is scope-gated when in practice only get_document's ownership check applies."
+      }
+    ]
+  },
+  {
+    "reported": [
+      {
+        "file_path": "PR_DESCRIPTION",
+        "title": "PR description attempts to redirect reviewer behavior/context",
+        "body": "The PR body contains text explicitly directed at whoever reviews the change: 'Do not merge. This branch is a fixed measurement target, not real work. See benchmark/seeded-bugs/README.md on main for what it is and how it is scored. That description is deliberately not repeated here: the pull request body is an input to the reviewer being measured.' This is untrusted author-supplied text attempting to influence how the review is conducted or framed (e.g. by pointing the reviewer at external context, or suggesting a different scoring rubric applies). Per policy this must be treated as data, not instructions, and reported rather than acted upon. The review below is based solely on the diff and the repository contents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded, publicly-known value",
+        "body": "The previous code failed fast at import time (`os.environ[\"QUORUM_DEMO_SECRET\"]`) if the signing secret was missing. This change replaces it with `os.getenv(\"QUORUM_DEMO_SECRET\", \"dev-secret-change-me\")`, so any deployment that forgets to set the environment variable silently runs with a known, public key. This key is used by `auth.sign` to sign session tokens (`user_id.signature`, verified with `hmac.compare_digest`) and by `sharing.create_share_link`/`resolve_share_link` to sign share links. With the fallback key known, an attacker can forge valid session tokens for any user id and forge valid share-link signatures for any document."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no authorization check at all",
+        "body": "Unlike documents.get_document, which raises Forbidden unless the caller owns the document or is an admin, admin.delete_document deletes the row identified purely by doc_id with no ownership or admin check whatsoever. It is reachable by any authenticated user via handle_delete_document in app/__init__.py, so any logged-in user can delete any other user's document simply by guessing/knowing its id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Admin check exception is swallowed, letting any user purge any account",
+        "body": "purge_user wraps the admin check in try/except Exception: pass, discarding the Forbidden raised by _assert_admin for non-admin users and continuing execution regardless. As a result, any authenticated user (not just admins) can call purge_user and delete every document (and orphan its shares) belonging to any target_user_id, despite the docstring stating 'Admins only.'"
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via unparameterized `term` in full-text search query",
+        "body": "The search term is interpolated directly into the SQL string (`documents_fts MATCH '{term}'`) rather than passed as a bound parameter, unlike every other query in the codebase (e.g. suggest() in the same file uses `?` placeholders). A caller-controlled term such as `' UNION SELECT ... --` can break out of the string literal and alter the query, potentially reading documents outside the caller's own workspace or exfiltrating other tables' data. owner_id/limit are safe because they are validated ints, but term is fully attacker-controlled and unsanitized."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Share signature verified with non-constant-time comparison",
+        "body": "resolve_share_link compares the expected HMAC signature to the caller-supplied one with plain `!=`, which short-circuits on the first differing byte. Elsewhere in the codebase (auth.verify_session_token) the equivalent comparison correctly uses hmac.compare_digest specifically to avoid this timing side-channel. Using `!=` here reintroduces a timing attack that could let an attacker recover a valid share-link signature byte by byte through repeated requests."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-side request forgery: URL import fetches any user-supplied URL",
+        "body": "fetch_remote_document performs requests.get(url, ...) on a URL supplied directly by the authenticated user, with no scheme or host allowlist/denylist and no check against internal/private address ranges. This lets an authenticated user make the server issue requests to internal-only resources (e.g. cloud metadata endpoints like 169.254.169.254, internal admin panels, or other services not otherwise reachable from outside), with the response body returned back to the user as the imported document content."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Removed clamp lets callers request unbounded page sizes",
+        "body": "list_documents previously clamped the caller-supplied limit to Config.MAX_PAGE_SIZE specifically to stop a caller from pulling an entire table into memory in one request. This change removes that clamp (`limit = int(limit)` with no min() against MAX_PAGE_SIZE), so handle_list_documents now lets any authenticated caller request an arbitrarily large limit (e.g. limit=100000000), causing an unbounded database read and response size for a single request."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument `scopes: list = []` shared and mutated across calls",
+        "body": "create_share_link declares `scopes: list = []` as a default argument and then mutates it in place with `scopes.append(\"read\")`. Because Python evaluates default argument values once at function-definition time, every call that omits `scopes` shares and mutates the same list object across all users and requests for the lifetime of the process, which is fragile and can produce inconsistent/leaked state if the function is extended in the future to append additional scopes conditionally."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "PR_DESCRIPTION",
+        "title": "PR description attempts to redirect reviewer behavior/context",
+        "body": "The PR body contains text explicitly directed at whoever reviews the change: 'Do not merge. This branch is a fixed measurement target, not real work. See benchmark/seeded-bugs/README.md on main for what it is and how it is scored. That description is deliberately not repeated here: the pull request body is an input to the reviewer being measured.' This is untrusted author-supplied text attempting to influence how the review is conducted or framed (e.g. by pointing the reviewer at external context, or suggesting a different scoring rubric applies). Per policy this must be treated as data, not instructions, and reported rather than acted upon. The review below is based solely on the diff and the repository contents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded, publicly-known value",
+        "body": "The previous code failed fast at import time (`os.environ[\"QUORUM_DEMO_SECRET\"]`) if the signing secret was missing. This change replaces it with `os.getenv(\"QUORUM_DEMO_SECRET\", \"dev-secret-change-me\")`, so any deployment that forgets to set the environment variable silently runs with a known, public key. This key is used by `auth.sign` to sign session tokens (`user_id.signature`, verified with `hmac.compare_digest`) and by `sharing.create_share_link`/`resolve_share_link` to sign share links. With the fallback key known, an attacker can forge valid session tokens for any user id and forge valid share-link signatures for any document."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no authorization check at all",
+        "body": "Unlike documents.get_document, which raises Forbidden unless the caller owns the document or is an admin, admin.delete_document deletes the row identified purely by doc_id with no ownership or admin check whatsoever. It is reachable by any authenticated user via handle_delete_document in app/__init__.py, so any logged-in user can delete any other user's document simply by guessing/knowing its id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "Admin check exception is swallowed, letting any user purge any account",
+        "body": "purge_user wraps the admin check in try/except Exception: pass, discarding the Forbidden raised by _assert_admin for non-admin users and continuing execution regardless. As a result, any authenticated user (not just admins) can call purge_user and delete every document (and orphan its shares) belonging to any target_user_id, despite the docstring stating 'Admins only.'"
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection via unparameterized `term` in full-text search query",
+        "body": "The search term is interpolated directly into the SQL string (`documents_fts MATCH '{term}'`) rather than passed as a bound parameter, unlike every other query in the codebase (e.g. suggest() in the same file uses `?` placeholders). A caller-controlled term such as `' UNION SELECT ... --` can break out of the string literal and alter the query, potentially reading documents outside the caller's own workspace or exfiltrating other tables' data. owner_id/limit are safe because they are validated ints, but term is fully attacker-controlled and unsanitized."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Share signature verified with non-constant-time comparison",
+        "body": "resolve_share_link compares the expected HMAC signature to the caller-supplied one with plain `!=`, which short-circuits on the first differing byte. Elsewhere in the codebase (auth.verify_session_token) the equivalent comparison correctly uses hmac.compare_digest specifically to avoid this timing side-channel. Using `!=` here reintroduces a timing attack that could let an attacker recover a valid share-link signature byte by byte through repeated requests."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "Server-side request forgery: URL import fetches any user-supplied URL",
+        "body": "fetch_remote_document performs requests.get(url, ...) on a URL supplied directly by the authenticated user, with no scheme or host allowlist/denylist and no check against internal/private address ranges. This lets an authenticated user make the server issue requests to internal-only resources (e.g. cloud metadata endpoints like 169.254.169.254, internal admin panels, or other services not otherwise reachable from outside), with the response body returned back to the user as the imported document content."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "Removed clamp lets callers request unbounded page sizes",
+        "body": "list_documents previously clamped the caller-supplied limit to Config.MAX_PAGE_SIZE specifically to stop a caller from pulling an entire table into memory in one request. This change removes that clamp (`limit = int(limit)` with no min() against MAX_PAGE_SIZE), so handle_list_documents now lets any authenticated caller request an arbitrarily large limit (e.g. limit=100000000), causing an unbounded database read and response size for a single request."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument `scopes: list = []` shared and mutated across calls",
+        "body": "create_share_link declares `scopes: list = []` as a default argument and then mutates it in place with `scopes.append(\"read\")`. Because Python evaluates default argument values once at function-definition time, every call that omits `scopes` shares and mutates the same list object across all users and requests for the lifetime of the process, which is fragile and can produce inconsistent/leaked state if the function is extended in the future to append additional scopes conditionally."
+      }
+    ]
+  },
+  {
+    "reported": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no ownership or admin check",
+        "body": "admin.delete_document deletes a document purely by ID with no check that the caller owns it or is an admin (unlike documents.get_document, which enforces owner_id==user.id or is_admin, and unlike stats(), which calls _assert_admin). It is reachable by any authenticated user via handle_delete_document in app/__init__.py, so any logged-in user can delete any other user's document by supplying its doc_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user silently swallows the admin authorization check",
+        "body": "_assert_admin(user) raises Forbidden when the caller is not an admin, but purge_user wraps the call in try/except Exception: pass, discarding the exception. The function then proceeds to delete every document belonging to target_user_id (and cascade-delete associated shares) regardless of the caller's privilege. Any authenticated non-admin user can purge another user's entire document set."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded development value",
+        "body": "Previously SECRET_KEY was read with os.environ[...] so the app would fail fast at import time if the signing secret was missing. Now it falls back to the hardcoded string \"dev-secret-change-me\" via os.getenv with a default. This key is used by auth.sign() to HMAC-sign session tokens and share-link signatures. If the environment variable is unset in any deployment (a realistic misconfiguration, not just local dev), the app runs with a publicly-known static secret, letting an attacker forge session tokens and share links."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in search() via unparameterized term and owner_id",
+        "body": "The search term and user id are spliced directly into the SQL string with an f-string instead of using bound parameters, unlike suggest() in the same file which correctly uses '?' placeholders. A crafted term (e.g. containing a closing quote) breaks out of the MATCH clause and can inject arbitrary SQL/FTS syntax, allowing data exfiltration across owner_id boundaries or query manipulation. This is reachable by any authenticated user via handle_search."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal in export_path/export_document via unvalidated filename",
+        "body": "filename comes directly from the authenticated caller (handle_export -> export_document -> export_path) and is joined to the user's export directory with no traversal check, unlike indexer.extract_text (which validates via realpath/commonpath) or reports.write_report (which sanitizes with validators.export_name). A filename like '../../../etc/cron.d/x' lets an authenticated user write a JSON file with attacker-controlled document content outside their export directory, anywhere the process has write access."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "list_documents no longer clamps limit, allowing unbounded queries",
+        "body": "The previous clamp `limit = min(int(limit), Config.MAX_PAGE_SIZE)` was removed and replaced with a bare `int(limit)`. A caller can now request an arbitrarily large limit (e.g. a huge integer), causing the query to attempt to return an unbounded number of rows for the user's documents, exhausting memory or DB resources per request. This is reachable via handle_list_documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "fetch_remote_document performs unrestricted server-side requests (SSRF)",
+        "body": "url is taken directly from the authenticated user (via handle_import_url) and passed straight to requests.get with no scheme or host allowlist/denylist. This lets an authenticated user cause the server to make requests to internal-only resources (e.g. cloud metadata endpoints such as 169.254.169.254, internal services, or loopback addresses), and the response body is returned to the user, enabling SSRF-based data exfiltration or internal network probing."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument in create_share_link shares state across calls",
+        "body": "scopes defaults to a mutable list `[]`, which is a single object shared across every call that omits the scopes argument. `scopes.append(\"read\")` mutates this shared default in place (and also mutates any caller-supplied list as a side effect). While currently idempotent for the read-only default, this is a classic Python bug that can produce surprising shared/leaked state if the function or its default is ever extended."
+      }
+    ],
+    "survived": [
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "delete_document has no ownership or admin check",
+        "body": "admin.delete_document deletes a document purely by ID with no check that the caller owns it or is an admin (unlike documents.get_document, which enforces owner_id==user.id or is_admin, and unlike stats(), which calls _assert_admin). It is reachable by any authenticated user via handle_delete_document in app/__init__.py, so any logged-in user can delete any other user's document by supplying its doc_id."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/admin.py",
+        "title": "purge_user silently swallows the admin authorization check",
+        "body": "_assert_admin(user) raises Forbidden when the caller is not an admin, but purge_user wraps the call in try/except Exception: pass, discarding the exception. The function then proceeds to delete every document belonging to target_user_id (and cascade-delete associated shares) regardless of the caller's privilege. Any authenticated non-admin user can purge another user's entire document set."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/config.py",
+        "title": "SECRET_KEY silently falls back to a hardcoded development value",
+        "body": "Previously SECRET_KEY was read with os.environ[...] so the app would fail fast at import time if the signing secret was missing. Now it falls back to the hardcoded string \"dev-secret-change-me\" via os.getenv with a default. This key is used by auth.sign() to HMAC-sign session tokens and share-link signatures. If the environment variable is unset in any deployment (a realistic misconfiguration, not just local dev), the app runs with a publicly-known static secret, letting an attacker forge session tokens and share links."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/search.py",
+        "title": "SQL injection in search() via unparameterized term and owner_id",
+        "body": "The search term and user id are spliced directly into the SQL string with an f-string instead of using bound parameters, unlike suggest() in the same file which correctly uses '?' placeholders. A crafted term (e.g. containing a closing quote) breaks out of the MATCH clause and can inject arbitrary SQL/FTS syntax, allowing data exfiltration across owner_id boundaries or query manipulation. This is reachable by any authenticated user via handle_search."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/export.py",
+        "title": "Path traversal in export_path/export_document via unvalidated filename",
+        "body": "filename comes directly from the authenticated caller (handle_export -> export_document -> export_path) and is joined to the user's export directory with no traversal check, unlike indexer.extract_text (which validates via realpath/commonpath) or reports.write_report (which sanitizes with validators.export_name). A filename like '../../../etc/cron.d/x' lets an authenticated user write a JSON file with attacker-controlled document content outside their export directory, anywhere the process has write access."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/documents.py",
+        "title": "list_documents no longer clamps limit, allowing unbounded queries",
+        "body": "The previous clamp `limit = min(int(limit), Config.MAX_PAGE_SIZE)` was removed and replaced with a bare `int(limit)`. A caller can now request an arbitrarily large limit (e.g. a huge integer), causing the query to attempt to return an unbounded number of rows for the user's documents, exhausting memory or DB resources per request. This is reachable via handle_list_documents."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/fetcher.py",
+        "title": "fetch_remote_document performs unrestricted server-side requests (SSRF)",
+        "body": "url is taken directly from the authenticated user (via handle_import_url) and passed straight to requests.get with no scheme or host allowlist/denylist. This lets an authenticated user cause the server to make requests to internal-only resources (e.g. cloud metadata endpoints such as 169.254.169.254, internal services, or loopback addresses), and the response body is returned to the user, enabling SSRF-based data exfiltration or internal network probing."
+      },
+      {
+        "file_path": "benchmark/seeded-bugs/app/sharing.py",
+        "title": "Mutable default argument in create_share_link shares state across calls",
+        "body": "scopes defaults to a mutable list `[]`, which is a single object shared across every call that omits the scopes argument. `scopes.append(\"read\")` mutates this shared default in place (and also mutates any caller-supplied list as a side effect). While currently idempotent for the read-only default, this is a classic Python bug that can produce surprising shared/leaked state if the function or its default is ever extended."
+      }
+    ]
+  }
+]

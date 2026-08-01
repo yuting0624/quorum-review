@@ -81,7 +81,7 @@ the verifier is never shown. Whichever model scans sets a hard ceiling on the
 review's recall, and no second opinion, however strong, can lift it.
 
 That is not theoretical. `gemini-3.6-flash` missed the seeded TOCTOU defect in
-three runs out of three. Pairing it with `claude-opus-5` recovered nothing,
+three runs out of three. Pairing it with a verifier recovered nothing,
 because Claude was never asked. Having both models scan took the same pair from
 9.0/10 to a stable 10.0/10 — see
 [`benchmark/seeded-bugs/README.md`](../benchmark/seeded-bugs/README.md).

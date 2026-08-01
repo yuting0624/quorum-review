@@ -1,11 +1,11 @@
 # Same as review-vertex.yml, but comments are posted by your own GitHub App.
 #
-# Two things this buys you over the default GITHUB_TOKEN:
+# What this buys you over the default GITHUB_TOKEN: comments arrive under a
+# name and avatar you chose, instead of "github-actions[bot]".
 #
-# - Resolved threads actually collapse. GitHub does not let the Actions app
-#   call `resolveReviewThread`, whatever `permissions:` says. An App token can.
-# - Comments arrive under a name and avatar you chose, instead of
-#   "github-actions[bot]".
+# It does *not* make resolved threads collapse. That needs `contents: write`
+# on the App, which the shipped manifest does not request — see
+# docs/operations.md, "Resolved threads stay open".
 #
 # Create the App first — one command, about a minute:
 #
@@ -37,12 +37,18 @@ concurrency:
       || github.event.inputs.pr }}
   cancel-in-progress: true
 
-# `pull-requests` is not requested here: the App token carries its own
-# permissions, and GITHUB_TOKEN is no longer the thing posting comments.
-# `id-token: write` is still required, for Google Cloud federation.
+# `pull-requests: write` is here even though the App token normally does the
+# posting, because the fallback has to work: if the mint fails — a revoked
+# installation, an expired key, an App that was never installed — the review
+# runs with GITHUB_TOKEN, and without this it would then fail on the first
+# comment it tried to post. A fallback that cannot do the job is not a
+# fallback.
+#
+# `id-token: write` is for Google Cloud federation.
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   review:
@@ -78,12 +84,33 @@ jobs:
               || github.event.inputs.pr }}/merge
           fetch-depth: 2
 
+      # `continue-on-error` because the App is an improvement, not a
+      # requirement: a revoked installation or an expired key should degrade
+      # the review to GITHUB_TOKEN rather than stop it.
       - name: Mint a token from the App
         id: app-token
+        continue-on-error: true
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      # `continue-on-error` reports the step as *successful* whatever happened,
+      # so a mint that failed is invisible in the run summary — which is how an
+      # App that was created and configured but never installed on the
+      # repository went unnoticed: secrets set, step green, comments still from
+      # github-actions, and the reason four hundred lines into a log.
+      #
+      # `outcome` is the real result. `conclusion` is the one continue-on-error
+      # rewrites.
+      - name: Say so if the App token could not be minted
+        if: steps.app-token.outcome == 'failure'
+        shell: bash
+        run: >-
+          echo "::warning title=Falling back to GITHUB_TOKEN::The App token
+          could not be minted, so this review runs with GITHUB_TOKEN and posts
+          as github-actions. The usual cause is an App that exists but is not
+          installed on this repository."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -95,6 +122,6 @@ jobs:
         uses: yuting0624/quorum-review@v1
         with:
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          github-token: ${{ steps.app-token.outputs.token }}
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}

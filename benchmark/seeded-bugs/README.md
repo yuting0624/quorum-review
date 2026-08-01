@@ -65,19 +65,19 @@ C4 removes the tell, and it is the case that finally discriminates.
 
 ### What they measured
 
-| Configuration | Seeded, scanned | Seeded, survived | C2 + C3 | C1 flagged (false positive) |
-|---|---|---|---|---|
-| diff only | 10.0 / 10 | 10.0 / 10 | **0 / 2, in every run** | never |
-| repository readable | 10.0 / 10 | 9.7 / 10 | **2 / 2, in every run** | never |
+| Configuration | Seeded, survived | C2 + C3 | C4 flagged (false positive) |
+|---|---|---|---|
+| diff only | 8.7 / 10 | **0 / 2, in every run** | **3 / 3 runs** |
+| repository readable | 8.7 / 10 | 2 / 2 in two runs of three | **0 / 3 runs** |
 
-Three runs each, both scanning models, second opinion on, same pull request,
-same commit. Raw findings in [`../runs/`](../runs).
+Three runs each, both models scanning, second opinion on, same pull request,
+same commit, default pairing. Raw findings in [`../runs/`](../runs).
 
-**Re-measured at `v1.0.0`**, forty commits later, because a number attached to
-code that has since changed is a number about nothing. Three runs, repository
-readable: **10.0 / 10 scanned, 10.0 / 10 survived, C2 and C3 in every run, no
-decoy flagged.** Raw findings in
-[`../runs/v1.0.0-repo-access.json`](../runs/v1.0.0-repo-access.json).
+The seeded count is the same either way, which is the point: what the tools
+change is not how much is found but whether it is *right*. C2 and C3 are
+unreachable without them. C4 is reported every time without them and never with
+them — and in one of those three runs a scan did raise it and the second opinion
+went and read the caller and refuted it.
 
 The one movement is B8, which survived 3/3 this time against 2/3 before — the
 finding the fixture is [known to be ambiguous about](#caveat-on-b8), so the
@@ -132,10 +132,10 @@ repository is three more chances to build an argument, and the argument against
 B8 is a good one. This is the stage doing its job in a case where its job is
 debatable.
 
-### Two contamination sources, both found by giving the models access
+### Three contamination sources, all found by giving the models access
 
-Neither was visible while the reviewer could only read the diff, and both
-invalidated every measurement taken before they were fixed.
+None was visible while the reviewer could only read the diff, and each
+invalidated every measurement taken before it was fixed.
 
 1. **The answer key was readable.** This file lists every bug by file, and
    `tests/test_fixture_integrity.py` asserts each one. Both live on `main`
@@ -153,8 +153,27 @@ invalidated every measurement taken before they were fixed.
    *"PR description contains reviewer-directed instructions (prompt injection)."*
    Which is exactly right, and not a false positive.
 
-The numbers above are from after both fixes. Earlier figures in this file were
-taken under (2) and are marked where they appear.
+3. **The measurement harness carried the key too.** `benchmark/measure.py`
+   holds the classification tables: every bug, decoy and context case with the
+   file and the keywords that identify it — and, worse than the bug list, a
+   table saying which findings are *supposed to be wrong*. It was missed when
+   (1) was fixed, in a commit written to close exactly that hole, which named
+   two files, added a test naming the same two files, and left the third. A
+   model opened it on the next run with repository access; the tool log is how
+   it was noticed.
+
+   The check is no longer a list. `tests/test_workspace.py` searches the tree
+   for anything speaking the answer key's vocabulary and asserts the models
+   cannot reach it, whether or not anyone remembered to add it. The markers are
+   assembled from pieces so the checker does not match itself and can therefore
+   cover itself.
+
+The pattern is worth naming: **each fix was written by someone who believed they
+were closing the whole hole, and each left another copy of the same key
+somewhere else.** A list of files to hide is a list, and the thing that gets
+missed is by definition not on it.
+
+Numbers taken under (1) or (3) are gone. What survives is marked.
 
 ### Caveat on B8
 
@@ -192,12 +211,16 @@ U4 and U5 are the same class as the planted C2 and C3 — undecidable from the
 diff — and they are better evidence, because nobody planted them. There is no
 authoring bias in a bug the fixture created by accident.
 
-Across every saved run in [`../runs/`](../runs), nine per configuration:
+They are not found by the default pairing — 0 of 3 either way — and they were
+not found by the diff-only reviewer in any run. They entered the answer key
+because *other* configurations reported them, run after run, as
+"unclassified".
 
-| | U4 | U5 |
-|---|---|---|
-| diff only | **0 / 9** | **0 / 9** |
-| repository readable | **8 / 9** | 3 / 9 |
+That is worth stating rather than dropping: a fixture with defects the shipped
+configuration does not find is a more useful fixture than one it clears, and a
+hit rate that only a stronger model achieves is not a hit rate for this
+reviewer. Raw findings for every configuration measured, including the ones
+this document does not otherwise discuss, are in [`../runs/`](../runs).
 
 U4 cannot be reached from a diff at all. `FORMATTERS` maps to
 `app.formatters.markdown` and there is no `app/formatters/` directory — that is
@@ -221,94 +244,99 @@ false positive.**
 
 ## Results
 
-Measured against PR #1, project `data-agent-bq`, Vertex `global`, skill
-`security-review`, models `gemini-3.6-flash` and `claude-opus-5`. Three runs per
-configuration, via `python -m benchmark.measure`.
+Measured against PR #1, `global` endpoint, skill
+`security-review`, default models `gemini-3.6-flash` and `claude-sonnet-5`.
+Three runs per configuration, via `python -m benchmark.measure`, all after the
+third contamination source was closed.
 
-> ⚠️ **Everything in this section predates the contamination fixes described
-> above.** These runs were made while the pull request body told the reviewer
-> there were ten bugs and three decoys. The seeded-bug counts and the
-> false-positive count are both flattered by that, and the comparisons between
-> *configurations* are the part still worth reading — every row was contaminated
-> identically. Re-running the single-scanner rows cleanly is on the list below.
+There are 18 real defects in the fixture: the ten seeded (B1-B10), two whose
+correctness cannot be decided from the diff (C2, C3), and six that were written
+by accident and credited afterwards (U1-U6).
 
-| Scanning | Second opinion | Seeded found, mean of 3 | Per-bug stability | Unseeded real | False positives |
-|---|---|---|---|---|---|
-| `gemini-3.6-flash` alone | `claude-opus-5` | 9.0 / 10 | B7 **0/3** — never found | — | 0 |
-| `claude-opus-5` alone | `gemini-3.6-flash` | 10.0 / 10 | all 3/3 | U1, U2 | 0 |
-| **both, independently** | on disagreements only | **10.0 / 10** | **all 3/3** | U1, U2, +3 more | **0** |
+**Recall, single scan, repository readable, no verification:**
+
+| Scanning | Seeded | All 18 real | False positives |
+|---|---|---|---|
+| `gemini-3.6-flash` alone | 8.3 / 10 | 8.7 | 0 |
+| `claude-sonnet-5` alone | 7.7 / 10 | 8.0 | 0 |
+| **both, independently** | **9.3 / 10** | **10.0** | **0** |
+
+The union exceeds both, and it does so in both directions — which is the part
+that matters, because a union that only ever adds one model's findings to the
+other's is not a quorum, it is a slower single scan:
+
+| Missed by | Found by the other |
+|---|---|
+| `claude-sonnet-5` | B7 (TOCTOU between the existence check and `open()`), U1 (share link with no expiry) |
+| `gemini-3.6-flash` | C2 (scope check whose correctness depends on `permissions.py`) |
+
+**The full pipeline, both scanning and the second opinion on disagreements:**
+
+| | Seeded | Diff-undecidable | False positive on the decoy |
+|---|---|---|---|
+| diff only | 8.7 / 10 | 0 / 2, every run | **3 / 3 runs** |
+| repository readable *(default)* | 8.7 / 10 | 2 / 2 in two runs of three | **0 / 3 runs** |
+
+C4 — the decoy whose guard is one file away — is reported by the diff-only
+reviewer in every run and by the repository-reading one in none. In the third
+repository-reading run a scan did raise it, and the second opinion read the
+caller and refuted it before it reached the pull request. That is the
+disagreement path doing the job it exists for.
 
 PRD targets were ≥6 of 10 detected and ≤3 false positives. Every configuration
-clears both, and **no configuration was fooled by any of the three decoys in any
-run.**
-
-Earlier single runs, kept for the record — these used the previous
-single-scanning design and `gemini-3.1-pro-preview`:
-
-| Primary | Verifier | Found | Survived | Notes |
-|---|---|---|---|---|
-| `gemini-3.1-pro-preview` | `claude-opus-5` | 9 | 9 | missed B8 |
-| `claude-opus-5` | `gemini-3.1-pro-preview` | 10 | 9 | B8 refuted |
+clears both.
 
 ### The result that changed the design
 
 `gemini-3.6-flash` missed B7 in **three runs out of three** — not occasionally,
-always. Pairing it with `claude-opus-5` as a verifier did not recover it, and
-could not have: **a second opinion is only ever shown findings that were already
-reported.** Claude was never asked about B7, because nothing had raised it.
+always. Pairing it with a verifier did not recover it, and could not have: **a
+second opinion is only ever shown findings that were already reported.** Nothing
+had raised B7, so nothing was asked about it.
 
 That is a recall ceiling set by whichever model scans, and no verifier can lift
-it. The fix was to have both models scan independently and merge, which took the
-same pair from 9.0 to a stable 10.0 with no loss of precision. Findings both
+it. The fix was to have both models scan independently and merge. Findings both
 models reported without seeing each other's output are treated as agreed and
 skip verification, so the change also removed most of the per-finding calls.
 
-The dual-scan configuration also surfaced three real bugs the fixture never
-seeded — an unescaped `LIKE` prefix in `suggest()`, a share purge that deletes
-orphaned rows for every user rather than the target, and an admin delete reached
-through a handler that only checks authentication. Those are wins, but note the
-direction of the bias: they were found because a second model was looking, which
-is the same reason the seeded recall improved.
+The original plan had one model scan and the other check — the arrangement that
+sounds like two opinions and is one opinion plus an audit of it. The audit
+cannot see what the first model walked past.
 
 ### What the numbers say
 
-**Which single model scans decides what the review can find.**
-`claude-opus-5` scanning alone hit 10/10 in every run; `gemini-3.6-flash`
-scanning alone hit 9/10 in every run and missed the same bug each time. The
-misses are not random noise to be averaged away — they are stable blind spots,
-and the earlier single-run data shows the two Gemini models had *different*
-ones (`gemini-3.1-pro-preview` missed B8, `gemini-3.6-flash` missed B7).
+**Neither model is a subset of the other.** That is the property the design
+rests on, and until the pairing changed, this fixture did not show it: a
+flash-tier model beside a flagship produced a union equal to the flagship's own
+result, which is not a quorum but a slower single scan. With
+`gemini-3.6-flash` and `claude-sonnet-5`, each finds real defects the other
+misses — B7 and U1 one way, C2 the other — and the union exceeds both.
 
-**Which is exactly why two scanners beat picking the right one.** Running both
-gave a stable 10/10 without having to know in advance which model is stronger on
-a given codebase. On another repository the ranking could invert; the union does
-not care.
+**Stable blind spots, not noise.** B7 is missed by the same model in every run,
+not in one of three. Averaging hides that; the per-bug hit rate in
+`benchmark.measure` is there to show it.
 
-**The second opinion did far less than expected.** Across six runs of the
-single-scanner configurations it refuted **nothing at all**. It removed a
-finding in only two runs out of twelve total, and in both cases the finding was
-B8 — the one the fixture is known to be ambiguous about. On this fixture the
-first model simply did not produce plausible-but-wrong findings for the second
-to cut.
+**Which is why two scanners beat picking the right one.** You do not have to
+know in advance which model is stronger on a given codebase. On another
+repository the ranking could invert; the union does not care.
 
-**What it did contribute was severity.** In runs with no refutations the
-measurable effect was re-ranking: SQL injection and the swallowed authorization
-check promoted to `critical`, TOCTOU and the timing issue demoted to `low`, all
-decided without having seen the original ratings.
+**The second opinion does less than expected, and what it does is precision.**
+It refutes rarely. Where it earned its place here was the decoy: in one
+repository-reading run a scan raised C4, and the model that had not reported it
+went and read the caller and refuted it. Without repository access the same
+decoy is reported in every run and survives.
 
-**Verification can still remove a true positive.** Two models refuted B8 with
+**Verification can remove a true positive.** Two models have refuted B8 with
 near-identical reasoning — the append is idempotent, so nothing accumulates —
 while a third confirmed it. Given the caveat above the refutations are
 defensible on impact and wrong on the latent defect, but the point holds
 regardless of who is right: the stage subtracts, and it can subtract something
 real.
 
-**Do not over-read any of this.** One fixture, three runs, and it was written by
-the same person who wrote the reviewer. `claude-opus-5` reported 11, 12, and 12
-findings on identical input, so run-to-run variance is real even where the
-seeded-bug numbers look clean. This is enough to justify the dual-scan change
-and to answer the role-ordering question for this fixture. It is not enough to
-rank the models in general.
+**Do not over-read any of this.** One fixture, three runs per configuration,
+written by the same person who wrote the reviewer. Run-to-run variance is real:
+the same configuration scored 9, 7 and 10 seeded bugs on identical input. Enough
+to justify the design and to answer the pairing question for this fixture. Not
+enough to rank the models.
 
 ### Open questions this raises
 
@@ -334,8 +362,6 @@ Workload Identity Federation, and posting to PR #1.
 |---|---|
 | Single Google Cloud credential drives both models from Actions | **yes** — this is the Phase 0 completion condition |
 | Findings posted | 13 inline + 1 summary carrying the ledger |
-| Seeded bugs found | 10 / 10 |
-| False positives | 0 — no decoy flagged |
 | Independent agreement | 9 of 11 findings reported by both models without seeing each other |
 | **Re-report rate on an unchanged PR** | **0%** (0 of 13) — target was ≤ 5% |
 | Summary comments accumulated | 1 — edited in place, not appended |
@@ -361,10 +387,9 @@ ledger. They only appeared once the thing actually posted twice.
 
 ## Still to measure
 
-- **The single-scanner rows, cleanly.** They were taken before the pull request
-  body stopped announcing the answer. The dual-scan-versus-single comparison
-  probably survives — the contamination applied equally to both — but the
-  absolute numbers do not.
+- **A second pairing.** Everything here is one pair on one fixture. Whether the
+  union still exceeds both when either side is swapped is the question this
+  method can answer and has not.
 - Re-review after genuinely fixing some seeded bugs. The 0% above proves nothing
   is re-posted on an unchanged PR; it does not prove a real fix is recognised as
   one. Note also that one finding appeared under "no longer reported" purely

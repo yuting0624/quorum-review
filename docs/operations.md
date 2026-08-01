@@ -26,6 +26,44 @@ verification call. The **Evidence** column carries it per finding:
 weak findings; they are undecided ones, and they usually mean the answer depends
 on something neither model could see.
 
+## Resolved threads stay open
+
+When a finding stops being reported, the reviewer replies in its thread saying
+so and does not raise it again. It does not collapse the thread, and cannot.
+
+`resolveReviewThread` requires **`contents: write`**. Not `pull_requests:
+write`, which is what you would expect and is not enough — GitHub returns
+`FORBIDDEN / Resource not accessible by integration`.
+
+This is measured, not documented. GitHub publishes no mapping from App
+permissions to the GraphQL API, and review threads are not in the REST API at
+all, so the only way to find out was to try it: a personal access token
+resolves the same thread without complaint, an App token with
+`pull_requests: write` and `contents: read` does not, and the same App with
+`contents: write` does. **The permission change has to be re-approved on the
+installation** — it does not reach tokens until the owner accepts it, and until
+then the failure is identical to not having granted it at all.
+
+So the choice is between two things, and this project picks the first:
+
+- **Threads a human closes.** The reviewer holds read access to your code.
+- **Threads that collapse themselves.** The reviewer holds write access to your
+  repository — a process whose input is written by anyone who can open a pull
+  request against it.
+
+Nothing here pushes a commit, so `contents: write` would buy one cosmetic
+behaviour for a large increase in what a successful prompt injection is worth.
+[CONTRIBUTING](../CONTRIBUTING.md) lists granting it as a change that will be
+rejected.
+
+If you want it, it is your repository: add `contents: write` to your App's
+permissions and re-approve the installation. Nothing in the code changes — the
+call is already made on every run and already fails softly, so the only
+difference is that it starts succeeding.
+
+A GitHub App is still worth having for the other reason: comments arrive under
+a name and avatar you chose rather than `github-actions[bot]`.
+
 ## Signals that the review did less than it looks like
 
 Any of these makes a clean result mean less than a clean result:
@@ -93,10 +131,9 @@ names it.
 its own OIDC endpoint. Transient; it is retried. If it persists, check
 `id-token: write` is in the workflow's `permissions`.
 
-**Threads do not collapse when a finding is fixed.** GitHub does not let the
-Actions app call `resolveReviewThread`, whatever `permissions:` says. Use a
-GitHub App token — [`examples/review-vertex-app.yml`](../examples/review-vertex-app.yml),
-created by `python scripts/create_app.py`. The reply is still posted either way.
+**Threads do not collapse when a finding is fixed.** By design — see
+[Resolved threads stay open](#resolved-threads-stay-open). The reply is posted
+either way, and the finding is not re-reported.
 
 **`@quorum /review` does nothing.** An `issue_comment` event runs the workflow
 from the **default branch**, not the pull request. If the workflow was added on
@@ -166,7 +203,7 @@ symptom is threads that never collapse and a run that reports success.
 
 Two things are worth checking before you roll it out:
 
-- **Vertex AI has to be reachable from the runner.** A self-hosted runner
+- **The Agent Platform has to be reachable from the runner.** A self-hosted runner
   inside a VPC usually is not. Private Google Access or a proxy is the fix; the
   action does not tunnel anything itself.
 - **The `codeql-action/upload-sarif` step needs GitHub Advanced Security.**

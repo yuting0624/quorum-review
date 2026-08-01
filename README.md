@@ -20,6 +20,8 @@ long-lived secret in your repository, one invoice.
 
 ---
 
+![hero image](hero.png)
+
 > ### 📐 A reference implementation, not a product
 >
 > This is a worked example of running Gemini and Claude together on Gemini
@@ -36,8 +38,8 @@ confirmed finding. From a real run:
 
 > ## Quorum review
 >
-> `gemini-3.6-flash`, `claude-opus-5` each read the diff without seeing the
-> other's output (`gemini-3.6-flash` 9 and `claude-opus-5` 11), which merged to
+> `gemini-3.6-flash`, `claude-sonnet-5` each read the diff without seeing the
+> other's output (`gemini-3.6-flash` 9 and `claude-sonnet-5` 11), which merged to
 > **11** distinct finding(s). **9** of those were reported by both models
 > independently.
 > The remaining findings were each judged by the model that did *not* report
@@ -49,9 +51,9 @@ confirmed finding. From a real run:
 > |---|---|---|---|---|
 > | 🔴 critical | security | `app/search.py:18` | SQL injection via f-string interpolation | both models, independently |
 > | 🟠 high | security | `app/fetcher.py:29` | SSRF: user URL fetched with no allowlist | both models, independently |
-> | 🟡 medium | reliability | `app/export.py:23` | TOCTOU between existence check and open() | `claude-opus-5`, agreed by `gemini-3.6-flash` |
+> | 🟡 medium | reliability | `app/export.py:23` | TOCTOU between existence check and open() | `gemini-3.6-flash`, agreed by `claude-sonnet-5` |
 >
-> <sub>Reviewed `03a1883` · models `gemini-3.6-flash`, `claude-opus-5` · 82s</sub>
+> <sub>Reviewed `03a1883` · models `gemini-3.6-flash`, `claude-sonnet-5` · 82s</sub>
 
 The **Evidence** column is the point. *Both models, independently* means two
 models that could not see each other's output reached the same conclusion —
@@ -89,27 +91,7 @@ rhetorical; [`providers/vertex.py`](quorum_review/providers/vertex.py) is the fi
 
 ## 🔀 How a review runs
 
-```
-GitHub event ──▶ google-github-actions/auth ──▶ short-lived GCP credentials
-                                                          │
-                        ┌─────────────────────────────────┴───────────────┐
-                        │                                                 │
-                  scan: Gemini                                      scan: Claude
-                  (whole diff)                                      (whole diff)
-                        │        neither sees the other's output          │
-                        └────────────────────┬────────────────────────────┘
-                                             ▼
-                                     merge and compare
-                                             │
-                    ┌────────────────────────┴────────────────────────┐
-                    ▼                                                 ▼
-        both reported it                                   only one reported it
-        → agreed, no further call                          → the other one judges it
-                    │                                                 │
-                    └────────────────────────┬────────────────────────┘
-                                             ▼
-                    confirmed → inline · uncertain → advisory · refuted → dropped
-```
+![review architecture](architecture.png)
 
 Both models also get three read-only tools over the checkout — `read_file`,
 `search`, `list_files` — each on its own budget. That is what lets a reviewer
@@ -122,14 +104,20 @@ nothing executes, nothing leaves the runner.
 **A second opinion cannot raise recall.** It only ever sees findings that were
 already reported, so a bug the scanner missed is never put in front of it.
 `gemini-3.6-flash` missed the same seeded TOCTOU bug in **three runs out of
-three**; pairing it with `claude-opus-5` recovered nothing, because Claude was
-never asked. Whichever model scans sets a hard ceiling on what the review can
-find — which is why both models scan.
+three**; a verifier recovered nothing, because it was never asked. Whichever
+model scans sets a hard ceiling on what the review can find.
 
-**Agreement is free, and it makes the whole thing cheaper.** Scanning is one call
-regardless of diff size; verification is one call *per finding*. Letting
-agreement stand without a second call means you pay for two scans plus the
-disagreements — usually less than one scan plus a judgement on everything.
+This is the finding that changed the design. The original plan had one model
+scan and the other check — the arrangement everyone reaches for, because it
+sounds like two opinions. It is one opinion and an audit of it, and the audit
+cannot see what the first model walked past.
+
+**So both models scan, and the second opinion is what is left over.** Where they
+agree independently, that agreement is the result and costs no further call.
+Where only one reported something, the other judges it. Scanning is one call
+regardless of diff size; verification is one call *per finding*, so paying for
+two scans and only the disagreements is usually less work than one scan and a
+judgement on everything.
 
 | Configuration | Calls | Recall |
 |---|---|---|
@@ -145,52 +133,65 @@ correctness depends on a validator and a permission registry the pull request
 never touches. Three runs per configuration. Full method, answer key and raw
 findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 
-**Which model scans decides what the review can find:**
+**Two models scanning independently find more than either one does:**
 
-| Scanning | Found (mean of 3) | Stability |
+| Scanning | Seeded bugs | All real bugs *(18 in the fixture)* |
 |---|---|---|
-| `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** |
-| `claude-opus-5` alone | 10.0 / 10 | all 3/3 |
-| **both, independently** | **10.0 / 10** | **all 3/3** |
+| `gemini-3.6-flash` alone | 8.3 / 10 | 8.7 |
+| `claude-sonnet-5` alone | 7.7 / 10 | 8.0 |
+| **both, independently** *(default)* | **9.3 / 10** | **10.0** |
 
-**What this table does not show.** `claude-opus-5` reaches the ceiling of this
-fixture on its own, so the second scan does not add a finding here — the union
-equals the maximum rather than exceeding it. What two scans bought on *this*
-fixture is insurance against the weaker model's blind spot, which is real but is
-not what the row above measures. `scan: single` with `verifier-model:
-claude-opus-5` would have scored the same and cost less.
+The union beats both, and it beats them **in both directions** — this is not one
+model carrying the other:
 
-The honest reading is that the argument for two scans rests on the structural
-point below — a second opinion is never shown what the scanner missed — and not
-on this number. Demonstrating it needs a bug `claude-opus-5` misses and
-`gemini-3.6-flash` catches, which this fixture does not contain.
+| | Found by the other model only |
+|---|---|
+| `claude-sonnet-5` missed | a TOCTOU between an existence check and `open()`; a share link that never expires |
+| `gemini-3.6-flash` missed | a permission check whose correctness depends on a registry the diff never touches |
+
+Neither model is a subset of the other, and neither knew what the other was
+looking at. That is the whole argument for two scans, and it is the reason the
+second opinion is spent on disagreements rather than on everything.
+
+**The disagreement is also where a false positive dies.** In one of the three
+runs a scan reported the decoy — a raw path join whose guard is one file away.
+The other model was asked, went and read the caller, and refuted it. It never
+reached the pull request.
 
 **Reading past the diff decides whether it can be right about them:**
 
 | | Seeded bugs | Diff-undecidable bugs | False positive on the decoy |
 |---|---|---|---|
-| diff only | 10 / 10 | **0 / 2**, every run | **3 / 3 runs** |
-| **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | **0 / 3 runs** |
+| diff only | 8.7 / 10 | **0 / 2**, every run | **3 / 3 runs** |
+| **repository readable** *(default)* | 8.7 / 10 | 2 / 2 in two runs of three | **0 / 3 runs** |
+
+Same models, same fixture, same three runs each. The only difference is whether
+the tools were available.
 
 The decoy is a path join with nothing guarding it on the changed lines, whose
 every caller validates first — in a file the pull request does not touch. The
-diff-only reviewer reports it every time and is wrong every time; it is behaving
-correctly given what it can see. Reading the repository, two runs never raise it
-and the third has it **removed by the second opinion**, which went and read the
-caller.
+diff-only reviewer reports it **every time**, and is wrong every time; it is
+behaving correctly given what it can see. With the repository readable, two runs
+never raise it and the third has it **removed by the second opinion**, which
+went and read the caller.
 
-Re-measured at `v1.0.0`, forty commits after the first run, because a number
-attached to code that has since changed is a number about nothing. It held.
+The two diff-undecidable bugs go the other way: unreachable without the tools,
+found with them. Recall and precision move together here, which is unusual and
+is the argument for the tools.
 
-Both configurations also found real bugs nobody planted, and two of those are
-themselves undecidable from a diff — found in **8 of 9** runs with repository
-access and **0 of 9** without. One of them cannot be reached from a diff at all:
-a registry mapping every export format to a module under `app.formatters`, and
-no such package exists. That is a fact about the filesystem, not about any line
-of code.
+Re-measured after the answer key turned out to be reachable a **third** time —
+[the harness itself carried a copy](benchmark/seeded-bugs/README.md#three-contamination-sources-all-found-by-giving-the-models-access).
+Every number on this page is from a run made after that was closed; the earlier
+ones were discarded, as the two before them were.
 
-Unplanted bugs are better evidence than planted ones. Nobody chose them. Live from Actions: **0% re-report rate**
-on an unchanged pull request.
+The fixture also contains real bugs nobody planted — written by accident, found
+by the models, and credited to the answer key afterwards. Unplanted bugs are
+better evidence than planted ones, because nobody chose them. One of them cannot
+be reached from a diff at all: a registry mapping every export format to a
+module under `app.formatters`, where no such package exists. That is a fact
+about the filesystem, not about any line of code.
+
+Live from Actions: **0% re-report rate** on an unchanged pull request.
 
 <details>
 <summary><b>It found two real security bugs in the commit that gave it repository access</b></summary>
@@ -218,11 +219,12 @@ looked at these same lines and said nothing, because neither bug is *in* a line.
 </details>
 
 > **Read this narrowly.** One fixture, written by the same person who wrote the
-> reviewer. Two rounds of results had to be thrown away when the models turned
-> out to be reading the answer key — [both contamination sources are documented
-> rather than quietly fixed](benchmark/seeded-bugs/README.md#two-contamination-sources-both-found-by-giving-the-models-access),
-> and one of them was found by the reviewer itself. Enough to justify the design;
-> not enough to rank the models.
+> reviewer. Three rounds of results have been thrown away because the models
+> turned out to be reading the answer key — [every source is documented rather
+> than quietly fixed](benchmark/seeded-bugs/README.md#three-contamination-sources-all-found-by-giving-the-models-access),
+> one of them was found by the reviewer itself, and the third was found in a
+> tool log while measuring for this table. Enough to justify the design; not
+> enough to rank the models.
 
 ## 🚀 Install
 
@@ -286,7 +288,7 @@ finding.
 | `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
 | `skill` | `security-review` | a built-in name, or a path to criteria in your own repository; several combine |
 | `primary-model` | a Gemini model | **confirm against your project** — `python -m quorum_review.review --list-models` |
-| `verifier-model` | `claude-opus-5` | both models scan; the names only decide which runs alone under `scan: single` |
+| `verifier-model` | `claude-sonnet-5` | both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
 | `repo-access` | `on` | read-only tools over the checkout, so a finding that turns on code outside the diff can be settled instead of guessed. Needs `actions/checkout` |
@@ -301,20 +303,29 @@ finding.
 | `inline-severity` | `low` | lowest severity that gets its own comment in the diff view |
 | `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
-| `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
+| `github-token` | `GITHUB_TOKEN` | pass an App token to post under a name you chose |
 | `vertex-region` | `global` | pin both models to one region for data residency — see [security.md](docs/security.md#where-the-code-goes) |
 | `claude-vertex-region` | inherits | override just Claude; try `us-east5` if your entitlement is region-scoped |
 | `gemini-location` | inherits | override just Gemini |
 
-**Cost tiers**, roughly, per review:
+**On the default pair.** `gemini-3.6-flash` and `claude-sonnet-5` are the
+default because they measurably complement each other — each finds real defects
+the other misses, in both directions, which is the property the whole design
+rests on. Swapping either is one input. A stronger model on one side will find
+more on its own; whether the pair still complements each other is a question
+this fixture can answer for you, and `benchmark/measure.py` is how.
+
+**Effort tiers**, roughly, per review:
 
 | Setting | Model calls | Trade |
 |---|---|---|
-| `scan: single`, `verification: off` | 1 | cheapest; one model's recall, unfiltered |
+| `scan: single`, `verification: off` | 1 | fewest calls; one model's recall, unfiltered |
 | `scan: single`, `verification: on` | 1 + N | filters false positives, recall still capped |
-| **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | best recall, usually cheaper than the row above |
+| **`scan: both`, `verification: on`** *(default)* | **2 + disagreements** | the union of both models, and fewer calls than the row above |
 
 The default is not the most expensive option — easy to assume, and wrong.
+Verification is one call *per finding*; agreement between two independent scans
+costs none.
 
 `max-tokens` puts a ceiling on one review, which is the question a platform team
 asks before enabling something on two hundred repositories. In tokens rather
@@ -458,10 +469,12 @@ python scripts/create_app.py
 ```
 
 Reads [`app-manifest.yml`](app-manifest.yml), walks GitHub's manifest flow, and
-prints the secrets to set. Worth doing for two reasons: resolved threads only
-collapse with an App token — GitHub does not let the Actions app call
-`resolveReviewThread`, whatever `permissions:` says — and comments arrive under
-a name and avatar you chose.
+prints the secrets to set. It buys you one thing: comments arrive under a name
+and avatar you chose, instead of `github-actions[bot]`.
+
+It does **not** make resolved threads collapse. That was the original reason for
+it and the reason turned out to be wrong — see
+[Resolved threads stay open](docs/operations.md#resolved-threads-stay-open).
 
 The App receives no webhooks and runs nowhere; Actions already delivers the
 events, so it exists purely to mint short-lived tokens. It cannot write to your
@@ -590,7 +603,7 @@ Measure a configuration against the fixture:
 
 ```bash
 python -m benchmark.measure --pr 1 --runs 3 \
-  --primary gemini-3.6-flash --verifier claude-opus-5
+  --primary gemini-3.6-flash --verifier claude-sonnet-5
 ```
 
 </details>

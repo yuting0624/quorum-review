@@ -129,12 +129,18 @@ an outbound network request.
 Identity Federation, not from anything this code does: no key to leak from a
 workflow log, none to find in the git history later.
 
-The GitHub side is not the same. If you use a GitHub App token — the only way
-to collapse a resolved thread, since GitHub forbids `resolveReviewThread` for
-the Actions app — then `APP_PRIVATE_KEY` is a long-lived secret stored in the
-repository. It never leaves GitHub and it is scoped to that App's installation,
-and the review still works without it, but it is a stored key and belongs in
-whatever inventory you keep of those.
+The GitHub side is not the same. If you post under your own GitHub App rather
+than `github-actions[bot]`, `APP_PRIVATE_KEY` is a long-lived secret stored in
+the repository. It never leaves GitHub, it is scoped to that App's
+installation, and the review works without it — but it is a stored key and
+belongs in whatever inventory you keep of those.
+
+**The reviewer does not ask for `contents: write`,** and that is the whole
+reason resolved threads stay open: `resolveReviewThread` requires it. Nothing
+here pushes a commit, so the permission would buy one cosmetic behaviour in
+exchange for giving write access to your repository to a process whose input is
+written by anyone who can open a pull request. See
+[Resolved threads stay open](operations.md#resolved-threads-stay-open).
 
 ### The reviewer does not republish the secret it found
 
@@ -227,8 +233,9 @@ If none of that is acceptable in your environment, do not deploy
 
 ## Where the code goes
 
-The diff, and whatever the models read from the checkout, are sent to Vertex AI
-in your own Google Cloud project. Nothing is sent anywhere else: there is no
+The diff, and whatever the models read from the checkout, are sent to Gemini
+Enterprise Agent Platform — formerly Vertex AI — in your own Google Cloud
+project. Nothing is sent anywhere else: there is no
 service operated by this project, no telemetry, and no second vendor. The
 findings are written back to GitHub as comments and SARIF, which is the only
 other place the content lands.
@@ -265,11 +272,17 @@ which is the behaviour you want, but it means the review degrades to one model
 rather than failing loudly. The summary names the model that dropped out.
 
 Every summary comment records where each model that ran was called, so the
-answer to "which region processed this pull request" is in the pull request:
+answer to "which region processed this pull request" is in the pull request —
+in the **Usage** section, which is collapsed by default:
 
-> Reviewed `abc1234` · quorum-review `1.5.0` · models `gemini-3.6-flash`,
-> `claude-opus-5` · `claude-opus-5` in `europe-west4`, `gemini-3.6-flash` in
-> `europe-west4` · 118s
+> | Model | Region | Calls | Input | Cached input | Output |
+> |---|---|--:|--:|--:|--:|
+> | `gemini-3.6-flash` | `europe-west4` | 4 | 91,204 | 38,110 | 1,902 |
+> | `claude-sonnet-5` | `europe-west4` | 6 | 63,551 | 12,880 | 8,417 |
+
+Only models that completed a call appear. Naming a region for one that was
+configured and never reached would be a claim about traffic that did not
+happen.
 
 A value that is not shaped like a region is refused at startup rather than
 turned into a hostname, because that failure otherwise arrives as a connection
