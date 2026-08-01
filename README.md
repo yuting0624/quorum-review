@@ -5,13 +5,16 @@
 **Two models review your pull request. Neither one sees the other's work.**
 
 Where they agree independently, that is the result. Where only one found
-something, the other is asked to judge it. Both run on **a single Google Cloud
-credential** — no API keys, no long-lived secret in your repository.
+something, the other is asked to judge it.
+
+**Gemini and Claude both run on Gemini Enterprise Agent Platform** — Google
+Cloud's platform, formerly Vertex AI — off **one credential**. No API keys, no
+long-lived secret in your repository, one invoice.
 
 [![CI](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml/badge.svg)](https://github.com/yuting0624/quorum-review/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-![Gemini on Vertex AI](https://img.shields.io/badge/Gemini-Vertex%20AI-4285F4?logo=googlegemini&logoColor=white)
-![Claude on Vertex AI](https://img.shields.io/badge/Claude-Vertex%20AI-D97757?logo=anthropic&logoColor=white)
+![Gemini on Gemini Enterprise Agent Platform](https://img.shields.io/badge/Gemini-Agent%20Platform-4285F4?logo=googlegemini&logoColor=white)
+![Claude on Gemini Enterprise Agent Platform](https://img.shields.io/badge/Claude-Agent%20Platform-D97757?logo=anthropic&logoColor=white)
 
 </div>
 
@@ -19,7 +22,8 @@ credential** — no API keys, no long-lived secret in your repository.
 
 > ### 📐 A reference implementation, not a product
 >
-> This is a worked example of running Gemini and Claude together on Vertex AI.
+> This is a worked example of running Gemini and Claude together on Gemini
+> Enterprise Agent Platform.
 > Pull request review is the subject matter, chosen because it makes the example
 > concrete and testable — not an attempt to compete with the review tools that
 > already exist. Read it expecting to learn the arrangement. No support channel,
@@ -55,6 +59,10 @@ better than either one's self-reported confidence, and it costs nothing extra.
 
 ## 💡 Why
 
+Claude is available on **Gemini Enterprise Agent Platform** alongside Gemini.
+That is the whole basis of this project: two vendors' models, one platform, one
+credential, one invoice.
+
 Cross-model consensus, incremental review, and second-opinion verification all
 exist elsewhere. What did not exist is running the models on **one cloud
 credential**: every implementation we found stacks API keys from separate
@@ -64,8 +72,8 @@ vendors.
 |---|---|---|
 | **Secrets in the repo** | two long-lived keys | **none** — OIDC federation, short-lived credentials |
 | **Billing** | two invoices, two contracts | one, against existing Google Cloud commitments |
-| **Where the code goes** | two vendors' infrastructure | stays inside your Vertex AI region |
-| **Model governance** | per-vendor, ad hoc | one `vertexai.allowedModels` org policy covers both |
+| **Where the code goes** | two vendors' infrastructure | one platform, in your own project — [pin the region](docs/security.md#where-the-code-goes) and it stays there |
+| **Model governance** | per-vendor, ad hoc | one org policy covers both |
 
 The whole trick is what these two lines *don't* contain:
 
@@ -144,6 +152,18 @@ findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 | `gemini-3.6-flash` alone | 9.0 / 10 | one bug missed **3/3 times** |
 | `claude-opus-5` alone | 10.0 / 10 | all 3/3 |
 | **both, independently** | **10.0 / 10** | **all 3/3** |
+
+**What this table does not show.** `claude-opus-5` reaches the ceiling of this
+fixture on its own, so the second scan does not add a finding here — the union
+equals the maximum rather than exceeding it. What two scans bought on *this*
+fixture is insurance against the weaker model's blind spot, which is real but is
+not what the row above measures. `scan: single` with `verifier-model:
+claude-opus-5` would have scored the same and cost less.
+
+The honest reading is that the argument for two scans rests on the structural
+point below — a second opinion is never shown what the scanner missed — and not
+on this number. Demonstrating it needs a bug `claude-opus-5` misses and
+`gemini-3.6-flash` catches, which this fixture does not contain.
 
 **Reading past the diff decides whether it can be right about them:**
 
@@ -232,9 +252,10 @@ steps:
       google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
 ```
 
-**Prerequisites:** a Google Cloud project with Vertex AI enabled, and **Claude
-enabled in Vertex AI Model Garden** — skip that and every Claude call returns 404
-while the Gemini half keeps working, which is a confusing way to find out.
+**Prerequisites:** a Google Cloud project with **Gemini Enterprise Agent
+Platform** (formerly Vertex AI) enabled, and **Claude enabled in Model
+Garden** — skip that and every Claude call returns 404 while the Gemini half
+keeps working, which is a confusing way to find out.
 Full setup, including Workload Identity Federation: **[docs/setup-vertex.md](docs/setup-vertex.md)**.
 How to read the output, what it costs, and what to do when it breaks:
 **[docs/operations.md](docs/operations.md)**.

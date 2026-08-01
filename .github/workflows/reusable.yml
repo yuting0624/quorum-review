@@ -99,12 +99,18 @@ on:
         type: string
         required: false
         default: ubuntu-latest
-      action-ref:
+      action-version:
         description: >-
           Which version of the action to run — a tag or a commit SHA. Pin it to
           a SHA in a regulated environment; a tag can be moved to point at new
-          code. This is a git ref rather than `owner/repo@ref`, because the
-          action is checked out rather than referenced: see the Review step.
+          code.
+
+          A git ref, not `owner/repo@ref`: the action is checked out rather
+          than referenced, because `uses:` cannot take an expression. This
+          input was called `action-ref` and took the other form, so passing
+          that now fails with "invalid input" — which is the point. Silently
+          reading `yuting0624/quorum-review@v1` as a branch name would fail
+          later and less clearly.
         type: string
         required: false
         default: v1
@@ -124,16 +130,23 @@ on:
         default: ""
       sarif-file:
         description: >-
-          Where to write the SARIF log. Empty disables the upload, which is
-          what you want without GitHub Advanced Security.
+          Where to write the SARIF log, and upload it to code scanning. Off by
+          default: it needs GitHub Advanced Security, and adopting a shared
+          workflow should not start writing to another repository's Security
+          tab without being asked. `quorum.sarif` is the usual value.
         type: string
         required: false
-        default: quorum.sarif
+        default: ""
     secrets:
       WIF_PROVIDER:
         required: true
       GOOGLE_CLOUD_PROJECT:
         required: true
+      ACTION_REPOSITORY_TOKEN:
+        # The default GITHUB_TOKEN is scoped to the calling repository, so it
+        # cannot clone the action from a private or internal one. Most adopters
+        # never need this; an organisation running its own fork does.
+        required: false
     outputs:
       findings:
         value: ${{ jobs.review.outputs.findings }}
@@ -214,7 +227,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.action-repository }}
-          ref: ${{ inputs.action-ref }}
+          ref: ${{ inputs.action-version }}
+          token: ${{ secrets.ACTION_REPOSITORY_TOKEN || github.token }}
           persist-credentials: false
 
       # The pull request's code, as data — what the models read when a finding
@@ -281,11 +295,22 @@ jobs:
           max-diff-characters: ${{ inputs.max-diff-characters }}
           vertex-region: ${{ inputs.vertex-region }}
 
-      # `always()` so a failed gate still uploads what it failed on. Skipped
-      # without GitHub Advanced Security, where the upload is rejected and the
-      # findings stay in the pull request comments.
-      - name: Upload SARIF
+      # `always()` so a failed gate still uploads what it failed on — but only
+      # if there is something to upload. A review that died before writing the
+      # file would otherwise send codeql-action after a path that does not
+      # exist, and the error it reports for that reads like a permissions
+      # problem.
+      - name: Look for a SARIF log
+        id: sarif
         if: always() && inputs.sarif-file != ''
+        shell: bash
+        env:
+          SARIF_FILE: ${{ inputs.sarif-file }}
+        run: |
+          if [ -s "$SARIF_FILE" ]; then echo "found=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Upload SARIF
+        if: always() && steps.sarif.outputs.found == 'true'
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:

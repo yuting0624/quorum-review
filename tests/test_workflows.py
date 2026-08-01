@@ -132,3 +132,63 @@ def test_forks_are_excluded_from_the_non_fork_workflows(path: Path):
     model and its own file."""
     condition = " ".join(str(load(path)["jobs"]["review"]["if"]).split())
     assert "head.repo.fork != true" in condition
+
+
+# -- the reusable workflow specifically -------------------------------------
+
+REUSABLE = WORKFLOWS / "reusable.yml"
+
+
+def call_spec() -> dict:
+    document = load(REUSABLE)
+    return (
+        document[True]["workflow_call"]
+        if True in document
+        else document["on"]["workflow_call"]
+    )
+
+
+def test_adopting_it_does_not_start_writing_to_the_security_tab():
+    """SARIF needs GitHub Advanced Security, and a shared workflow should not
+    begin writing to another repository's Security tab because someone bumped
+    the version. Same principle as `fail-on: never`."""
+    assert call_spec()["inputs"]["sarif-file"]["default"] == ""
+
+
+def test_adopting_it_does_not_start_blocking_merges():
+    assert call_spec()["inputs"]["fail-on"]["default"] == "never"
+
+
+def test_the_action_checkout_can_be_given_a_token():
+    """The default GITHUB_TOKEN is scoped to the calling repository, so it
+    cannot clone the action from a private or internal one."""
+    assert "ACTION_REPOSITORY_TOKEN" in call_spec()["secrets"]
+
+    fetch = next(
+        step
+        for _job, step in steps_of(load(REUSABLE))
+        if step.get("name") == "Fetch the reviewer"
+    )
+    assert "ACTION_REPOSITORY_TOKEN" in str(fetch["with"]["token"])
+    assert "github.token" in str(fetch["with"]["token"])
+
+
+def test_the_old_input_name_is_gone_rather_than_reinterpreted():
+    """`action-ref` took `owner/repo@ref`; `action-version` takes a git ref.
+    Keeping the name would mean silently reading `yuting0624/quorum-review@v1`
+    as a branch, which fails later and less clearly than "invalid input"."""
+    inputs = call_spec()["inputs"]
+    assert "action-version" in inputs
+    assert "action-ref" not in inputs
+
+
+def test_the_sarif_upload_checks_there_is_something_to_upload():
+    """A review that died before writing the file would otherwise send
+    codeql-action after a path that does not exist, and the error it reports
+    for that reads like a permissions problem."""
+    upload = next(
+        step
+        for _job, step in steps_of(load(REUSABLE))
+        if step.get("name") == "Upload SARIF"
+    )
+    assert "steps.sarif.outputs.found" in str(upload["if"])
