@@ -37,12 +37,18 @@ concurrency:
       || github.event.inputs.pr }}
   cancel-in-progress: true
 
-# `pull-requests` is not requested here: the App token carries its own
-# permissions, and GITHUB_TOKEN is no longer the thing posting comments.
-# `id-token: write` is still required, for Google Cloud federation.
+# `pull-requests: write` is here even though the App token normally does the
+# posting, because the fallback has to work: if the mint fails — a revoked
+# installation, an expired key, an App that was never installed — the review
+# runs with GITHUB_TOKEN, and without this it would then fail on the first
+# comment it tried to post. A fallback that cannot do the job is not a
+# fallback.
+#
+# `id-token: write` is for Google Cloud federation.
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   review:
@@ -100,8 +106,11 @@ jobs:
       - name: Say so if the App token could not be minted
         if: steps.app-token.outcome == 'failure'
         shell: bash
-        run: |
-          echo "::warning title=Falling back to GITHUB_TOKEN::The App token           could not be minted, so this review runs with GITHUB_TOKEN and cannot           collapse resolved threads. The usual cause is an App that exists but           is not installed on this repository."
+        run: >-
+          echo "::warning title=Falling back to GITHUB_TOKEN::The App token
+          could not be minted, so this review runs with GITHUB_TOKEN and cannot
+          collapse resolved threads. The usual cause is an App that exists but
+          is not installed on this repository."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

@@ -242,3 +242,23 @@ def test_the_review_falls_back_rather_than_stopping(path: Path):
     token = str(review["with"]["github-token"])
     assert "steps.app-token.outputs.token" in token
     assert "github.token" in token
+
+
+ALL_ENTRY_POINTS = FILES + EXAMPLES
+
+
+@pytest.mark.parametrize(
+    "path",
+    [p for p in ALL_ENTRY_POINTS if "review" in p.name],
+    ids=lambda p: p.name,
+)
+def test_every_workflow_that_posts_can_post(path: Path):
+    """`pull-requests: write` wherever a review runs, including the App-token
+    example — especially there. The App normally does the posting, so it is
+    tempting to drop the permission; then the fallback runs with GITHUB_TOKEN
+    and fails on the first comment. A fallback that cannot do the job is not a
+    fallback."""
+    document = load(path)
+    if "review" not in (document.get("jobs") or {}):
+        pytest.skip("not a review workflow")
+    assert (document.get("permissions") or {}).get("pull-requests") == "write"
