@@ -153,6 +153,25 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # A token from this repository's own GitHub App, because the default
+      # GITHUB_TOKEN cannot collapse a resolved thread: GitHub forbids
+      # `resolveReviewThread` for the Actions app, whatever `permissions:`
+      # says, and answers FORBIDDEN / "Resource not accessible by
+      # integration". The reply was posted and the thread stayed open, so a
+      # pull request accumulated a wall of settled comments — the thing this
+      # reviewer was partly built in reaction to.
+      #
+      # `continue-on-error` because this is an improvement, not a requirement.
+      # A fork, a revoked installation or an expired key should degrade the
+      # review to GITHUB_TOKEN rather than stop it.
+      - name: Mint a token from the App
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -165,6 +184,10 @@ jobs:
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          # Falls back when the App is unavailable. The action reports which
+          # one it used by saying, or not saying, that threads could not be
+          # collapsed.
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
           skill: security-review
           pr-number: ${{ github.event.inputs.pr }}
           workspace-path: ${{ github.workspace }}/pr-head
