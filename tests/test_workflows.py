@@ -280,3 +280,41 @@ def test_every_workflow_that_posts_can_post(path: Path):
     if not runs_this_action(document):
         return
     assert (document.get("permissions") or {}).get("pull-requests") == "write"
+
+
+# -- what the Marketplace will accept ---------------------------------------
+
+ACTION = Path(__file__).resolve().parent.parent / "action.yml"
+
+#: The Marketplace refuses at 125. Asserted here because the refusal arrives in
+#: a web form after a tag has been cut, and the listing reads `action.yml` from
+#: the tag — so getting it wrong costs a release, not an edit.
+MAX_DESCRIPTION = 125
+
+
+def action_description() -> str:
+    """As the Marketplace reads it: the folded scalar joined onto one line."""
+    return " ".join(load(ACTION)["description"].split())
+
+
+def test_the_description_fits():
+    description = action_description()
+    assert len(description) < MAX_DESCRIPTION, (
+        f"{len(description)} characters; the Marketplace refuses at {MAX_DESCRIPTION}"
+    )
+
+
+def test_the_description_names_both_models():
+    """It is what a Marketplace search matches on. A description that says
+    "cross-model review" and names neither model is invisible to the person
+    looking for exactly this."""
+    description = action_description().lower()
+    assert "gemini" in description
+    assert "claude" in description
+
+
+def test_the_metadata_the_marketplace_requires_is_present():
+    action = load(ACTION)
+    assert action["name"]
+    assert action["branding"]["icon"]
+    assert action["branding"]["color"]

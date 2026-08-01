@@ -1,7 +1,9 @@
 name: quorum-review
+# The Marketplace refuses a description of 125 characters or more, and folds
+# this one onto a single line, so the limit applies to the joined text. 114.
 description: >-
   Gemini and Claude review each pull request independently, on one Google
-  Cloud credential. Where they agree, that is the result.
+  Cloud credential. Agreement is the result.
 author: quorum-review contributors
 
 branding:
