@@ -130,6 +130,44 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # The `if:` above cannot exclude a fork on every trigger, and reads as
+      # though it does. `github.event.pull_request` exists on `pull_request`
+      # and `pull_request_review_comment` and nowhere else, so on
+      # `issue_comment` and `workflow_dispatch` the field is null and
+      # `null != true` passes. A maintainer typing the trigger phrase on an
+      # outside contributor's pull request is an ordinary thing to do, and it
+      # reached the checkout below.
+      #
+      # The action re-resolves fork-ness against the API and refuses, so no
+      # fork gets reviewed — but that happens *after* this job has put the
+      # fork's merge commit on the runner with a write-scoped token in the
+      # environment. Nothing here executes the tree, which is what keeps this
+      # from being serious; adding a build or a setup step would change that.
+      #
+      # So resolve it the same way the action does, before anything is cloned.
+      # `pull-requests: read` is required and is included in the `write` the
+      # job already has — in a job scoped to `contents: read` alone this step
+      # 403s, and a local `gh` session will not reproduce that.
+      #
+      # Reviewing a fork on purpose is `examples/review-fork.yml`, which uses
+      # `pull_request_target` and a label. It is a different trust model and
+      # belongs in a different file.
+      - name: Refuse a fork
+        if: >-
+          github.event_name == 'issue_comment' ||
+          github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number || github.event.inputs.pr }}
+        shell: bash
+        run: |
+          head="$(gh api "repos/$REPO/pulls/$NUMBER" --jq '.head.repo.full_name')"
+          if [ "$head" != "$REPO" ]; then
+            echo "::error title=Not reviewed::#$NUMBER comes from $head.             Reviewing a fork needs examples/review-fork.yml."
+            exit 1
+          fi
+
       # Two checkouts, because this repository reviews its own pull
       # requests: the action has to run from a known-good commit, not from
       # the branch it is reviewing.
@@ -222,7 +260,17 @@ jobs:
           # visible in who posted the comments.
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           skill: security-review
-          pr-number: ${{ github.event.inputs.pr }}
+          # The same three-way fallback as every other reference to the
+          # number in this file. It is not needed — an empty value is unset by
+          # action.yml and the reviewer derives the number from the payload —
+          # but the asymmetry was a false-positive magnet: four independent
+          # model reviews read the single-source version as "silently broken
+          # on every trigger except dispatch". They could not check, because
+          # the code that makes it safe is in the action's repository and not
+          # in the checkout their tools can read.
+          pr-number: ${{ github.event.pull_request.number
+              || github.event.issue.number
+              || github.event.inputs.pr }}
           workspace-path: ${{ github.workspace }}/pr-head
           sarif-file: ${{ github.workspace }}/quorum.sarif
 
