@@ -42,12 +42,23 @@ on:
 # One review at a time per pull request. Without this, a reopen or a quick
 # follow-up comment starts an overlapping run, and two runs racing to edit the
 # same summary comment can lose the ledger the other just wrote.
+#
+# `cancel-in-progress` is an expression, and it has to be: **concurrency is
+# evaluated before the job's `if:`**, so a run that will be skipped still
+# occupies the group and still cancels whatever is running. The reviewer now
+# posts a notice when it starts, that notice is a comment, and the comment
+# fires `issue_comment` — so the review cancelled itself thirty seconds in,
+# every time, and the run that killed it then skipped and did nothing.
+#
+# The Bot check in `if:` stops the loop. It cannot stop the cancellation,
+# because it is read too late. This is the same check, moved early enough to
+# matter.
 concurrency:
   group: >-
     quorum-review-${{ github.event.pull_request.number
       || github.event.issue.number
       || github.event.inputs.pr }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.comment.user.type != 'Bot' }}
 
 # `contents: read` covers reading the diff. `id-token: write` is what lets the
 # workflow mint the OIDC token for federation — without it, auth fails before

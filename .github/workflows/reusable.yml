@@ -170,7 +170,7 @@ concurrency:
   group: >-
     quorum-review-${{ github.repository }}-${{ github.event.pull_request.number
       || github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.comment.user.type != 'Bot' }}
 
 permissions:
   contents: read

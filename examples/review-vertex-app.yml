@@ -35,7 +35,7 @@ concurrency:
     quorum-review-${{ github.event.pull_request.number
       || github.event.issue.number
       || github.event.inputs.pr }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.comment.user.type != 'Bot' }}
 
 # `pull-requests: write` is here even though the App token normally does the
 # posting, because the fallback has to work: if the mint fails — a revoked
