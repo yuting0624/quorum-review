@@ -610,6 +610,19 @@ python -m benchmark.measure --pr 1 --runs 3 \
 
 ---
 
+## 🔗 Also by the same author
+
+**[antigravity-for-claude-code](https://github.com/yuting0624/antigravity-for-claude-code)** —
+a Claude Code plugin that runs the Antigravity CLI (Gemini) as a collaborating
+sub-agent, with model routing across the SDLC.
+
+Same idea from the other end. That one puts Gemini and Claude together in the
+editor, while you are writing the code; this one puts them together in CI, after
+you have pushed it. If you want a second model reading over your shoulder rather
+than reviewing the result, start there.
+
+---
+
 ## ⚠️ Disclaimer
 
 Personal project, Apache-2.0. **Not affiliated with, endorsed by, or supported
