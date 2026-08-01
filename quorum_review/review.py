@@ -131,6 +131,38 @@ def dedupe(findings: list[Finding]) -> list[Finding]:
     return list(seen.values())
 
 
+def anchored(findings: list[Finding], diff: str) -> tuple[list[Finding], list[str]]:
+    """Keep the findings whose path names a file in the diff. Return the rest.
+
+    This is the check that makes ``file_path`` safe, and it replaces trying to
+    sanitise it. The field looks like metadata and is not — the model chose it
+    after reading an attacker-controlled diff — and it reaches the verifier
+    prompt, a Markdown table, a SARIF location and a GitHub API call. Stripping
+    suspicious characters from it was the first attempt and was worse than
+    nothing: ``<`` and ``|`` are legal in a POSIX filename, so legitimate paths
+    were silently rewritten into ones that match nothing, and any free text the
+    model had appended survived the strip intact.
+
+    Comparing against the diff has neither problem. The set of paths comes from
+    GitHub rather than from the model, so a path that is in it cannot carry an
+    instruction, and a path that is not in it was never reviewable: there is no
+    file to anchor a comment to and no diff to show a verifier.
+
+    A model naming a file outside the diff is ordinary — it read the repository
+    with tools and reported what it found there — so the dropped paths are
+    returned rather than discarded, and the summary says so. Silence here would
+    read as "nothing was found in that file".
+    """
+    known = set(diffs.split_by_file(diff))
+    kept, dropped = [], []
+    for finding in findings:
+        if finding.file_path in known:
+            kept.append(finding)
+        else:
+            dropped.append(finding.file_path)
+    return kept, sorted(set(dropped))
+
+
 def by_severity(findings: list[Finding]) -> list[Finding]:
     return sorted(findings, key=lambda f: SEVERITY_RANK.get(f.severity, 99))
 
@@ -544,7 +576,9 @@ async def run(skill_name: str, dry_run: bool) -> int:
         if not scans:
             raise ProviderUnavailable(f"every scanning model failed: {failures}")
 
-        findings = dedupe(ledger_mod.assign_ids(consensus.merge(scans)))
+        merged, invented = anchored(consensus.merge(scans), ctx.diff)
+        report.off_diff_paths = invented
+        findings = dedupe(ledger_mod.assign_ids(merged))
 
         # Before anything renders, records, or posts. A finding about a
         # hardcoded credential quotes the credential, and republishing it in a

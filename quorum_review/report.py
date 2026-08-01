@@ -60,6 +60,13 @@ class RunReport:
     #: `trimmed_files` because they mean different things to a reader: a
     #: trimmed file was partly reviewed, a dropped one was never looked at.
     dropped_files: list[str] = field(default_factory=list)
+    #: Paths a model reported against that this change does not touch. Usually
+    #: honest — it read the repository with tools and found something there —
+    #: and occasionally a path the model invented outright. Either way the
+    #: finding cannot be posted: there is no diff line to anchor it to. Named
+    #: rather than counted, because silence here reads as "nothing was found in
+    #: that file".
+    off_diff_paths: list[str] = field(default_factory=list)
     #: ``{old path: new path}`` for files this change moves. Reported because a
     #: reader seeing findings appear at a path they did not edit deserves to
     #: know the reviewer followed a rename rather than invented them.
@@ -542,6 +549,19 @@ def render(report: RunReport) -> str:
             f"The diff exceeded the size budget, and these did not fit: {shown}. "
             f"Nothing below is a statement about them. Split the pull request, "
             f"or raise `max-diff-characters`.",
+        ]
+
+    if report.off_diff_paths:
+        shown = ", ".join(f"`{p}`" for p in report.off_diff_paths[:10])
+        if len(report.off_diff_paths) > 10:
+            shown += f", and {len(report.off_diff_paths) - 10} more"
+        lines += [
+            "",
+            f"> Findings were raised against {len(report.off_diff_paths)} path(s) "
+            f"this change does not touch, and were dropped: {shown}. A model "
+            f"reading the repository can find real problems outside the diff, "
+            f"but there is no line here to attach a comment to. If one of these "
+            f"looks like a file you did edit, the path is wrong.",
         ]
 
     if report.recovered and report.ledger_lost:

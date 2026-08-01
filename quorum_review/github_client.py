@@ -25,6 +25,62 @@ from .schema import PRContext
 API_ROOT = os.getenv("GITHUB_API_URL", "https://api.github.com")
 _TIMEOUT = httpx.Timeout(30.0, read=60.0)
 
+
+#: Where a corporate CA bundle might be named, in the order a reader would
+#: expect them to win. The first two are this project's own; the rest are the
+#: conventions already set on runners behind a TLS-intercepting proxy, for
+#: requests and for OpenSSL respectively.
+_CA_BUNDLE_VARS = (
+    "QUORUM_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "CURL_CA_BUNDLE",
+)
+
+
+def ca_bundle() -> str:
+    """A CA bundle to trust in addition to the defaults, or "".
+
+    httpx verifies against certifi and does not consult the environment for
+    anything else, so on a network that terminates TLS at a corporate proxy —
+    which is most large ones — every call fails at the handshake with an error
+    that reads like the host is unreachable. `requests` and `curl` both honour
+    these variables, so a runner in that environment already has one set; this
+    reads the same ones rather than inventing a mechanism nobody has
+    configured.
+
+    Only an existing file is returned. A stale path in the environment is
+    common, and failing closed on it would turn a working setup into a broken
+    one for no gain.
+    """
+    for name in _CA_BUNDLE_VARS:
+        path = os.getenv(name, "").strip()
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
+def graphql_url(api_root: str = "") -> str:
+    """Where GraphQL lives, which is not always under the REST root.
+
+    On github.com the two share a host: REST is ``https://api.github.com`` and
+    GraphQL is ``https://api.github.com/graphql``. On GitHub Enterprise Server
+    they do not. Actions sets ``GITHUB_API_URL`` to
+    ``https://ghe.example.com/api/v3``, and GraphQL is served from
+    ``https://ghe.example.com/api/graphql`` — a sibling of ``v3``, not a child.
+
+    Posting to a relative ``/graphql`` therefore reaches ``/api/v3/graphql`` on
+    every Enterprise Server installation, which is a 404. Thread resolution is
+    the only thing that uses GraphQL and it already fails softly, so the
+    symptom is threads that quietly never collapse: a feature that looks
+    unimplemented rather than broken.
+    """
+    root = (api_root or os.getenv("GITHUB_API_URL") or API_ROOT).rstrip("/")
+    if root.endswith("/api/v3"):
+        return root[: -len("/v3")] + "/graphql"
+    return root + "/graphql"
+
+
 #: Attempts per request. Small: a review has a whole-run timeout, and burning
 #: it against a rate limit that is not clearing helps nobody.
 HTTP_ATTEMPTS = 4
@@ -146,9 +202,13 @@ class GitHubClient:
             raise GitHubError("GITHUB_REPOSITORY must look like 'owner/repo'")
         self.owner, self.repo = repository.split("/", 1)
 
+        bundle = ca_bundle()
         self._http = httpx.AsyncClient(
-            base_url=API_ROOT,
+            base_url=os.getenv("GITHUB_API_URL") or API_ROOT,
             timeout=_TIMEOUT,
+            # `trust_env` already covers HTTPS_PROXY and NO_PROXY; the CA
+            # bundle is the part httpx does not read. See ``ca_bundle``.
+            verify=bundle or True,
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
@@ -596,8 +656,10 @@ class GitHubClient:
     # why this small amount of it exists rather than a second API layer.
 
     async def _graphql(self, query: str, **variables: Any) -> dict[str, Any]:
+        # Absolute, because GraphQL is not under the REST root on Enterprise
+        # Server. See ``graphql_url``.
         response = await self._send(
-            "POST", "/graphql", json={"query": query, "variables": variables}
+            "POST", graphql_url(), json={"query": query, "variables": variables}
         )
         if response.status_code >= 400:
             raise GitHubError(f"GraphQL -> {response.status_code}: {response.text[:400]}")

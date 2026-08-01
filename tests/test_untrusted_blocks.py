@@ -210,9 +210,10 @@ def test_the_title_is_not_interpolated_outside_a_block():
 
 
 def test_the_verifier_still_learns_which_file_the_diff_is_for():
-    """Lost when the block stopped carrying a file= attribute. The path is
-    stated above the block now — an attribute sits where content could reach
-    it."""
+    """Lost when the block stopped carrying a file= attribute. The path moved
+    inside the claim block after that: it is model output like everything else
+    around it, and stating it on its own line put it beside the instructions.
+    The diff block refers back to it."""
     finding = Finding(
         file_path="app/search.py",
         line=1,
@@ -222,7 +223,10 @@ def test_the_verifier_still_learns_which_file_the_diff_is_for():
         body="b",
         code_snippet="s",
     )
-    assert "The diff for `app/search.py`" in prompts.verify_user(finding, ctx())
+    rendered = prompts.verify_user(finding, ctx())
+
+    assert "app/search.py" in rendered
+    assert "the file named in the claim" in rendered
 
 
 def test_the_verifier_still_does_not_see_the_reporters_reasoning():
