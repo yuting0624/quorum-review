@@ -125,9 +125,16 @@ The models never receive a credential. Federation produces a short-lived token
 used by the runner, never placed in a prompt. Nothing the models can call makes
 an outbound network request.
 
-There is no long-lived secret in the repository at all — that property comes
-from Workload Identity Federation, not from anything this code does. Nothing to
-leak from a workflow log, nothing to find in the git history later.
+**Nothing long-lived reaches Google Cloud.** That property comes from Workload
+Identity Federation, not from anything this code does: no key to leak from a
+workflow log, none to find in the git history later.
+
+The GitHub side is not the same. If you use a GitHub App token — the only way
+to collapse a resolved thread, since GitHub forbids `resolveReviewThread` for
+the Actions app — then `APP_PRIVATE_KEY` is a long-lived secret stored in the
+repository. It never leaves GitHub and it is scoped to that App's installation,
+and the review still works without it, but it is a stored key and belongs in
+whatever inventory you keep of those.
 
 ### The reviewer does not republish the secret it found
 
