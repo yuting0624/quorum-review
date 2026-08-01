@@ -101,11 +101,34 @@ on:
         default: ubuntu-latest
       action-ref:
         description: >-
-          Which version of the action to run. Pin this to a commit SHA in a
-          regulated environment — a tag can be moved to point at new code.
+          Which version of the action to run — a tag or a commit SHA. Pin it to
+          a SHA in a regulated environment; a tag can be moved to point at new
+          code. This is a git ref rather than `owner/repo@ref`, because the
+          action is checked out rather than referenced: see the Review step.
         type: string
         required: false
-        default: yuting0624/quorum-review@v1
+        default: v1
+      action-repository:
+        description: >-
+          Where to fetch the action from. Only needed if you run a fork.
+        type: string
+        required: false
+        default: yuting0624/quorum-review
+      vertex-region:
+        description: >-
+          Pin both models to one Vertex region, for data residency. Empty uses
+          the `global` endpoint, which routes to whichever region has capacity
+          and is therefore not a residency guarantee.
+        type: string
+        required: false
+        default: ""
+      sarif-file:
+        description: >-
+          Where to write the SARIF log. Empty disables the upload, which is
+          what you want without GitHub Advanced Security.
+        type: string
+        required: false
+        default: quorum.sarif
     secrets:
       WIF_PROVIDER:
         required: true
@@ -131,6 +154,13 @@ permissions:
   contents: read
   id-token: write
   pull-requests: write
+  # Only for the SARIF upload. `actions: read` is what codeql-action needs to
+  # read the workflow run on a private repository; without it the upload fails
+  # with "Resource not accessible by integration". Both were missing here while
+  # the file also had a step that GitHub could not parse, so the upload had
+  # never been reached to fail.
+  security-events: write
+  actions: read
 
 jobs:
   review:
@@ -170,11 +200,32 @@ jobs:
       degraded: ${{ steps.review.outputs.degraded }}
 
     steps:
+      # The action itself, checked out rather than referenced.
+      #
+      # `uses:` cannot take an expression at step level. This file used to say
+      # `uses: ${{ inputs.action-ref }}`, which GitHub cannot parse at all — so
+      # it never registered the workflow's name, and every push produced a
+      # failed run titled "no jobs were run". The org-wide rollout path this
+      # file exists to be had never worked, and said nothing about it.
+      #
+      # Checking the action out keeps the version an input: `ref:` does take an
+      # expression, and `uses: ./` is a literal.
+      - name: Fetch the reviewer
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.action-repository }}
+          ref: ${{ inputs.action-ref }}
+          persist-credentials: false
+
       # The pull request's code, as data — what the models read when a finding
-      # depends on something the diff does not contain. The ref is explicit
-      # because an `issue_comment` run would otherwise check out the default
-      # branch and review the wrong tree; the action detects that and falls
-      # back to a diff-only review, but there is no reason to make it.
+      # depends on something the diff does not contain. Into `pr-head`, so it
+      # cannot be confused with the action's own checkout above; the action is
+      # pointed at it explicitly with `workspace-path`.
+      #
+      # The ref is given explicitly because an `issue_comment` run would
+      # otherwise check out the default branch and review the wrong tree.
+      # `fetch-depth: 2` keeps the head commit in the clone, which is how the
+      # reviewer confirms at run time that it has the right one.
       #
       # `/merge` is preferred: it is the branch merged into base, which is what
       # the diff describes. It does not exist for a pull request with
@@ -187,6 +238,7 @@ jobs:
           ref: >-
             refs/pull/${{ github.event.pull_request.number
               || github.event.issue.number }}/merge
+          path: pr-head
           fetch-depth: 2
           persist-credentials: false
 
@@ -196,6 +248,7 @@ jobs:
           ref: >-
             refs/pull/${{ github.event.pull_request.number
               || github.event.issue.number }}/head
+          path: pr-head
           fetch-depth: 1
           persist-credentials: false
 
@@ -207,10 +260,12 @@ jobs:
 
       - name: Review
         id: review
-        uses: ${{ inputs.action-ref }}
+        uses: ./
         with:
           mode: vertex
           google-cloud-project: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          workspace-path: ${{ github.workspace }}/pr-head
+          sarif-file: ${{ inputs.sarif-file }}
           skill: ${{ inputs.skill }}
           scan: ${{ inputs.scan }}
           verification: ${{ inputs.verification }}
@@ -224,3 +279,15 @@ jobs:
           primary-model: ${{ inputs.primary-model }}
           verifier-model: ${{ inputs.verifier-model }}
           max-diff-characters: ${{ inputs.max-diff-characters }}
+          vertex-region: ${{ inputs.vertex-region }}
+
+      # `always()` so a failed gate still uploads what it failed on. Skipped
+      # without GitHub Advanced Security, where the upload is rejected and the
+      # findings stay in the pull request comments.
+      - name: Upload SARIF
+        if: always() && inputs.sarif-file != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.sarif-file }}
+          category: quorum-review
