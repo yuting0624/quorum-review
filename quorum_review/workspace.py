@@ -2,7 +2,7 @@
 
 A diff is not enough to review a diff. Whether `has_scope(user, "document.report")`
 is a real check depends on a registry the pull request never touches; whether
-`safe_export_name(filename)` makes a path join safe depends on a validator
+`export_name(filename)` makes a path join safe depends on a validator
 defined elsewhere. A reviewer that can only see added lines has to guess at both,
 and guessing produces exactly the two failures that make a review bot unusable:
 confident false positives on code that is guarded upstream, and silence on bugs
