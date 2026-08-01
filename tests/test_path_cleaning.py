@@ -299,3 +299,10 @@ def test_a_path_the_diff_really_contains_is_not_remapped_away():
 
     assert [f.file_path for f in kept] == ["app/old.py"]
     assert dropped == []
+
+
+@pytest.mark.parametrize("empty", ["", "   ", "\n"])
+def test_an_empty_value_does_not_become_an_open_delimiter(empty: str):
+    """Two adjacent backticks are not an empty span. Markdown reads them as an
+    opening delimiter and swallows what follows up to the next one."""
+    assert report.code_span(empty) == "`(empty)`"

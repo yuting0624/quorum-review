@@ -246,6 +246,13 @@ def code_span(text: str, limit: int = MAX_CELL_CHARS) -> str:
     from merging with the fence.
     """
     inner = flatten(text, limit)
+    if not inner:
+        # Two adjacent backticks are not an empty span; Markdown reads them as
+        # an opening delimiter and swallows the following text up to the next
+        # one. The value that reaches here should never be empty — `clean_path`
+        # drops a finding whose path cleans away — but "should never" is how
+        # the last three of these started.
+        return "`(empty)`"
     longest = max((len(run) for run in re.findall(r"`+", inner)), default=0)
     fence = "`" * (longest + 1)
     padding = " " if longest else ""
