@@ -2,7 +2,7 @@
 
 A diff is not enough to review a diff. Whether `has_scope(user, "document.report")`
 is a real check depends on a registry the pull request never touches; whether
-`safe_export_name(filename)` makes a path join safe depends on a validator
+`export_name(filename)` makes a path join safe depends on a validator
 defined elsewhere. A reviewer that can only see added lines has to guess at both,
 and guessing produces exactly the two failures that make a review bot unusable:
 confident false positives on code that is guarded upstream, and silence on bugs
@@ -214,6 +214,37 @@ def build(
         path_filter = PathFilter(list(patterns), use_defaults=False)
 
     return [Workspace(root, path_filter, max_calls=max_calls) for _ in range(count)]
+
+
+def checkout_commit(root: pathlib.Path) -> str:
+    """What the checkout is actually at, short form, or "".
+
+    Reported alongside the commit under review because the two are not the
+    same object and can disagree. ``refs/pull/N/merge`` is recomputed by GitHub
+    whenever the base branch moves, and it is resolved when the workflow checks
+    out — not when the diff was fetched. So the tree the models read can be a
+    merge against a newer base than the diff describes.
+
+    The window is small and the newer base is usually the more correct one, so
+    this is surfaced rather than prevented: a reader chasing a finding that
+    does not match what they see locally deserves to know which tree it came
+    from. Preventing it would mean checking out the head alone, which costs the
+    base context that repository access exists to provide.
+    """
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return completed.stdout.strip() if completed.returncode == 0 else ""
 
 
 def checkout_has_commit(root: pathlib.Path, sha: str) -> bool:

@@ -410,3 +410,27 @@ def test_the_repairs_reach_a_fixed_point(tail: str):
     assert not body.endswith(" ")
     assert (len(body) - len(body.rstrip(BACKSLASH))) % 2 == 0
     assert not body.endswith(("&", "&a", "&am", "&amp"))
+
+
+def test_the_summary_names_the_tree_the_models_read():
+    from quorum_review.report import RunReport, render
+
+    body = render(
+        RunReport(
+            repo_access="on",
+            tool_calls=4,
+            files_read=["app/permissions.py"],
+            workspace_commit="a1b2c3d",
+            confirmed=[finding()],
+        )
+    )
+    assert "at `a1b2c3d`" in body
+
+
+def test_no_commit_means_no_claim_about_one():
+    from quorum_review.report import RunReport, render
+
+    body = render(
+        RunReport(repo_access="on", tool_calls=4, files_read=["a.py"])
+    )
+    assert "read-only lookup(s) into the checkout and opened" in body

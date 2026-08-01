@@ -17,7 +17,8 @@ from typing import Any
 import httpx
 
 from . import diffs
-from .ledger import MARKER_PREFIX, Ledger, decode_marker
+from .ledger import CLOSED_REPLY, MARKER_PREFIX, Ledger, decode_marker, rebuild
+from .matching import is_dismissal_text
 from .pathfilter import IGNORE_FILE, PathFilter
 from .schema import PRContext
 
@@ -361,6 +362,23 @@ class GitHubClient:
             )
         return response.text
 
+    async def review_comments(self, number: int) -> list[dict[str, Any]]:
+        """Every inline comment on the pull request, oldest first."""
+        collected: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = await self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls/{number}/comments",
+                params={"per_page": 100, "page": page},
+            )
+            comments = response.json()
+            if not comments:
+                return collected
+            collected += comments
+            if len(comments) < 100:
+                return collected
+            page += 1
+
     async def thread_comments(self, number: int, root_id: int) -> list[dict[str, Any]]:
         """Every comment in one review thread, oldest first.
 
@@ -410,10 +428,81 @@ class GitHubClient:
             page += 1
 
     async def load_ledger(self, number: int) -> tuple[Ledger, StickyComment | None]:
+        """The state from the last review, reconciled with what is actually posted.
+
+        The marker inside the summary comment is the record, and the comments
+        on the pull request are the reality. They drift apart in two ways, and
+        both end in the same place — a finding posted twice:
+
+        - **The summary is deleted.** Tidying a noisy pull request is a normal
+          thing to do and nothing warns anyone. Every open finding then looks
+          new, and every dismissal is silently undone.
+        - **A run is cancelled between posting and saving.** ``cancel-in-progress``
+          is on by default and a second push during a review triggers it, so
+          this is ordinary rather than exotic. The comments went out; the
+          marker describing them did not.
+
+        So the marker is read and then reconciled: anything on the pull request
+        that the marker does not know about is recovered from the comment
+        itself. Reality wins, because reality is what the reader is looking at.
+        """
         sticky = await self.find_sticky_comment(number)
-        if sticky is None:
-            return Ledger.empty(number), None
-        return decode_marker(sticky.body) or Ledger.empty(number), sticky
+        recorded = decode_marker(sticky.body) if sticky is not None else None
+
+        comments = await self.review_comments(number)
+        posted = await self._rebuild_ledger(number, comments)
+
+        if recorded is None:
+            posted.was_rebuilt = True
+            return posted, sticky
+
+        recorded.recovered = recorded.absorb(posted)
+        return recorded, sticky
+
+    async def _rebuild_ledger(
+        self, number: int, comments: list[dict[str, Any]]
+    ) -> Ledger:
+        """Reconstruct state from the threads, checking who said what.
+
+        The dismissal phrase is text anyone able to comment can type, and the
+        handler that normally records a dismissal verifies the author against
+        the API for exactly that reason: ``COLLABORATOR`` covers read-only and
+        triage collaborators. Reading dismissals back out of a thread has to
+        apply the same check, or recovery becomes a way around it.
+        """
+        dismissed: set[int] = set()
+        closed: set[int] = set()
+        permitted: dict[str, bool] = {}
+        authors = {
+            int(comment["id"]): ((comment.get("user") or {}).get("login") or "")
+            for comment in comments
+            if comment.get("id")
+        }
+
+        for comment in comments:
+            root = comment.get("in_reply_to_id")
+            if not root:
+                continue
+            body = comment.get("body") or ""
+            author = ((comment.get("user") or {}).get("login") or "").strip()
+
+            if CLOSED_REPLY in body:
+                # Only from whoever posted the finding — the reviewer itself.
+                # The phrase is text anyone can type, and a fake closure is not
+                # merely noise: a finding marked fixed is excluded from the
+                # SARIF upload, so it would close a code-scanning alert.
+                if author and author == authors.get(int(root)):
+                    closed.add(int(root))
+                continue
+            if not is_dismissal_text(body):
+                continue
+
+            if author not in permitted:
+                permitted[author] = await self.has_write_access(author)
+            if permitted[author]:
+                dismissed.add(int(root))
+
+        return rebuild(number, comments, dismissed, closed)
 
     # -- writes ------------------------------------------------------------
 

@@ -152,6 +152,9 @@ findings: [`benchmark/seeded-bugs/`](benchmark/seeded-bugs/README.md).
 | diff only | 10 / 10 | **0 / 2**, every run | 0 |
 | **repository readable** *(default)* | 10 / 10 | **2 / 2**, every run | 0 |
 
+Re-measured at `v1.0.0`, forty commits after the first run, because a number
+attached to code that has since changed is a number about nothing. It held.
+
 Both configurations also found real bugs nobody planted — and one of those,
 a missing scope check in `export_document`, appeared in 2 of 3 runs *with*
 repository access and 0 of 3 without. Live from Actions: **0% re-report rate**
@@ -199,6 +202,14 @@ permissions:
   pull-requests: write
 
 steps:
+  # Not optional. This is the tree the models read when a finding depends on
+  # code the diff does not contain — the difference measured above. Without
+  # it the review silently falls back to diff-only and says so in the summary.
+  - uses: actions/checkout@v4
+    with:
+      ref: refs/pull/${{ github.event.pull_request.number }}/merge
+      fetch-depth: 2
+
   - uses: google-github-actions/auth@v2
     with:
       workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
@@ -494,6 +505,9 @@ Details, including the operational guidance: [docs/security.md](docs/security.md
   another — are out of reach.
 - **A file renamed *and* edited beyond recognition yields new findings.** Renames themselves are followed; git's own similarity detection decides what counts as one.
 - **Two instances of one pattern, described identically, collapse into one.**
+- **Deleting the summary comment loses some state.** Findings and dismissals
+  are recovered from the comments still on the pull request; severity, which
+  model raised each one, and dismissal reasons are not.
 - **"No longer reported" does not mean fixed** — it can also mean the scan did
   not raise it this time. The summary says only what is known.
 - **`issue_comment` workflows run from the default branch.** Editing the workflow

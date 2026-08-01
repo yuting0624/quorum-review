@@ -451,6 +451,13 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # content-addressed identity — the snippet is unchanged but the path is
         # half of the hash — so without this a refactor closes every finding in
         # the file and immediately re-reports all of them at the new path.
+        # Asked rather than inferred: a marker that is present but will not
+        # decode looks exactly like one that decoded fine.
+        report.recovered = (
+            len(ledger.entries) if ledger.was_rebuilt else ledger.recovered
+        )
+        report.ledger_lost = ledger.was_rebuilt
+
         report.renamed_files = diffs.renames(ctx.diff)
         if report.renamed_files:
             ledger.follow_renames(report.renamed_files)
@@ -484,6 +491,8 @@ async def run(skill_name: str, dry_run: bool) -> int:
             # wrong tree, so the tools are withdrawn and the summary says so.
             scan_budgets = [None] * len(scanning)
             report.repo_access = "off: the checkout does not contain this pull request"
+        elif root is not None:
+            report.workspace_commit = workspace_mod.checkout_commit(root)
 
         scans, failures = await scan_all(provider, scanning, ctx, skill, scan_budgets)
         report.scan_failures = failures

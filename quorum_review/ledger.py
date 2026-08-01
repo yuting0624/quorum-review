@@ -150,6 +150,17 @@ class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
+    #: How many entries had to be taken from the posted comments because the
+    #: marker did not know about them. Not serialised: it describes a
+    #: reconciliation, not the review.
+    recovered: int = field(default=0, compare=False)
+
+    #: True when this was reconstructed from comments rather than read from the
+    #: marker. Not serialised — it describes how this instance came to exist,
+    #: not the review. The caller cannot infer it: a marker that is present but
+    #: will not decode looks identical to one that decoded fine.
+    was_rebuilt: bool = field(default=False, compare=False)
+
     # -- lookup ------------------------------------------------------------
 
     def known(self, finding_id: str) -> LedgerEntry | None:
@@ -223,6 +234,54 @@ class Ledger:
             self.entries.setdefault(entry.finding_id, entry)
             moved.append((old_id, entry.finding_id))
         return moved
+
+    def absorb(self, posted: Ledger) -> int:
+        """Take in findings that are on the pull request but not in this record.
+
+        Returns how many. The usual cause is a run cancelled between posting
+        its comments and saving the marker that describes them —
+        ``cancel-in-progress`` is on by default, so a second push during a
+        review is enough. The comments are there; nothing knows it, and the
+        next review posts them again.
+
+        Two rules, both learned from getting it wrong:
+
+        **Match on the comment ID first.** It is the only stable link between a
+        record and what is on the pull request. Path and finding ID both move:
+        ``follow_renames`` rewrites them when a file is renamed, while the
+        comment stays anchored where GitHub put it. Matching by position then
+        fails, and a phantom entry appears at the old path — tracked forever,
+        resolving never, and uploaded to code scanning as an open alert on a
+        file that no longer exists.
+
+        **Only take findings that still affect behaviour.** ``fixed`` entries
+        are history, and history is exactly what ``fit_to_comment`` discards
+        when the marker outgrows the comment. Absorbing them back would undo
+        the size relief on the next run, every run.
+        """
+        seen = {
+            entry.review_comment_id
+            for entry in self.entries.values()
+            if entry.review_comment_id
+        }
+
+        added = 0
+        for entry in posted.entries.values():
+            if entry.status == "fixed":
+                continue
+            if entry.review_comment_id in seen:
+                continue
+            if self.entries.get(entry.finding_id) is not None:
+                continue
+            report = entry.as_report()
+            if any(
+                same_defect(report, known.as_report())
+                for known in self.entries.values()
+            ):
+                continue
+            self.entries[entry.finding_id] = entry
+            added += 1
+        return added
 
     def record(self, entry: LedgerEntry) -> None:
         """Store an entry, folding it into an existing one for the same defect.
@@ -414,3 +473,89 @@ def assign_ids(findings: list[Finding]) -> list[Finding]:
     for finding in findings:
         finding.finding_id = compute_finding_id(finding.file_path, finding.code_snippet)
     return findings
+
+
+#: The footer every inline comment carries. It is how a posted finding can be
+#: recognised after the state that described it is gone.
+_FOOTER = re.compile(r"`(?P<category>[a-z]+)`\s*·\s*id\s*`(?P<id>[0-9a-f]{6,})`")
+_TITLE = re.compile(r"^\s*\S*\s*\*\*(?P<title>.+?)\*\*", re.MULTILINE)
+
+
+#: How the reviewer replies when it stops raising a finding. Recognising it is
+#: what keeps a rebuild from resurrecting a fixed finding as open — which would
+#: then *suppress* a genuine regression at that location, turning a lost
+#: history into a missed bug rather than merely a duplicate comment.
+CLOSED_REPLY = "No longer reported as of"
+
+
+def rebuild(
+    number: int,
+    comments: list[dict[str, Any]],
+    dismissed: set[int],
+    closed: set[int] | None = None,
+) -> Ledger:
+    """Reconstruct enough state from the comments the reviewer already posted.
+
+    The ledger lives in a hidden marker inside the summary comment, which
+    someone can delete — tidying up a noisy pull request is a normal thing to
+    do, and nothing warns them. Without this, the next review has no history:
+    every open finding is posted a second time, and every ``wontfix`` someone
+    took the trouble to justify is silently undone.
+
+    What the comments themselves carry is enough to stop that. Each inline
+    comment ends with its category and finding ID, and GitHub supplies the path
+    and line. That reconstructs identity, location and suppression — not the
+    verifier's reasoning or which models reported it, which are only worth
+    anything on the run that produced them.
+
+    ``dismissed`` is the set of root comment IDs whose threads contain a
+    dismissal **by someone with write access** — the caller checks, because the
+    trigger phrase is just text anybody can type and the handler that normally
+    records a dismissal verifies the author against the API. Recovering these
+    matters more than the rest: a re-raised finding is noise, but a re-raised
+    finding somebody explicitly retired is the reviewer overruling a person.
+
+    ``closed`` is the set whose threads the reviewer already replied to saying
+    it no longer raises them. Without it every fixed finding comes back as
+    open, and is then suppressed — so a real regression at that location goes
+    unreported, which is worse than the duplicate this function exists to
+    prevent.
+    """
+    closed = closed or set()
+    ledger = Ledger.empty(number)
+    for comment in comments:
+        if comment.get("in_reply_to_id"):
+            continue
+        footer = _FOOTER.search(comment.get("body") or "")
+        if footer is None:
+            continue
+
+        comment_id = int(comment.get("id") or 0)
+        title = _TITLE.search(comment.get("body") or "")
+        ledger.entries[footer.group("id")] = LedgerEntry(
+            finding_id=footer.group("id"),
+            file_path=str(comment.get("path") or ""),
+            category=footer.group("category"),
+            # Not recoverable, and only used for ordering and for the gate.
+            # Reporting it as high would let a rebuilt ledger fail a build that
+            # the original never would have.
+            severity="low",
+            title=title.group("title").strip() if title else "(recovered finding)",
+            line=int(comment.get("line") or comment.get("original_line") or 0),
+            review_comment_id=comment_id,
+            status=_recovered_status(comment_id, dismissed, closed),
+            wontfix_reason=(
+                "recovered from the thread; the original reason was in the "
+                "summary comment that was deleted"
+                if comment_id in dismissed
+                else None
+            ),
+        )
+    return ledger
+
+
+def _recovered_status(comment_id: int, dismissed: set[int], closed: set[int]) -> str:
+    """Dismissal wins over closure: it is a decision, the other is an observation."""
+    if comment_id in dismissed:
+        return "wontfix"
+    return "fixed" if comment_id in closed else "open"

@@ -9,7 +9,7 @@ import re
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
-def safe_export_name(filename: str) -> str:
+def export_name(filename: str) -> str:
     """Reduce a user-supplied name to one safe path segment.
 
     Strips any directory part, rejects dotfiles and the traversal names, and

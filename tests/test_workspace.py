@@ -320,3 +320,23 @@ def test_no_resolved_patterns_falls_back_to_the_checkout(monkeypatch, repo):
     space = workspace_mod.build(1, 10)[0]
     assert space is not None
     assert space.run("read_file", {"path": "app/permissions.py"}).startswith("Error:")
+
+
+# -- which tree was actually read ------------------------------------------
+
+
+def test_the_checkout_commit_is_reported(tmp_path: pathlib.Path):
+    """`refs/pull/N/merge` is recomputed when the base branch moves, and it is
+    resolved at checkout time rather than when the diff was fetched. The two
+    can disagree, so the summary says which tree the models read."""
+    sha = _git_repo_with_one_commit(tmp_path)
+    from quorum_review.workspace import checkout_commit
+
+    reported = checkout_commit(tmp_path)
+    assert reported and sha.startswith(reported)
+
+
+def test_a_directory_that_is_not_a_repository_reports_nothing(tmp_path):
+    from quorum_review.workspace import checkout_commit
+
+    assert checkout_commit(tmp_path) == ""

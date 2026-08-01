@@ -106,9 +106,15 @@ def test_b10_swallowed_authorization_failure():
 
 
 def test_c1_the_path_join_is_guarded_by_a_shared_validator():
-    """Looks like traversal in the diff; is not. Flagging it is a false positive."""
+    """Looks like traversal in the diff; is not. Flagging it is a false positive.
+
+    The validator is called `export_name`, not `safe_export_name`. The original
+    name gave the answer away — neither configuration ever flagged this, so the
+    decoy discriminated nothing and the "no false positives" claim rested on a
+    case that was never really asked.
+    """
     call_site = source("reports.py")
-    assert "os.path.join(_user_dir(user), validators.safe_export_name(filename))" in (
+    assert "os.path.join(_user_dir(user), validators.export_name(filename))" in (
         call_site
     )
 

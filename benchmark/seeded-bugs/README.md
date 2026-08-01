@@ -67,6 +67,20 @@ question a diff cannot answer.
 Three runs each, both scanning models, second opinion on, same pull request,
 same commit. Raw findings in [`../runs/`](../runs).
 
+**Re-measured at `v1.0.0`**, forty commits later, because a number attached to
+code that has since changed is a number about nothing. Three runs, repository
+readable: **10.0 / 10 scanned, 10.0 / 10 survived, C2 and C3 in every run, no
+decoy flagged.** Raw findings in
+[`../runs/v1.0.0-repo-access.json`](../runs/v1.0.0-repo-access.json).
+
+The one movement is B8, which survived 3/3 this time against 2/3 before — the
+finding the fixture is [known to be ambiguous about](#caveat-on-b8), so the
+change is in what the verifier decided about a debatable case rather than in
+what was found. Everything intervening — the binary-detection fix, rename
+following, the diff budget, retries, table escaping — could have moved these
+and did not. The binary bug in particular could only have: none of the fixture
+files mention its markers, which was checked rather than assumed.
+
 **The gap is the whole result.** Both context-dependent bugs went from never
 found to always found. Neither is subtle once you can see the other file —
 `"document.report"` is missing from `REQUIRED_SCOPES`, and `audit.record` takes

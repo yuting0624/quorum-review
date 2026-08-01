@@ -78,6 +78,20 @@ class RunReport:
     repo_access: str = ""
     #: Spend against the configured ceiling, when there is one.
     budget_note: str = ""
+    #: How many findings were recovered from existing comments because the
+    #: summary carrying the ledger had been deleted. Said out loud: a review
+    #: that quietly lost its history and rebuilt part of it is not the same
+    #: run as one that never lost anything.
+    recovered: int = 0
+    #: True when the marker was gone entirely rather than merely behind. The
+    #: two are worth distinguishing: one loses severity and dismissal reasons,
+    #: the other loses nothing.
+    ledger_lost: bool = False
+    #: What the checkout was at. Not the same object as the commit under
+    #: review: `refs/pull/N/merge` is recomputed whenever the base branch
+    #: moves, and resolved when the workflow checks out rather than when the
+    #: diff was fetched, so the tree read can be a merge against a newer base.
+    workspace_commit: str = ""
     tool_calls: int = 0
     files_read: list[str] = field(default_factory=list)
 
@@ -276,10 +290,15 @@ def _repo_access(report: RunReport) -> list[str]:
     shown = ", ".join(f"`{path}`" for path in report.files_read[:8])
     if len(report.files_read) > 8:
         shown += f", and {len(report.files_read) - 8} more"
+    # Which tree, not just which files. A merge ref is recomputed when the base
+    # branch moves, so it can differ from the commit the diff describes — and
+    # someone chasing a finding that does not match their checkout deserves to
+    # know which one the reviewer read.
+    where = f" at `{report.workspace_commit}`" if report.workspace_commit else ""
     return [
         "",
         f"Beyond the diff, the models made **{report.tool_calls}** read-only "
-        f"lookup(s) into the checkout and opened {shown}.",
+        f"lookup(s) into the checkout{where} and opened {shown}.",
     ]
 
 
@@ -526,6 +545,25 @@ def render(report: RunReport) -> str:
             f"The diff exceeded the size budget, and these did not fit: {shown}. "
             f"Nothing below is a statement about them. Split the pull request, "
             f"or raise `max-diff-characters`.",
+        ]
+
+    if report.recovered and report.ledger_lost:
+        lines += [
+            "",
+            f"> ℹ️ **The summary comment carrying this review's state had been "
+            f"deleted.** {report.recovered} finding(s) were recovered from the "
+            f"comments still on this pull request, so they are not reported "
+            f"again. What could not be recovered: severity, which model raised "
+            f"each one, and the reason behind any dismissal.",
+        ]
+    elif report.recovered:
+        lines += [
+            "",
+            f"> ℹ️ **{report.recovered} finding(s) were already on this pull "
+            f"request but missing from its recorded state**, and have been "
+            f"taken back in rather than posted again. The usual cause is a run "
+            f"cancelled between posting its comments and saving the record of "
+            f"them.",
         ]
 
     if report.renamed_files:
