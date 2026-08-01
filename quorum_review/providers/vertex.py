@@ -5,7 +5,12 @@ we found stacks API keys from separate vendors; here the GitHub Actions OIDC
 token is exchanged once for short-lived Google Cloud credentials, and *both*
 models authenticate off those same Application Default Credentials. No
 long-lived secret is stored in the repository, billing lands on one invoice, and
-the code never leaves the Vertex region.
+the code goes to Vertex rather than to two separate vendors.
+
+That last point used to be written here as "the code never leaves the Vertex
+region", which was not true of the configuration it shipped with: the default
+endpoint is ``global``, which routes to whichever region has capacity. Setting
+``QUORUM_VERTEX_REGION`` makes it true. See ``_region``.
 
 Which model plays which role is configuration, not structure. ``PRIMARY_MODEL``
 and ``VERIFIER_MODEL`` are resolved to an engine by model-ID prefix, so running
@@ -17,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -46,6 +52,56 @@ from .base import ProviderUnavailable
 # relying on this value — `python -m src.review --list-models` prints the list.
 DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
 DEFAULT_VERIFIER_MODEL = "claude-opus-5"
+
+#: A Vertex location: ``global``, a multi-region (``us``, ``eu``), or a region
+#: (``europe-west4``, ``us-east5``). Not a guess at which ones exist — the
+#: point is to reject a value that is not shaped like one at all, before it
+#: becomes a hostname and the failure arrives as a connection error.
+_REGION = re.compile(r"global|us|eu|[a-z]+-[a-z]+\d+")
+
+
+def _location(specific: str, vendor: str) -> str:
+    """Resolve one model's Vertex location.
+
+    Order: this model's action input, then the shared pin, then the vendor's
+    own variable, then ``global``.
+
+    ``global`` is the recommended endpoint for both products and is the default
+    because it is the one most likely to have the model available. It is
+    explicitly *not* a data-residency guarantee: it routes to whichever region
+    has capacity. An organisation that has to keep source in one jurisdiction
+    sets ``QUORUM_VERTEX_REGION`` and gets a regional endpoint for both models.
+
+    The per-model override exists because Model Garden entitlements can be
+    region-scoped, so Claude sometimes has to sit somewhere Gemini does not.
+
+    The action passes its inputs under the ``QUORUM_`` names rather than the
+    vendor ones, because an unset input arrives as ``""`` and writing
+    ``GOOGLE_CLOUD_LOCATION=""`` into the step environment would shadow
+    whatever the caller had set at the job level.
+
+    The vendor variable is read, but *below* the shared pin rather than above
+    it. Ordered the other way round, an ambient ``GOOGLE_CLOUD_LOCATION`` —
+    from a runner image, an organisation-level ``env:``, a devcontainer —
+    silently defeats a ``vertex-region`` written into the workflow. A residency
+    pin someone wrote down has to beat something they inherited, or it is not a
+    pin.
+    """
+    return (
+        os.getenv(specific, "").strip()
+        or os.getenv("QUORUM_VERTEX_REGION", "").strip()
+        or os.getenv(vendor, "").strip()
+        or "global"
+    )
+
+
+def gemini_location() -> str:
+    return _location("QUORUM_GEMINI_LOCATION", "GOOGLE_CLOUD_LOCATION")
+
+
+def claude_region() -> str:
+    return _location("QUORUM_CLAUDE_REGION", "CLAUDE_VERTEX_REGION")
+
 
 # Output budgets. `max_tokens` on Claude caps thinking *plus* response text, and
 # thinking is on by default on Opus 5 — a budget sized for the JSON alone
@@ -472,13 +528,16 @@ class VertexProvider:
             raise ProviderUnavailable(
                 "GOOGLE_CLOUD_PROJECT is not set; vertex mode needs a project ID"
             )
+        for region in (gemini_location(), claude_region()):
+            if not _REGION.fullmatch(region):
+                raise ProviderUnavailable(
+                    f"{region!r} is not a Vertex region. Expected 'global' or "
+                    f"something like 'europe-west4'."
+                )
 
         self._project = project
-        # 'global' is the recommended endpoint for both products. Claude's
-        # entitlement in Model Garden can be region-scoped, so it gets its own
-        # override — try us-east5 if a global call comes back 404.
-        self._gemini_location = os.getenv("GOOGLE_CLOUD_LOCATION", "global").strip()
-        self._claude_region = os.getenv("CLAUDE_VERTEX_REGION", "global").strip()
+        self._gemini_location = gemini_location()
+        self._claude_region = claude_region()
 
         # Two configured slots, but both models do both jobs. The names are
         # kept because they are the documented inputs; the order only decides
@@ -494,6 +553,25 @@ class VertexProvider:
     def usage(self) -> dict[str, ModelUsage]:
         """Per-model token and call counts, for models actually used."""
         return {model: engine.usage for model, engine in self._engines.items()}
+
+    @property
+    def regions(self) -> dict[str, str]:
+        """Where each model that was actually reached was called.
+
+        Keyed on a completed call rather than on a constructed engine. An
+        engine is built before the first request and survives every one of them
+        failing, so listing it would put a region in the audit line for traffic
+        that never arrived — which is the one thing this line exists not to do.
+        """
+        return {
+            model: (
+                self._claude_region
+                if model.startswith("claude")
+                else self._gemini_location
+            )
+            for model, engine in self._engines.items()
+            if engine.usage.calls
+        }
 
     def _engine(self, model: str) -> _Engine:
         """Resolve a model ID to an engine, constructing it on first use.

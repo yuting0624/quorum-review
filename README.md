@@ -281,7 +281,9 @@ finding.
 | `max-inline-comments` | `25` | how many do, worst first; the rest stay in the summary |
 | `review-language` | English | e.g. `Japanese` — affects finding prose only |
 | `github-token` | `GITHUB_TOKEN` | pass an App token to collapse resolved threads |
-| `claude-vertex-region` | `global` | try `us-east5` if your entitlement is region-scoped |
+| `vertex-region` | `global` | pin both models to one region for data residency — see [security.md](docs/security.md#where-the-code-goes) |
+| `claude-vertex-region` | inherits | override just Claude; try `us-east5` if your entitlement is region-scoped |
+| `gemini-location` | inherits | override just Gemini |
 
 **Cost tiers**, roughly, per review:
 
