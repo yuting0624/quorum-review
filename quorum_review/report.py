@@ -83,6 +83,10 @@ class RunReport:
     #: that quietly lost its history and rebuilt part of it is not the same
     #: run as one that never lost anything.
     recovered: int = 0
+    #: True when the marker was gone entirely rather than merely behind. The
+    #: two are worth distinguishing: one loses severity and dismissal reasons,
+    #: the other loses nothing.
+    ledger_lost: bool = False
     #: What the checkout was at. Not the same object as the commit under
     #: review: `refs/pull/N/merge` is recomputed whenever the base branch
     #: moves, and resolved when the workflow checks out rather than when the
@@ -543,7 +547,7 @@ def render(report: RunReport) -> str:
             f"or raise `max-diff-characters`.",
         ]
 
-    if report.recovered:
+    if report.recovered and report.ledger_lost:
         lines += [
             "",
             f"> ℹ️ **The summary comment carrying this review's state had been "
@@ -551,6 +555,15 @@ def render(report: RunReport) -> str:
             f"comments still on this pull request, so they are not reported "
             f"again. What could not be recovered: severity, which model raised "
             f"each one, and the reason behind any dismissal.",
+        ]
+    elif report.recovered:
+        lines += [
+            "",
+            f"> ℹ️ **{report.recovered} finding(s) were already on this pull "
+            f"request but missing from its recorded state**, and have been "
+            f"taken back in rather than posted again. The usual cause is a run "
+            f"cancelled between posting its comments and saving the record of "
+            f"them.",
         ]
 
     if report.renamed_files:

@@ -148,10 +148,21 @@ def test_the_summary_says_when_it_had_to_recover():
     which they are looking at."""
     from quorum_review.report import RunReport, render
 
-    body = render(RunReport(recovered=4))
+    body = render(RunReport(recovered=4, ledger_lost=True))
     assert "had been deleted" in body
     assert "4 finding(s) were recovered" in body
     assert "could not be recovered" in body
+
+
+def test_a_record_merely_behind_reads_differently_from_one_that_is_gone():
+    """Worth distinguishing: a deleted summary loses severity and dismissal
+    reasons, a cancelled run loses nothing."""
+    from quorum_review.report import RunReport, render
+
+    body = render(RunReport(recovered=2, ledger_lost=False))
+    assert "had been deleted" not in body
+    assert "missing from its recorded state" in body
+    assert "cancelled between posting" in body
 
 
 def test_an_ordinary_run_says_nothing_about_recovery():
@@ -300,3 +311,137 @@ def test_a_closure_reply_from_the_reviewer_is_trusted():
     ]
     book, _ = rebuild_via_client(comments, writers=set())
     assert book.entries["6f" * 8].status == "fixed"
+
+
+# -- the record and the pull request drifting apart -------------------------
+
+
+def entry_for(finding_id: str, path="app/search.py", line=18):
+    from quorum_review.ledger import LedgerEntry
+
+    return LedgerEntry(
+        finding_id=finding_id,
+        file_path=path,
+        category="security",
+        severity="high",
+        title="SQL injection via f-string",
+        line=line,
+        snippet="bad = 1",
+    )
+
+
+def test_a_finding_posted_but_never_recorded_is_taken_back_in():
+    """A run cancelled between posting its comments and saving the marker.
+    `cancel-in-progress` is on by default, so a second push during a review is
+    enough — the comments went out and nothing knows it."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    recorded.entries["aa" * 8] = entry_for("aa" * 8, path="app/a.py", line=1)
+
+    posted_state = rebuild(7, [posted(11, "bb" * 8, path="app/b.py", line=9)], set())
+    added = recorded.absorb(posted_state)
+
+    assert added == 1
+    assert recorded.is_suppressed(finding("bb" * 8, path="app/b.py", line=9))
+
+
+def test_a_finding_the_record_already_knows_is_not_duplicated():
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    recorded.entries["cc" * 8] = entry_for("cc" * 8)
+
+    posted_state = rebuild(7, [posted(11, "cc" * 8)], set())
+    assert recorded.absorb(posted_state) == 0
+    assert len(recorded.entries) == 1
+
+
+def test_the_same_defect_under_a_different_id_is_not_duplicated():
+    """Models do not quote a defect the same way twice, so the ID recovered
+    from a comment can differ from the one in the record."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    recorded.entries["dd" * 8] = entry_for("dd" * 8)
+
+    posted_state = rebuild(7, [posted(11, "ee" * 8)], set())
+    assert recorded.absorb(posted_state) == 0
+
+
+def test_absorbing_nothing_changes_nothing():
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    recorded.entries["ff" * 8] = entry_for("ff" * 8)
+    assert recorded.absorb(Ledger.empty(7)) == 0
+    assert len(recorded.entries) == 1
+
+
+def test_the_reconciliation_count_is_not_serialised():
+    """It describes a reconciliation, not the review."""
+    from quorum_review.ledger import Ledger, decode_marker, encode_marker
+
+    book = Ledger.empty(7)
+    book.recovered = 3
+    assert decode_marker(encode_marker(book)).recovered == 0
+
+
+def test_a_renamed_finding_is_not_absorbed_back_at_its_old_path():
+    """Reported by both models independently, which is the strongest signal
+    this design produces.
+
+    `follow_renames` rewrites an entry's path and ID; the comment stays
+    anchored where GitHub put it. Matching by position then fails and a phantom
+    appears at the old path — tracked forever, resolving never, and uploaded to
+    code scanning as an open alert on a file that no longer exists.
+    """
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    moved = entry_for("aa" * 8, path="app/old.py")
+    moved.review_comment_id = 11
+    recorded.entries["aa" * 8] = moved
+    recorded.follow_renames({"app/old.py": "app/new.py"})
+
+    posted_state = rebuild(7, [posted(11, "aa" * 8, path="app/old.py")], set())
+    assert recorded.absorb(posted_state) == 0
+    assert len(recorded.entries) == 1
+    assert next(iter(recorded.entries.values())).file_path == "app/new.py"
+
+
+def test_entries_dropped_for_size_are_not_absorbed_back():
+    """`fit_to_comment` discards fixed findings when the marker outgrows the
+    comment. Taking them back in would undo the relief on the next run, and
+    the run after that."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    comments = [
+        posted(11, "bb" * 8),
+        reply(12, 11, "No longer reported as of `abc1234`."),
+    ]
+    posted_state = rebuild(7, comments, dismissed=set(), closed={11})
+
+    assert recorded.absorb(posted_state) == 0
+    assert recorded.entries == {}
+
+
+def test_an_open_finding_dropped_from_the_record_is_still_absorbed():
+    """Only history is discarded for size; anything that still affects
+    suppression has to come back."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    posted_state = rebuild(7, [posted(11, "cc" * 8)], dismissed=set())
+    assert recorded.absorb(posted_state) == 1
+
+
+def test_a_dismissal_is_absorbed_even_though_it_is_not_open():
+    """It suppresses, so it affects behaviour."""
+    from quorum_review.ledger import Ledger
+
+    recorded = Ledger.empty(7)
+    posted_state = rebuild(7, [posted(11, "dd" * 8)], dismissed={11})
+    assert recorded.absorb(posted_state) == 1
+    assert recorded.entries["dd" * 8].status == "wontfix"

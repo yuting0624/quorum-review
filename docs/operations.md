@@ -110,6 +110,12 @@ request, and the next summary says how many. Severity, which model raised each
 finding, and the reason behind a dismissal are gone — they were only in the
 marker.
 
+**A review was cancelled halfway through.** `cancel-in-progress` is on by
+default, so a second push during a review kills the first. If it had already
+posted some comments but not yet saved the record of them, the next review
+reconciles: anything on the pull request that the record does not know about is
+taken back in rather than posted again, and the summary says how many.
+
 **A finding is reported twice.** It should not be; the ledger matches on
 position and title overlap, not just ID. Worth an issue with both comments.
 

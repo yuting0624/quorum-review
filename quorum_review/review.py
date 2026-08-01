@@ -453,8 +453,10 @@ async def run(skill_name: str, dry_run: bool) -> int:
         # the file and immediately re-reports all of them at the new path.
         # Asked rather than inferred: a marker that is present but will not
         # decode looks exactly like one that decoded fine.
-        if ledger.was_rebuilt:
-            report.recovered = len(ledger.entries)
+        report.recovered = (
+            len(ledger.entries) if ledger.was_rebuilt else ledger.recovered
+        )
+        report.ledger_lost = ledger.was_rebuilt
 
         report.renamed_files = diffs.renames(ctx.diff)
         if report.renamed_files:

@@ -150,6 +150,11 @@ class Ledger:
     entries: dict[str, LedgerEntry] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
+    #: How many entries had to be taken from the posted comments because the
+    #: marker did not know about them. Not serialised: it describes a
+    #: reconciliation, not the review.
+    recovered: int = field(default=0, compare=False)
+
     #: True when this was reconstructed from comments rather than read from the
     #: marker. Not serialised — it describes how this instance came to exist,
     #: not the review. The caller cannot infer it: a marker that is present but
@@ -229,6 +234,54 @@ class Ledger:
             self.entries.setdefault(entry.finding_id, entry)
             moved.append((old_id, entry.finding_id))
         return moved
+
+    def absorb(self, posted: Ledger) -> int:
+        """Take in findings that are on the pull request but not in this record.
+
+        Returns how many. The usual cause is a run cancelled between posting
+        its comments and saving the marker that describes them —
+        ``cancel-in-progress`` is on by default, so a second push during a
+        review is enough. The comments are there; nothing knows it, and the
+        next review posts them again.
+
+        Two rules, both learned from getting it wrong:
+
+        **Match on the comment ID first.** It is the only stable link between a
+        record and what is on the pull request. Path and finding ID both move:
+        ``follow_renames`` rewrites them when a file is renamed, while the
+        comment stays anchored where GitHub put it. Matching by position then
+        fails, and a phantom entry appears at the old path — tracked forever,
+        resolving never, and uploaded to code scanning as an open alert on a
+        file that no longer exists.
+
+        **Only take findings that still affect behaviour.** ``fixed`` entries
+        are history, and history is exactly what ``fit_to_comment`` discards
+        when the marker outgrows the comment. Absorbing them back would undo
+        the size relief on the next run, every run.
+        """
+        seen = {
+            entry.review_comment_id
+            for entry in self.entries.values()
+            if entry.review_comment_id
+        }
+
+        added = 0
+        for entry in posted.entries.values():
+            if entry.status == "fixed":
+                continue
+            if entry.review_comment_id in seen:
+                continue
+            if self.entries.get(entry.finding_id) is not None:
+                continue
+            report = entry.as_report()
+            if any(
+                same_defect(report, known.as_report())
+                for known in self.entries.values()
+            ):
+                continue
+            self.entries[entry.finding_id] = entry
+            added += 1
+        return added
 
     def record(self, entry: LedgerEntry) -> None:
         """Store an entry, folding it into an existing one for the same defect.
