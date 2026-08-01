@@ -39,16 +39,57 @@ MANIFEST_PATH = REPO_ROOT / "app-manifest.yml"
 _SCALARS = ("name", "url", "description", "public")
 
 
+def submit_form(target: str, state: str, manifest: dict[str, Any]) -> str:
+    """The page that POSTs the manifest to GitHub.
+
+    GitHub's manifest flow takes the manifest as a form POST, so the browser is
+    handed a page that submits one rather than a URL to follow.
+
+    Served from the local HTTP server rather than written to a file and opened
+    with ``file://``. That was the first version and it failed: a ``file://``
+    document is an opaque origin, and the POST arrives at GitHub with
+    ``Origin: null`` and, depending on the browser, without the form body —
+    which GitHub reports as ``"url" wasn't supplied``, an error about the
+    manifest's contents for a problem with how it travelled. Serving the same
+    HTML over ``http://127.0.0.1`` makes it an ordinary same-origin document
+    and the POST an ordinary cross-site form submission, which is what the flow
+    expects.
+    """
+    payload = _html_escape(json.dumps(manifest))
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Creating your GitHub App</title></head>"
+        "<body style='font:16px system-ui;padding:3rem'>"
+        "<form method='post' action='" + _html_escape(f"{target}?state={state}") + "'>"
+        f"<input type='hidden' name='manifest' value='{payload}'>"
+        "<p>Opening GitHub…</p>"
+        "<button type='submit'>Continue to GitHub</button>"
+        "</form>"
+        "<script>document.forms[0].submit()</script>"
+        "</body></html>"
+    )
+
+
 class _Callback(http.server.BaseHTTPRequestHandler):
-    """Receives GitHub's redirect and captures the one-time code."""
+    """Serves the submit page, then receives GitHub's redirect with the code."""
 
     code: str | None = None
     state: str = ""
+    page: str = ""
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
         from urllib.parse import parse_qs, urlparse
 
-        params = parse_qs(urlparse(self.path).query)
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        # The first visit has no query string: that is the browser asking for
+        # the page that submits the manifest. GitHub's redirect back carries
+        # `code` and `state`.
+        if not params:
+            self._respond(200, type(self).page, raw=True)
+            return
+
         received_state = (params.get("state") or [""])[0]
         code = (params.get("code") or [""])[0]
 
@@ -61,9 +102,11 @@ class _Callback(http.server.BaseHTTPRequestHandler):
         type(self).code = code
         self._respond(200, "App created. Close this tab and return to the terminal.")
 
-    def _respond(self, status: int, message: str) -> None:
+    def _respond(self, status: int, message: str, raw: bool = False) -> None:
         body = (
-            "<html><body style='font:16px system-ui;padding:3rem'>"
+            message
+            if raw
+            else "<html><body style='font:16px system-ui;padding:3rem'>"
             f"{message}</body></html>"
         )
         self.send_response(status)
@@ -180,18 +223,14 @@ def main() -> int:
         default="quorum-review-app.private-key.pem",
         help="where to write the private key",
     )
+    parser.add_argument(
+        "--print-manifest",
+        action="store_true",
+        help="print the manifest and exit, to create the App by hand",
+    )
     args = parser.parse_args()
 
     manifest = read_manifest(MANIFEST_PATH)
-    port = free_port()
-    manifest["redirect_url"] = f"http://127.0.0.1:{port}/"
-
-    state = secrets.token_urlsafe(16)
-    _Callback.state = state
-    _Callback.code = None
-
-    server = http.server.HTTPServer(("127.0.0.1", port), _Callback)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
 
     target = (
         f"https://github.com/organizations/{args.org}/settings/apps/new"
@@ -199,31 +238,43 @@ def main() -> int:
         else "https://github.com/settings/apps/new"
     )
 
-    # GitHub's manifest flow takes the manifest as a form POST, so the browser
-    # is handed a page that submits one rather than a URL to follow.
-    payload = _html_escape(json.dumps(manifest))
-    form = REPO_ROOT / ".quorum-app-setup.html"
-    form.write_text(
-        "<html><body onload='document.forms[0].submit()'>"
-        f"<form method='post' action='{target}?state={state}'>"
-        f"<input type='hidden' name='manifest' value='{payload}'>"
-        "<noscript><button type='submit'>Create the GitHub App</button></noscript>"
-        "</form><p style='font:16px system-ui'>Opening GitHub…</p></body></html>",
-        encoding="utf-8",
-    )
+    if args.print_manifest:
+        # For creating the App by hand, and for telling a manifest GitHub
+        # rejected apart from one that never arrived.
+        print(json.dumps(manifest, indent=2))
+        print(f"\nPaste it at {target} (Settings → Developer settings → New GitHub App).")
+        return 0
 
+    port = free_port()
+    manifest["redirect_url"] = f"http://127.0.0.1:{port}/"
+
+    state = secrets.token_urlsafe(16)
+    _Callback.state = state
+    _Callback.code = None
+    _Callback.page = submit_form(target, state, manifest)
+
+    server = http.server.HTTPServer(("127.0.0.1", port), _Callback)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    entry = f"http://127.0.0.1:{port}/"
     print(f"Creating an App named {manifest['name']!r}.")
-    print("A browser tab will open; confirm the App there.\n")
-    webbrowser.open(form.as_uri())
+    print("A browser tab will open; confirm the App there.")
+    print(f"If it does not, open {entry} yourself.\n")
+    webbrowser.open(entry)
 
     try:
         _wait_for_code(server)
     finally:
         server.shutdown()
-        form.unlink(missing_ok=True)
 
     if not _Callback.code:
         print("No response from GitHub — nothing was created.", file=sys.stderr)
+        print(
+            "If GitHub complained that a field 'wasn't supplied', the manifest "
+            "did not reach it. Run with --print-manifest and create the App by "
+            "hand; it is the same App either way.",
+            file=sys.stderr,
+        )
         return 1
 
     app = exchange(_Callback.code)
