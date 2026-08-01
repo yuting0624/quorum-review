@@ -1,8 +1,16 @@
 # Recommended setup: one Google Cloud credential drives both models.
 #
-# There is no long-lived secret in this workflow. The GitHub OIDC token is
-# exchanged for short-lived Google Cloud credentials, and both Gemini and Claude
-# authenticate off those same Application Default Credentials.
+# No long-lived secret reaches Google Cloud. The GitHub OIDC token is exchanged
+# for short-lived credentials, and both Gemini and Claude authenticate off those
+# same Application Default Credentials.
+#
+# The GitHub side is not the same story any more, and the header used to claim
+# it was. APP_PRIVATE_KEY is a long-lived secret: it is what mints the token
+# that can collapse a resolved thread, which the default GITHUB_TOKEN is not
+# permitted to do. It never leaves GitHub, it is scoped to this App's
+# installation, and the review degrades to GITHUB_TOKEN without it — but it is
+# a stored key, and a workflow that says otherwise is telling you the wrong
+# thing about what to protect.
 #
 # This uses Direct Workload Identity Federation — the workflow's own federated
 # identity holds the IAM role, with no service account to impersonate. One fewer
