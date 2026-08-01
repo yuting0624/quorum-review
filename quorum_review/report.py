@@ -523,10 +523,15 @@ def render(report: RunReport) -> str:
         if report.threads_not_collapsible:
             lines += [
                 "",
-                "> ℹ️ Their threads were replied to but left open: the default "
-                "`GITHUB_TOKEN` is not allowed to resolve review threads, "
-                "whatever `permissions:` says. Supply a GitHub App token via "
-                "`github-token` to have them collapse automatically.",
+                "> ℹ️ Their threads were replied to but left open. Resolving a "
+                "review thread requires `contents: write`, which this reviewer "
+                "does not ask for: it never pushes a commit, and holding write "
+                "access to your repository is a much larger thing to hand a "
+                "process that reads pull requests from strangers. Collapse "
+                "them yourself, or grant it — see "
+                "[the note on thread resolution]"
+                "(https://github.com/yuting0624/quorum-review/blob/main/docs/"
+                "operations.md#resolved-threads-stay-open).",
             ]
 
     if report.unanchored:

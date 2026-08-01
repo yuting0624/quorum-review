@@ -469,10 +469,12 @@ python scripts/create_app.py
 ```
 
 Reads [`app-manifest.yml`](app-manifest.yml), walks GitHub's manifest flow, and
-prints the secrets to set. Worth doing for two reasons: resolved threads only
-collapse with an App token — GitHub does not let the Actions app call
-`resolveReviewThread`, whatever `permissions:` says — and comments arrive under
-a name and avatar you chose.
+prints the secrets to set. It buys you one thing: comments arrive under a name
+and avatar you chose, instead of `github-actions[bot]`.
+
+It does **not** make resolved threads collapse. That was the original reason for
+it and the reason turned out to be wrong — see
+[Resolved threads stay open](docs/operations.md#resolved-threads-stay-open).
 
 The App receives no webhooks and runs nowhere; Actions already delivers the
 events, so it exists purely to mint short-lived tokens. It cannot write to your

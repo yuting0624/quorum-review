@@ -129,12 +129,18 @@ an outbound network request.
 Identity Federation, not from anything this code does: no key to leak from a
 workflow log, none to find in the git history later.
 
-The GitHub side is not the same. If you use a GitHub App token — the only way
-to collapse a resolved thread, since GitHub forbids `resolveReviewThread` for
-the Actions app — then `APP_PRIVATE_KEY` is a long-lived secret stored in the
-repository. It never leaves GitHub and it is scoped to that App's installation,
-and the review still works without it, but it is a stored key and belongs in
-whatever inventory you keep of those.
+The GitHub side is not the same. If you post under your own GitHub App rather
+than `github-actions[bot]`, `APP_PRIVATE_KEY` is a long-lived secret stored in
+the repository. It never leaves GitHub, it is scoped to that App's
+installation, and the review works without it — but it is a stored key and
+belongs in whatever inventory you keep of those.
+
+**The reviewer does not ask for `contents: write`,** and that is the whole
+reason resolved threads stay open: `resolveReviewThread` requires it. Nothing
+here pushes a commit, so the permission would buy one cosmetic behaviour in
+exchange for giving write access to your repository to a process whose input is
+written by anyone who can open a pull request. See
+[Resolved threads stay open](operations.md#resolved-threads-stay-open).
 
 ### The reviewer does not republish the secret it found
 

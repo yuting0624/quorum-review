@@ -16,13 +16,14 @@
 #
 # WHY NOT JUST USE GITHUB_TOKEN
 #
-# For most of what the reviewer does, you can. The exception is collapsing a
-# resolved thread: GitHub does not permit the Actions app to call
-# `resolveReviewThread`, whatever `permissions:` says. An App token can.
+# For everything the reviewer does, you can. The reason to have an App is
+# presentation: comments arrive under your App's name and avatar rather than
+# "github-actions[bot]", which also means you pick both — and picking your own
+# keeps this project clear of other people's trademarks.
 #
-# A second reason is presentation. Comments arrive under your App's name and
-# avatar rather than "github-actions[bot]", which also means you pick both —
-# and picking your own keeps this project clear of other people's trademarks.
+# It is *not* what makes resolved threads collapse. That was the original
+# reason for this file and it turned out to be wrong; see the note on
+# permissions below.
 
 name: Quorum Review
 url: https://github.com/yuting0624/quorum-review
@@ -42,11 +43,28 @@ default_events: []
 #
 #   metadata      mandatory for every App
 #   contents      read the diff and .quorumignore
-#   pull_requests read the pull request, post and resolve review comments
+#   pull_requests read the pull request, post review comments
 #
 # Deliberately absent: `contents: write`. Nothing here pushes a commit, and
 # granting it would raise the cost of a successful prompt injection from a
 # wrong comment to a write against your repository.
+#
+# That has a cost, and it is worth knowing before you install this: **the App
+# cannot collapse a resolved thread either.** `resolveReviewThread` requires
+# `contents: write` — not `pull_requests: write`, which is what you would
+# expect and is not enough. Measured, not documented: GitHub publishes no
+# mapping from App permissions to the GraphQL API, and review threads are not
+# in the REST API at all.
+#
+# So the choice is: threads a human closes, or a reviewer holding write access
+# to the repository whose pull requests it reads. This manifest takes the
+# first, because nothing here pushes a commit and the permission would buy one
+# cosmetic behaviour.
+#
+# Change `contents` to `write` if you would rather have the second. It works —
+# that is measured too. Re-approve the installation afterwards, or nothing
+# changes: a permission change does not reach tokens until the owner accepts
+# it, and until then the failure looks exactly like not having granted it.
 default_permissions:
   metadata: read
   contents: read
