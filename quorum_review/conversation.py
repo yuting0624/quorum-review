@@ -58,14 +58,26 @@ def owns_thread(comments: list[dict[str, Any]], root_id: int) -> bool:
     anyone able to comment can trigger, and the answer opens by referring to a
     finding that never existed.
 
-    The root comment's own footer settles it — the same ``id`` the ledger reads
-    back when the summary comment has been deleted.
+    The footer alone does not settle it, which was the first attempt: anyone
+    can type ``<sub>`security` · id `deadbeef`</sub>`` into a comment and then
+    reply to themselves. A footer is a label, not a signature.
+
+    So the author has to be a bot as well. That part GitHub enforces — a person
+    commenting is ``type: User`` and cannot say otherwise — and both the
+    Actions app and a GitHub App token report ``Bot``. Running under a personal
+    token means this returns False and a thread with no ledger entry is
+    declined, which is the safe direction for a check that exists to stop work
+    being triggered on threads that are not ours.
     """
     root = next(
         (c for c in comments if int(c.get("id") or 0) == root_id),
         None,
     )
-    return root is not None and bool(FINDING_FOOTER.search(root.get("body") or ""))
+    if root is None:
+        return False
+    if ((root.get("user") or {}).get("type") or "") != "Bot":
+        return False
+    return bool(FINDING_FOOTER.search(root.get("body") or ""))
 
 
 def build_discussion(
@@ -73,8 +85,11 @@ def build_discussion(
 ) -> Discussion:
     """Assemble the finding and the conversation so far.
 
-    Bounded, newest last. Everything here is text somebody else wrote in a
-    place anyone can write, and all of it was reaching the prompt.
+    Bounded, and the first comment is always kept. Taking the newest N was the
+    first attempt and it drops the root — which is the finding itself, and on a
+    thread whose ledger entry is gone it is the only place the finding exists.
+    Everything here is text somebody else wrote in a place anyone can write,
+    and all of it was reaching the prompt.
     """
     said = [
         (
@@ -84,7 +99,9 @@ def build_discussion(
         for comment in comments
         if (comment.get("body") or "").strip()
     ]
-    transcript = said[-MAX_TRANSCRIPT_COMMENTS:]
+    if len(said) > MAX_TRANSCRIPT_COMMENTS:
+        said = [said[0], *said[-(MAX_TRANSCRIPT_COMMENTS - 1) :]]
+    transcript = said
 
     # The finding's original wording is already the first message in the
     # thread, so `body` carries what the ledger knows and the comment does not:
