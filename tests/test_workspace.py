@@ -276,8 +276,64 @@ def test_the_benchmark_answer_key_is_hidden_from_the_models():
         "benchmark/seeded-bugs/README.md",
         "tests/test_fixture_integrity.py",
         "benchmark/runs/anything.json",
+        # Missed when the other three were excluded. It carries the same key in
+        # another form — every bug and decoy with the file and keywords that
+        # identify it — and a model opened it on the next run with repository
+        # access. Hence the search below: a list is what let this one through.
+        "benchmark/measure.py",
     ):
         assert hidden.run("read_file", {"path": path}).startswith("Error:")
+
+
+#: Strings that only appear in something that gives the game away: the answer
+#: key's own vocabulary, including the table naming which findings are supposed
+#: to be wrong — worth more to a reviewer than the list of bugs.
+#:
+#: Assembled from pieces so that this file does not contain them, which is what
+#: lets the search below cover this file too. A checker that has to skip itself
+#: is one more thing nobody is checking.
+_KEY_MARKERS = ("B" + "10", "DECO" + "YS", "CONTEXT_" + "BUGS")
+
+#: Where a file naming the key is allowed to be, because the models never read
+#: it: the action's own checkout, not the tree under review.
+_NOT_UNDER_REVIEW = (".git", ".venv", "__pycache__", ".claude", "node_modules")
+
+
+def test_nothing_else_in_the_repository_gives_the_answer_key_away():
+    """The list above is a list, and a list is what let `measure.py` through.
+
+    The commit that hid the README and the integrity test was written to close
+    this exact hole, named both files, added a test naming both files — and
+    left the harness, which holds the same table with the decoys labelled as
+    decoys. So the check is a search now: anything in the tree that speaks the
+    answer key's vocabulary has to be unreachable, whether or not anyone
+    remembered to add it.
+    """
+    root = pathlib.Path(__file__).resolve().parent.parent
+    hidden = Workspace(root, PathFilter.build(root=root))
+
+    exposed = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix not in {".py", ".md", ".json"}:
+            continue
+        relative = path.relative_to(root)
+        if any(part in _NOT_UNDER_REVIEW for part in relative.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if not any(marker in text for marker in _KEY_MARKERS):
+            continue
+        if not hidden.run("read_file", {"path": relative.as_posix()}).startswith(
+            "Error:"
+        ):
+            exposed.append(relative.as_posix())
+
+    assert not exposed, (
+        f"these name the answer key and the models can read them: {exposed}. "
+        f"Add them to .quorumignore, or stop naming the bugs in them."
+    )
 
 
 # -- one policy file, resolved once ----------------------------------------

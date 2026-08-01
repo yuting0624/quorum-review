@@ -16,6 +16,18 @@
 benchmark/seeded-bugs/README.md
 tests/test_fixture_integrity.py
 
+# The measurement harness. It carries the same answer key in another form —
+# a table of every bug, decoy and context case with the file and the keywords
+# that identify it, including which ones are decoys and therefore which
+# findings are wrong. It was missed when the two files above were excluded,
+# and a model opened it on the very next run with repository access.
+#
+# The list in this file is no longer what the guard checks.
+# `tests/test_workspace.py` searches the repository for anything speaking the
+# answer key's vocabulary and asserts the models cannot reach it, because a
+# hand-maintained list is exactly what let this file through.
+benchmark/measure.py
+
 # Saved findings from past measurement runs. Committed as the evidence behind
 # the recorded numbers, and hidden for the same reason as the key itself: a
 # transcript naming every bug is an answer key written by the model.
