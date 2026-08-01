@@ -232,6 +232,26 @@ def cell(text: str, limit: int = MAX_CELL_CHARS) -> str:
     return _bound(escaped, limit)
 
 
+def code_span(text: str, limit: int = MAX_CELL_CHARS) -> str:
+    """Make a value safe to put between two backticks, and wrap it in them.
+
+    ``flatten`` handles the HTML and the newlines; it does not handle the
+    delimiter of the span the value is going into. A path containing a backtick
+    closes the span early and the rest renders as prose — which, for a value
+    the model chose, is a way back out into the summary.
+
+    A backtick inside a span cannot be escaped in Markdown; the only fix is a
+    longer fence, so the fence is sized to be longer than the longest run in
+    the content. The spaces keep a leading or trailing backtick in the content
+    from merging with the fence.
+    """
+    inner = flatten(text, limit)
+    longest = max((len(run) for run in re.findall(r"`+", inner)), default=0)
+    fence = "`" * (longest + 1)
+    padding = " " if longest else ""
+    return f"{fence}{padding}{inner}{padding}{fence}"
+
+
 def _row(finding: Finding) -> str:
     icon = SEVERITY_ICON.get(finding.severity, "⚪")
     return (
@@ -558,7 +578,7 @@ def render(report: RunReport) -> str:
         # attacker-influenced content into the same comment that carries
         # `<!-- quorum-state: ... -->`, where a forged marker would be read
         # back as the ledger on the next run.
-        shown = ", ".join(f"`{flatten(p, 200)}`" for p in report.off_diff_paths[:10])
+        shown = ", ".join(code_span(p, 200) for p in report.off_diff_paths[:10])
         if len(report.off_diff_paths) > 10:
             shown += f", and {len(report.off_diff_paths) - 10} more"
         lines += [

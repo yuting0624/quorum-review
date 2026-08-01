@@ -139,10 +139,18 @@ def test_a_bundle_produces_a_context_that_still_trusts_public_roots(
     context = ssl_context()
     assert isinstance(context, ssl.SSLContext)
 
-    subjects = {cert["subject"] for cert in context.get_ca_certs()}
+    # Both sides deduplicated the same way. The first version of this compared
+    # a set of subjects against a list length, so it would have passed on a
+    # context holding *fewer* certificates than the baseline as long as the
+    # baseline had duplicates.
     baseline = ssl.create_default_context(cafile=certifi.where())
-    assert len(subjects) > len(baseline.get_ca_certs()), (
-        "the corporate root should be added to the public ones, not replace them"
+    added = {cert["subject"] for cert in context.get_ca_certs()} - {
+        cert["subject"] for cert in baseline.get_ca_certs()
+    }
+
+    assert added, "the corporate root should be added to the public roots"
+    assert len(context.get_ca_certs()) > len(baseline.get_ca_certs()), (
+        "and added, not swapped in"
     )
 
 

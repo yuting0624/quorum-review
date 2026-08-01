@@ -162,9 +162,15 @@ def anchored(findings: list[Finding], diff: str) -> tuple[list[Finding], list[st
         # naming a file this change genuinely touches. Dropping it here would
         # have undone the rename following added earlier: the finding would
         # vanish instead of moving with the file.
-        moved_to = moves.get(finding.file_path)
-        if moved_to in known:
-            finding.file_path = moved_to
+        #
+        # Only when the path is not already in the diff. One change can both
+        # move `a` to `b` and add a new `a`, and remapping then takes a finding
+        # off the file it was actually about. The reported path wins wherever
+        # it is real; the rename is the fallback.
+        if finding.file_path not in known:
+            moved_to = moves.get(finding.file_path)
+            if moved_to in known:
+                finding.file_path = moved_to
         if finding.file_path in known:
             kept.append(finding)
         else:

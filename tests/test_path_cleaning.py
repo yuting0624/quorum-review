@@ -259,3 +259,43 @@ def test_the_post_rename_path_still_works():
 def test_an_unrelated_path_is_still_dropped_across_a_rename():
     _kept, dropped = anchored([parse("app/other.py")], RENAME_DIFF)
     assert dropped == ["app/other.py"]
+
+
+def test_a_dropped_path_cannot_close_the_code_span_it_sits_in():
+    """`flatten` handles the HTML and the newlines; it does not handle the
+    delimiter of the span the value goes into. A backtick closes it early and
+    the rest renders as prose."""
+    run = report.RunReport(models=["claude-opus-5"])
+    run.off_diff_paths = ["a.py` and **look at me**"]
+
+    # The whole value stays inside a fence longer than any run of backticks in
+    # it, so the emphasis renders as literal text rather than as emphasis.
+    assert "`` a.py` and **look at me** ``" in report.render(run)
+
+
+def test_the_fence_grows_past_the_longest_run_of_backticks():
+    assert report.code_span("a``b") == "``` a``b ```"
+
+
+def test_an_ordinary_path_gets_ordinary_backticks():
+    assert report.code_span("app/x.py") == "`app/x.py`"
+
+
+RENAME_AND_READD = RENAME_DIFF + (
+    "diff --git a/app/old.py b/app/old.py\n"
+    "new file mode 100644\n"
+    "--- /dev/null\n"
+    "+++ b/app/old.py\n"
+    "@@ -0,0 +1 @@\n"
+    "+from app.new import *\n"
+)
+
+
+def test_a_path_the_diff_really_contains_is_not_remapped_away():
+    """One change can both move `a` to `b` and add a new `a` — a shim left at
+    the old import path is the usual reason. Remapping then takes the finding
+    off the file it was actually about."""
+    kept, dropped = anchored([parse("app/old.py")], RENAME_AND_READD)
+
+    assert [f.file_path for f in kept] == ["app/old.py"]
+    assert dropped == []
