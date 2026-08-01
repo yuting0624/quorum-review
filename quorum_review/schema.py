@@ -400,6 +400,35 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     raise ValueError(f"could not parse as JSON: {text[:200]!r}")
 
 
+#: Characters a repository path cannot contain and that a prompt, a Markdown
+#: table or a SARIF location can all be steered by. Git will not produce them,
+#: so removing them costs nothing and closes the whole class at once.
+_UNPATHLIKE = re.compile(r"[<>\r\n\t`|\x00-\x1f]")
+
+#: A path is a path. Anything past this is not one, and truncating keeps a
+#: pathological value out of every downstream buffer.
+MAX_PATH_LENGTH = 400
+
+
+def clean_path(value: Any) -> str:
+    """Strip a model-supplied path down to something that is actually a path.
+
+    ``file_path`` looks like metadata and is not: the model chose it, having
+    read an attacker-controlled diff, and it reaches a prompt, a Markdown
+    table, a SARIF location and a GitHub API call. The reviewer found it
+    interpolated raw into the verifier prompt beside the instructions — a path
+    containing ``</untrusted_diff>`` and a newline is the same break-out the
+    labelling exists to prevent, arriving through the one field nobody thought
+    of as content.
+
+    Cleaning here rather than at each use site is deliberate. There are five
+    consumers and the failure is invisible at every one of them, because each
+    looks like it is handling a filename.
+    """
+    text = _UNPATHLIKE.sub("", str(value)).strip()
+    return text[:MAX_PATH_LENGTH]
+
+
 def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
     """Convert a parsed payload into findings, dropping anything off-schema.
 
@@ -416,7 +445,7 @@ def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
             continue
         try:
             finding = Finding(
-                file_path=str(item["file_path"]),
+                file_path=clean_path(item["file_path"]),
                 line=int(item["line"]),
                 category=str(item["category"]),
                 severity=str(item["severity"]),
@@ -431,6 +460,12 @@ def findings_from_payload(payload: dict[str, Any], model: str) -> list[Finding]:
             continue
 
         if finding.severity not in SEVERITIES or finding.category not in CATEGORIES:
+            continue
+
+        # A path that cleans away to nothing was never a path. There is no file
+        # to anchor a comment to, and an empty SARIF location is a document
+        # GitHub rejects.
+        if not finding.file_path:
             continue
 
         # A fix ending before it starts, or claiming a range far larger than a
