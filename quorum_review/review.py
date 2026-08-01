@@ -273,6 +273,14 @@ async def propose_criteria(github: GitHubClient, number: int, skill_name: str) -
     # them — and this had been reading them at the head with no check, which
     # made the "they are trusted, so unlabelled" argument false as well.
     from_fork = forks.is_fork_payload(pull)
+    if from_fork:
+        # Detecting a fork for the ref and then proceeding anyway was half a
+        # check. This path spends a model call and posts a comment, so it needs
+        # the same authorisation as a review of the same pull request.
+        refusal = await forks.refusal(github, number, {"pull_request": pull})
+        if refusal:
+            await github.post_issue_comment(number, refusal)
+            return 0
     ref = pull["base"]["sha"] if from_fork else pull["head"]["sha"]
     skill = await criteria.resolve(skill_name, github, ref)
     provider = build_provider()

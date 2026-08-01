@@ -8,6 +8,8 @@ models.
 
 from __future__ import annotations
 
+import re
+
 from . import diffs
 from .schema import (
     BASE_INSTRUCTIONS,
@@ -59,6 +61,12 @@ lookup. When the budget runs out, answer from what you have.
 """
 
 
+#: Anything a model might read as one of our delimiters. Case-insensitive, and
+#: whitespace after the bracket or the slash is allowed because that is what a
+#: substring replace missed.
+_DELIMITER = re.compile(r"<\s*(?P<slash>/?)\s*untrusted", re.IGNORECASE)
+
+
 def untrusted(tag: str, content: str) -> str:
     """Wrap attacker-controlled text so it cannot climb out of its own block.
 
@@ -75,9 +83,13 @@ def untrusted(tag: str, content: str) -> str:
     The replacement is deliberately readable rather than escaped: a model that
     sees ``<!untrusted_pr_title>`` understands what was attempted, and the base
     instructions tell it to report exactly that as a finding.
+
+    Matching is case-insensitive and tolerates whitespace inside the brackets.
+    A plain substring replace was the first attempt, and it left
+    ``</ UNTRUSTED_pr_title>`` untouched — which a model may well read as the
+    same tag. A defence should not rest on it not doing so.
     """
-    safe = (content or "").replace("</untrusted", "</!untrusted")
-    safe = safe.replace("<untrusted", "<!untrusted")
+    safe = _DELIMITER.sub(lambda m: f"<{m.group('slash') or ''}!untrusted", content or "")
     return "\n".join([f"<untrusted_{tag}>", safe, f"</untrusted_{tag}>"])
 
 
