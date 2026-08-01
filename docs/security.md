@@ -240,6 +240,18 @@ with:
   # claude-vertex-region: us-east5  # override one, if the entitlement demands it
 ```
 
+Precedence, highest first:
+
+1. `claude-vertex-region` / `gemini-location` — the per-model input
+2. `vertex-region` — the shared pin
+3. `CLAUDE_VERTEX_REGION` / `GOOGLE_CLOUD_LOCATION` in the environment
+4. `global`
+
+The pin sits above the environment variables deliberately. An ambient
+`GOOGLE_CLOUD_LOCATION` — from a runner image, an organisation-level `env:`, a
+devcontainer — must not be able to quietly undo a region someone wrote into the
+workflow. A pin that anything inherited can override is not a pin.
+
 Check that both models are actually served in the region before you rely on it.
 A region that does not offer one of them returns 404 rather than falling back —
 which is the behaviour you want, but it means the review degrades to one model

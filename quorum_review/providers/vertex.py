@@ -60,8 +60,11 @@ DEFAULT_VERIFIER_MODEL = "claude-opus-5"
 _REGION = re.compile(r"global|us|eu|[a-z]+-[a-z]+\d+")
 
 
-def _location(*names: str) -> str:
-    """First value set among ``names``, then the shared region, then global.
+def _location(specific: str, vendor: str) -> str:
+    """Resolve one model's Vertex location.
+
+    Order: this model's action input, then the shared pin, then the vendor's
+    own variable, then ``global``.
 
     ``global`` is the recommended endpoint for both products and is the default
     because it is the one most likely to have the model available. It is
@@ -72,17 +75,25 @@ def _location(*names: str) -> str:
     The per-model override exists because Model Garden entitlements can be
     region-scoped, so Claude sometimes has to sit somewhere Gemini does not.
 
-    Two names each, and the ``QUORUM_`` one first: the action passes its inputs
-    under those, because an unset input arrives as ``""`` and writing
+    The action passes its inputs under the ``QUORUM_`` names rather than the
+    vendor ones, because an unset input arrives as ``""`` and writing
     ``GOOGLE_CLOUD_LOCATION=""`` into the step environment would shadow
-    whatever the caller had set at the job level. Reading the vendor names as a
-    fallback keeps them working for anyone who sets them directly.
+    whatever the caller had set at the job level.
+
+    The vendor variable is read, but *below* the shared pin rather than above
+    it. A reviewer reported that ordering the other way round lets an ambient
+    ``GOOGLE_CLOUD_LOCATION`` — from a runner image, an org-level ``env:``, a
+    devcontainer — silently defeat a ``vertex-region`` written in the workflow.
+    The second model refuted it as the documented design, and it was; the
+    reporter was right that the design was wrong. A residency pin someone wrote
+    down has to beat something they inherited, or it is not a pin.
     """
-    for name in names:
-        value = os.getenv(name, "").strip()
-        if value:
-            return value
-    return os.getenv("QUORUM_VERTEX_REGION", "").strip() or "global"
+    return (
+        os.getenv(specific, "").strip()
+        or os.getenv("QUORUM_VERTEX_REGION", "").strip()
+        or os.getenv(vendor, "").strip()
+        or "global"
+    )
 
 
 def gemini_location() -> str:

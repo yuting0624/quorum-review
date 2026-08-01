@@ -27,6 +27,8 @@ from quorum_review.providers.vertex import (
 def clean_environment(monkeypatch):
     for name in (
         "QUORUM_VERTEX_REGION",
+        "QUORUM_CLAUDE_REGION",
+        "QUORUM_GEMINI_LOCATION",
         "CLAUDE_VERTEX_REGION",
         "GOOGLE_CLOUD_LOCATION",
     ):
@@ -53,9 +55,11 @@ def test_one_setting_pins_both(monkeypatch):
 
 def test_a_per_model_setting_wins(monkeypatch):
     """Model Garden entitlements can be region-scoped, so Claude sometimes has
-    to sit somewhere Gemini does not."""
+    to sit somewhere Gemini does not. The per-model *input* is what overrides
+    the pin; the vendor variable sits below it, so that a region inherited from
+    a runner image cannot quietly undo a pin written in the workflow."""
     monkeypatch.setenv("QUORUM_VERTEX_REGION", "europe-west4")
-    monkeypatch.setenv("CLAUDE_VERTEX_REGION", "us-east5")
+    monkeypatch.setenv("QUORUM_CLAUDE_REGION", "us-east5")
 
     assert gemini_location() == "europe-west4"
     assert claude_region() == "us-east5"
@@ -158,6 +162,34 @@ def test_the_input_wins_when_it_is_set(monkeypatch):
     monkeypatch.setenv("QUORUM_GEMINI_LOCATION", "asia-northeast1")
 
     assert gemini_location() == "asia-northeast1"
+
+
+def test_a_pin_beats_a_variable_that_was_merely_inherited(monkeypatch):
+    """A reviewer reported this and the second model refuted it as the
+    documented design. It was the documented design, and the design was wrong:
+    an ambient GOOGLE_CLOUD_LOCATION — a runner image, an org-level `env:`, a
+    devcontainer — silently defeated a `vertex-region` written in the workflow.
+    A residency pin someone wrote down has to beat something they inherited."""
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("QUORUM_VERTEX_REGION", "europe-west4")
+
+    assert gemini_location() == "europe-west4"
+
+
+def test_the_vendor_variable_still_works_on_its_own(monkeypatch):
+    """Below the pin, not gone. Someone running the module directly with
+    GOOGLE_CLOUD_LOCATION set and no action in sight should still get it."""
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+    assert gemini_location() == "us-central1"
+
+
+def test_a_per_model_input_still_beats_the_pin(monkeypatch):
+    """Region-scoped Model Garden entitlements are why the override exists."""
+    monkeypatch.setenv("QUORUM_VERTEX_REGION", "europe-west4")
+    monkeypatch.setenv("QUORUM_CLAUDE_REGION", "us-east5")
+
+    assert claude_region() == "us-east5"
 
 
 # -- multi-region locations -------------------------------------------------
