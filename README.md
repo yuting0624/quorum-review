@@ -433,7 +433,7 @@ jobs:
 
 `on:` has to be in the caller — GitHub resolves triggers from the calling
 workflow, so a reusable one cannot decide when it runs. Everything else,
-including `action-ref` for pinning to a commit SHA and `runs-on` for a
+including `action-version` for pinning to a commit SHA and `runs-on` for a
 self-hosted runner, is an input.
 
 `synchronize` is worth adding once you have `incremental: on`: a re-review reads

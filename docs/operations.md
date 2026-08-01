@@ -151,8 +151,8 @@ copying YAML into every repository. The trigger conditions decide who may
 trigger a review, and this project has already had to fix two security bugs in
 them; neither fix would have reached a repository that copied the file first.
 
-Pin `action-ref` to a commit SHA in a regulated environment. A tag can be moved
-to point at new code, and the job holds a write-scoped token.
+Pin `action-version` to a commit SHA in a regulated environment. A tag can be
+moved to point at new code, and the job holds a write-scoped token.
 
 ## GitHub Enterprise Server
 
