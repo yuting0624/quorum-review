@@ -198,9 +198,7 @@ def test_an_unknown_tool_is_reported_not_raised(space: Workspace):
 
 def test_nonsense_arguments_fall_back_to_defaults(space: Workspace):
     """Models pass strings where integers belong; that must not end the review."""
-    output = space.run(
-        "read_file", {"path": "app/permissions.py", "start_line": "two"}
-    )
+    output = space.run("read_file", {"path": "app/permissions.py", "start_line": "two"})
     assert "REQUIRED_SCOPES" in output
 
 

@@ -229,9 +229,7 @@ def test_a_title_cannot_close_a_details_block():
     """
     from quorum_review.report import RunReport, render
 
-    body = render(
-        RunReport(suppressed=1, suppressed_titles=["</details><h1>gotcha"])
-    )
+    body = render(RunReport(suppressed=1, suppressed_titles=["</details><h1>gotcha"]))
     assert "</details><h1>" not in body
     assert "&lt;/details&gt;" in body
     # The block this is inside still closes exactly once, where it should.
@@ -430,7 +428,5 @@ def test_the_summary_names_the_tree_the_models_read():
 def test_no_commit_means_no_claim_about_one():
     from quorum_review.report import RunReport, render
 
-    body = render(
-        RunReport(repo_access="on", tool_calls=4, files_read=["a.py"])
-    )
+    body = render(RunReport(repo_access="on", tool_calls=4, files_read=["a.py"]))
     assert "read-only lookup(s) into the checkout and opened" in body

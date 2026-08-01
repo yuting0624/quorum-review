@@ -34,7 +34,7 @@ def test_every_fixture_file_parses():
 
 def test_b1_sql_injection():
     text = source("search.py")
-    assert 'documents_fts MATCH \'{term}\'' in text
+    assert "documents_fts MATCH '{term}'" in text
     assert "owner_id = {user[" in text
 
 
@@ -137,9 +137,7 @@ def test_c2_the_scope_check_passes_for_everyone():
 
 def test_c3_the_audit_call_does_not_match_the_signature():
     assert 'audit.record(user, "document.report", doc_id)' in source("reports.py")
-    assert (
-        "def record(action: str, user_id: int, doc_id: int" in source("audit.py")
-    )
+    assert "def record(action: str, user_id: int, doc_id: int" in source("audit.py")
 
 
 def test_c4_the_raw_join_is_guarded_by_its_only_caller():

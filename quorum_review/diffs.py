@@ -102,10 +102,7 @@ def is_binary(section: str) -> bool:
     Any file mentioning either marker in a string, a docstring, or a test
     fixture was excluded from review the same way, in any repository.
     """
-    return any(
-        line.startswith(_BINARY_MARKERS)
-        for line in section.splitlines()
-    )
+    return any(line.startswith(_BINARY_MARKERS) for line in section.splitlines())
 
 
 def truncate(

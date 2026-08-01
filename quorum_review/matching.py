@@ -184,6 +184,7 @@ def is_dismissal_text(body: str | None) -> bool:
     """Whether this comment body retires a finding."""
     return bool(_DISMISSAL_RE.search(body or ""))
 
+
 def without_dismissal_trigger(body: str) -> str:
     """The explanation, with the trigger phrase removed."""
     stripped = _DISMISSAL_RE.sub("", body or "").strip(string.whitespace + ":-—")
