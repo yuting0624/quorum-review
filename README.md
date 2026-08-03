@@ -31,9 +31,16 @@ to set up instead of two, no API keys, one invoice.
 > understood rather than skimmed.
 >
 > It is also in use, on this repository, on every pull request — including the
-> ones that change it. **Issues and pull requests are welcome and get answered.**
-> One person maintains it, so it is not a vendor: expect a considered reply, not
-> a support contract.
+> ones that change it, and on
+> [antigravity-for-claude-code](https://github.com/yuting0624/antigravity-for-claude-code),
+> a Claude Code plugin that arranges the same two models the other way round:
+> Claude conducting, Gemini executing. Everything in 1.7.0 came from adopting it
+> there — the fork guard that reads as though it excludes forks and does not on
+> two triggers, the summary comment that cancelled the run that posted it, and
+> the `pr-number` line that four independent model reviews read as a bug.
+>
+> **Issues and pull requests are welcome and get answered.** One person maintains
+> it, so it is not a vendor: expect a considered reply, not a support contract.
 
 ## ⚡ What it looks like
 
