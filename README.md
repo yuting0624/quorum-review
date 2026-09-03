@@ -331,7 +331,7 @@ finding.
 |---|---|---|
 | `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
 | `skill` | `security-review` | a built-in name, or a path to criteria in your own repository; several combine |
-| `primary-model` | a Gemini model | **confirm against your project** — `python -m quorum_review.review --list-models` |
+| `primary-model` | `gemini-3.8-flash` | **confirm against your project** — `python -m quorum_review.review --list-models` |
 | `verifier-model` | `claude-sonnet-5` | both models scan; the names only decide which runs alone under `scan: single` |
 | `scan` | `both` | `single` is cheaper and caps recall at one model's |
 | `verification` | `on` | `off` skips the second opinion on findings only one model raised |
@@ -352,12 +352,12 @@ finding.
 | `claude-vertex-region` | inherits | override just Claude; try `us-east5` if your entitlement is region-scoped |
 | `gemini-location` | inherits | override just Gemini |
 
-**On the default pair.** `gemini-3.6-flash` and `claude-sonnet-5` are the
-default because they measurably complement each other — each finds real defects
-the other misses, in both directions, which is the property the whole design
-rests on. Swapping either is one input. A stronger model on one side will find
-more on its own; whether the pair still complements each other is a question
-this fixture can answer for you, and `benchmark/measure.py` is how.
+**On the default pair.** `gemini-3.8-flash` and `claude-sonnet-5` are the
+defaults. The benchmark below established that the previous Gemini default,
+`gemini-3.6-flash`, complemented Claude in both directions. A model upgrade can
+change those blind spots, so re-run `benchmark/measure.py` before treating the
+same complementarity as measured for the new pair. Swapping either model is one
+input.
 
 **Effort tiers**, roughly, per review:
 
@@ -647,7 +647,7 @@ Measure a configuration against the fixture:
 
 ```bash
 python -m benchmark.measure --pr 1 --runs 3 \
-  --primary gemini-3.6-flash --verifier claude-sonnet-5
+  --primary gemini-3.8-flash --verifier claude-sonnet-5
 ```
 
 </details>

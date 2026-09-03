@@ -14,7 +14,7 @@ Usage:
 
     GITHUB_TOKEN=... GITHUB_REPOSITORY=owner/repo GOOGLE_CLOUD_PROJECT=... \\
       python -m benchmark.measure --pr 1 --runs 3 \\
-        --primary gemini-3.6-flash --verifier claude-sonnet-5
+        --primary gemini-3.8-flash --verifier claude-sonnet-5
 """
 
 from __future__ import annotations

@@ -57,7 +57,7 @@ from .base import ProviderUnavailable
 # project and by release channel, and parts of the Gemini 3 line still carry
 # `-preview` suffixes. Confirm what your project can actually call before
 # relying on this value — `python -m src.review --list-models` prints the list.
-DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
+DEFAULT_PRIMARY_MODEL = "gemini-3.8-flash"
 DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 
 #: A Vertex location: ``global``, a multi-region (``us``, ``eu``), or a region
@@ -65,6 +65,22 @@ DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 #: point is to reject a value that is not shaped like one at all, before it
 #: becomes a hostname and the failure arrives as a connection error.
 _REGION = re.compile(r"global|us|eu|[a-z]+-[a-z]+\d+")
+_GEMINI_GENERATION = re.compile(r"(?:^|/)gemini-(\d+)(?:[.-]|$)")
+
+
+def _gemini_thinking_config(types: Any, model: str, effort: str) -> Any | None:
+    """Set thinking levels only on model generations that support them.
+
+    Gemini 2.5 uses ``thinking_budget`` rather than ``thinking_level``. Model
+    overrides are part of the public configuration, so sending the new field
+    unconditionally would break an otherwise valid legacy override. Unknown
+    aliases omit the setting and keep the model's own default, which is safer
+    than guessing what an alias currently points to.
+    """
+    match = _GEMINI_GENERATION.search(model)
+    if match is None or int(match.group(1)) < 3:
+        return None
+    return types.ThinkingConfig(thinking_level=effort)
 
 
 def _location(specific: str, vendor: str) -> str:
@@ -282,7 +298,7 @@ class _GeminiEngine:
 
         contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=user)])]
         if toolbox is not None:
-            await self._explore(contents, system, max_tokens, toolbox)
+            await self._explore(contents, system, effort, max_tokens, toolbox)
             closing = prompts.FINALISE if schema else prompts.FINALISE_PROSE
             contents.append(types.Content(role="user", parts=[types.Part(text=closing)]))
 
@@ -297,12 +313,18 @@ class _GeminiEngine:
                 # schema is reduced here rather than maintained twice.
                 response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
+                thinking_config=_gemini_thinking_config(types, self.model, effort),
             ),
         )
         return response.text or ""
 
     async def _explore(
-        self, contents: list[Any], system: str, max_tokens: int, toolbox: Workspace
+        self,
+        contents: list[Any],
+        system: str,
+        effort: str,
+        max_tokens: int,
+        toolbox: Workspace,
     ) -> None:
         """Let the model read the repository before it commits to an answer.
 
@@ -328,7 +350,10 @@ class _GeminiEngine:
             )
         ]
         config = types.GenerateContentConfig(
-            system_instruction=system, tools=tools, max_output_tokens=max_tokens
+            system_instruction=system,
+            tools=tools,
+            max_output_tokens=max_tokens,
+            thinking_config=_gemini_thinking_config(types, self.model, effort),
         )
 
         for _ in range(workspace.MAX_TURNS):
@@ -345,13 +370,16 @@ class _GeminiEngine:
                 types.Content(
                     role="user",
                     parts=[
-                        types.Part.from_function_response(
-                            name=call.name or "",
-                            response={
-                                "output": toolbox.run(
-                                    call.name or "", dict(call.args or {})
-                                )
-                            },
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                id=call.id,
+                                name=call.name or "",
+                                response={
+                                    "output": toolbox.run(
+                                        call.name or "", dict(call.args or {})
+                                    )
+                                },
+                            )
                         )
                         for call in calls
                     ],

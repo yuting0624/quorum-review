@@ -38,16 +38,16 @@ from ..schema import (
 )
 from .base import ProviderUnavailable
 from .vertex import (
+    DEFAULT_PRIMARY_MODEL,
+    DEFAULT_VERIFIER_MODEL,
     PROSE_EFFORT,
     PROSE_MAX_TOKENS,
     SCAN_EFFORT,
     SCAN_MAX_TOKENS,
     VERIFY_EFFORT,
     VERIFY_MAX_TOKENS,
+    _gemini_thinking_config,
 )
-
-DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
-DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 
 
 def _output_config(effort: str, schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -138,6 +138,7 @@ class DirectProvider:
                 response_mime_type="application/json" if schema else "text/plain",
                 response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
+                thinking_config=_gemini_thinking_config(types, model, effort),
             ),
         )
         meta = getattr(response, "usage_metadata", None)
