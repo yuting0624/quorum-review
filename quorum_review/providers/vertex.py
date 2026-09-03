@@ -557,6 +557,8 @@ class _ClaudeEngine:
 class VertexProvider:
     """Runs every review model on Vertex AI off one credential."""
 
+    supports_repository_tools = True
+
     def __init__(self) -> None:
         project = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
         if not project:

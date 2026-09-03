@@ -146,6 +146,13 @@ def test_the_prompt_offers_the_dismissal_route():
     assert "no json schema" in system.lower()
 
 
+def test_a_diff_only_provider_does_not_advertise_question_tools():
+    class DiffOnlyProvider:
+        supports_repository_tools = False
+
+    assert conversation._question_toolbox(DiffOnlyProvider(), []) is None
+
+
 # -- whose thread is this ---------------------------------------------------
 
 

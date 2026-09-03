@@ -20,7 +20,7 @@ from . import workspace as workspace_mod
 from .github_client import GitHubClient
 from .ledger import FINDING_FOOTER, Ledger, LedgerEntry
 from .matching import mention
-from .providers.base import ReviewProvider
+from .providers.base import ReviewProvider, repository_tools_supported
 from .schema import Discussion, PRContext
 
 #: How much of a thread reaches the model, newest first. A thread is a place
@@ -148,6 +148,15 @@ def find_entry(ledger: Ledger, comment_id: int) -> LedgerEntry | None:
     )
 
 
+def _question_toolbox(
+    provider: ReviewProvider, patterns: list[str]
+) -> workspace_mod.Workspace | None:
+    """Return a question budget only when the provider can actually use it."""
+    if not repository_tools_supported(provider):
+        return None
+    return next(iter(workspace_mod.build(1, QUESTION_TOOL_CALLS, patterns)), None)
+
+
 async def handle(
     github: GitHubClient,
     provider: ReviewProvider,
@@ -182,8 +191,7 @@ async def handle(
     # A question in a thread is the case where reading past the diff matters
     # most: someone is pushing back, usually with "but X handles that", and the
     # honest answer requires opening X rather than restating the finding.
-    budgets = workspace_mod.build(1, QUESTION_TOOL_CALLS, ctx.exclude_patterns)
-    toolbox = next(iter(budgets), None)
+    toolbox = _question_toolbox(provider, ctx.exclude_patterns)
     try:
         answer = await provider.respond(
             model,

@@ -42,6 +42,11 @@ class ReviewProvider(Protocol):
     #: when only a single scan is requested.
     models: list[str]
 
+    #: Whether this provider can expose the checkout through read-only tools.
+    #: The orchestrator uses this to avoid promising repository access to a
+    #: provider that only sends the diff.
+    supports_repository_tools: bool
+
     #: Tokens and calls consumed so far, keyed by model. Reported in the
     #: summary so an adopter can see what a review actually costs them.
     usage: dict[str, ModelUsage]
@@ -63,8 +68,8 @@ class ReviewProvider(Protocol):
         ``toolbox`` lets the model read the rest of the repository. Each caller
         gets its own, so exploration stays independent too — a shared budget
         would let one model's reading change what the other is able to check.
-        A provider that cannot offer tools may ignore it; the diff is still a
-        complete input.
+        Providers that declare ``supports_repository_tools = False`` are passed
+        ``None``; the diff is still a complete input.
         """
         ...
 
@@ -98,3 +103,12 @@ class ReviewProvider(Protocol):
         criteria. Kept general so those do not each need their own method.
         """
         ...
+
+
+def repository_tools_supported(provider: ReviewProvider) -> bool:
+    """Whether a provider can use the read-only checkout toolbox.
+
+    Absence keeps compatibility with third-party providers written before the
+    capability was explicit; providers shipped here always declare it.
+    """
+    return getattr(provider, "supports_repository_tools", True)

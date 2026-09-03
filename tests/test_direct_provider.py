@@ -79,6 +79,10 @@ def test_it_satisfies_the_same_protocol_as_the_vertex_provider():
     assert isinstance(DirectProvider(), ReviewProvider)
 
 
+def test_it_declares_that_reviews_are_diff_only():
+    assert DirectProvider().supports_repository_tools is False
+
+
 def test_the_default_pair_uses_gemini_3_8_flash():
     assert DirectProvider().models == ["gemini-3.8-flash", "claude-sonnet-5"]
 

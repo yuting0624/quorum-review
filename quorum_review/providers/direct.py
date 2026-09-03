@@ -61,6 +61,8 @@ def _output_config(effort: str, schema: dict[str, Any] | None) -> dict[str, Any]
 class DirectProvider:
     """Gemini via an AI Studio key, Claude via an Anthropic key."""
 
+    supports_repository_tools = False
+
     def __init__(self) -> None:
         first = os.getenv("PRIMARY_MODEL", DEFAULT_PRIMARY_MODEL).strip()
         second = os.getenv("VERIFIER_MODEL", DEFAULT_VERIFIER_MODEL).strip()
@@ -166,10 +168,10 @@ class DirectProvider:
             max_tokens=max_tokens,
         )
 
-    # `toolbox` is accepted and ignored. This provider exists to show that the
-    # arrangement is not tied to Vertex, not to be the one people run, and a
-    # tool loop would be a second full implementation of the interesting part.
-    # Reviews here are diff-only; the summary says so.
+    # `toolbox` stays in the signature to satisfy the provider protocol, but the
+    # orchestrator does not pass one because `supports_repository_tools` is
+    # false. This provider exists to show that the arrangement is not tied to
+    # Vertex, not to duplicate its full tool loop. Reviews here are diff-only.
     async def scan(
         self,
         model: str,
