@@ -236,6 +236,14 @@ def test_the_prompts_are_the_ones_the_vertex_provider_sends():
     assert sent["config"].thinking_config.thinking_level == "HIGH"
 
 
+def test_a_legacy_gemini_override_uses_its_default_thinking_configuration():
+    """Gemini 2.5 accepts thinking_budget, not thinking_level."""
+    provider, gemini, _claude = wired()
+    asyncio.run(provider.scan("gemini-2.5-flash", CTX, SKILL))
+
+    assert gemini.calls[0]["config"].thinking_config is None
+
+
 def test_the_toolbox_is_accepted_and_ignored():
     """There is no tool loop here, deliberately. Refusing the argument would
     make the protocol a lie; pretending to use it would be worse."""

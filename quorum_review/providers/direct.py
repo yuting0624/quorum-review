@@ -46,6 +46,7 @@ from .vertex import (
     SCAN_MAX_TOKENS,
     VERIFY_EFFORT,
     VERIFY_MAX_TOKENS,
+    _gemini_thinking_config,
 )
 
 
@@ -137,7 +138,7 @@ class DirectProvider:
                 response_mime_type="application/json" if schema else "text/plain",
                 response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
-                thinking_config=types.ThinkingConfig(thinking_level=effort),
+                thinking_config=_gemini_thinking_config(types, model, effort),
             ),
         )
         meta = getattr(response, "usage_metadata", None)

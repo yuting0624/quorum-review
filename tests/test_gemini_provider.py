@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from google.genai import types
 
-from quorum_review.providers.vertex import _GeminiEngine
+from quorum_review.providers.vertex import _gemini_thinking_config, _GeminiEngine
 from quorum_review.schema import ModelUsage
 
 
@@ -36,6 +36,10 @@ def response(content, function_calls):
         function_calls=function_calls,
         usage_metadata=None,
     )
+
+
+def test_unknown_model_aliases_keep_the_models_default_thinking_configuration():
+    assert _gemini_thinking_config(types, "gemini-flash-latest", "high") is None
 
 
 def test_tool_responses_preserve_the_function_call_id_and_effort():
