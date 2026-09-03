@@ -44,6 +44,10 @@ def test_the_default_is_global_for_both():
     assert claude_region() == "global"
 
 
+def test_the_default_pair_uses_gemini_3_8_flash():
+    assert VertexProvider().models == ["gemini-3.8-flash", "claude-sonnet-5"]
+
+
 def test_one_setting_pins_both(monkeypatch):
     """What an organisation with a residency requirement actually wants: one
     value, applied everywhere, rather than remembering there are two."""

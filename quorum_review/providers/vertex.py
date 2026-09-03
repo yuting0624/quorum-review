@@ -57,7 +57,7 @@ from .base import ProviderUnavailable
 # project and by release channel, and parts of the Gemini 3 line still carry
 # `-preview` suffixes. Confirm what your project can actually call before
 # relying on this value — `python -m src.review --list-models` prints the list.
-DEFAULT_PRIMARY_MODEL = "gemini-3.6-flash"
+DEFAULT_PRIMARY_MODEL = "gemini-3.8-flash"
 DEFAULT_VERIFIER_MODEL = "claude-sonnet-5"
 
 #: A Vertex location: ``global``, a multi-region (``us``, ``eu``), or a region
@@ -282,7 +282,7 @@ class _GeminiEngine:
 
         contents: list[Any] = [types.Content(role="user", parts=[types.Part(text=user)])]
         if toolbox is not None:
-            await self._explore(contents, system, max_tokens, toolbox)
+            await self._explore(contents, system, effort, max_tokens, toolbox)
             closing = prompts.FINALISE if schema else prompts.FINALISE_PROSE
             contents.append(types.Content(role="user", parts=[types.Part(text=closing)]))
 
@@ -297,12 +297,18 @@ class _GeminiEngine:
                 # schema is reduced here rather than maintained twice.
                 response_schema=for_gemini(schema) if schema else None,
                 max_output_tokens=max_tokens,
+                thinking_config=types.ThinkingConfig(thinking_level=effort),
             ),
         )
         return response.text or ""
 
     async def _explore(
-        self, contents: list[Any], system: str, max_tokens: int, toolbox: Workspace
+        self,
+        contents: list[Any],
+        system: str,
+        effort: str,
+        max_tokens: int,
+        toolbox: Workspace,
     ) -> None:
         """Let the model read the repository before it commits to an answer.
 
@@ -328,7 +334,10 @@ class _GeminiEngine:
             )
         ]
         config = types.GenerateContentConfig(
-            system_instruction=system, tools=tools, max_output_tokens=max_tokens
+            system_instruction=system,
+            tools=tools,
+            max_output_tokens=max_tokens,
+            thinking_config=types.ThinkingConfig(thinking_level=effort),
         )
 
         for _ in range(workspace.MAX_TURNS):
@@ -345,13 +354,16 @@ class _GeminiEngine:
                 types.Content(
                     role="user",
                     parts=[
-                        types.Part.from_function_response(
-                            name=call.name or "",
-                            response={
-                                "output": toolbox.run(
-                                    call.name or "", dict(call.args or {})
-                                )
-                            },
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                id=call.id,
+                                name=call.name or "",
+                                response={
+                                    "output": toolbox.run(
+                                        call.name or "", dict(call.args or {})
+                                    )
+                                },
+                            )
                         )
                         for call in calls
                     ],
