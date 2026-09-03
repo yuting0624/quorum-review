@@ -44,7 +44,7 @@ from .github_client import (
 )
 from .matching import mention
 from .providers import ProviderUnavailable, build_provider
-from .providers.base import ReviewProvider
+from .providers.base import ReviewProvider, repository_tools_supported
 from .schema import SEVERITY_RANK, Finding, PRContext, Skill
 from .workspace import Workspace
 
@@ -89,6 +89,23 @@ def scan_with_all_models() -> bool:
     pull request. ``QUORUM_SCAN=single`` is the cheap tier.
     """
     return os.getenv("QUORUM_SCAN", "both").strip().lower() not in {"single", "one", "1"}
+
+
+def _toolboxes_for(
+    provider: ReviewProvider,
+    count: int,
+    max_calls: int,
+    patterns: list[str],
+) -> list[Workspace | None]:
+    """Build tool budgets only when the provider can actually use them.
+
+    Older third-party providers predate the capability flag and may already
+    implement the toolbox argument, so the shared capability check preserves
+    their previous behaviour.
+    """
+    if not repository_tools_supported(provider):
+        return [None] * count
+    return workspace_mod.build(count, max_calls, patterns)
 
 
 #: Inline comments one run may post. The severity threshold decides *which*
@@ -597,8 +614,8 @@ async def run(skill_name: str, dry_run: bool) -> int:
             return _finish(report)
 
         # -- independent scans ------------------------------------------------
-        scan_budgets = workspace_mod.build(
-            len(scanning), workspace_mod.MAX_CALLS, ctx.exclude_patterns
+        scan_budgets = _toolboxes_for(
+            provider, len(scanning), workspace_mod.MAX_CALLS, ctx.exclude_patterns
         )
         root = next((w.root for w in scan_budgets if w is not None), None)
         if root is not None and not workspace_mod.checkout_has_commit(root, ctx.head_sha):
@@ -621,11 +638,14 @@ async def run(skill_name: str, dry_run: bool) -> int:
                 dict.fromkeys(path for w in used for path in w.files_read)
             )
         elif not report.repo_access:
-            report.repo_access = (
-                "off by configuration"
-                if not workspace_mod.access_enabled()
-                else "off: no checkout available"
-            )
+            if not repository_tools_supported(provider):
+                report.repo_access = "off: this provider is diff-only"
+            else:
+                report.repo_access = (
+                    "off by configuration"
+                    if not workspace_mod.access_enabled()
+                    else "off: no checkout available"
+                )
 
         if not scans:
             raise ProviderUnavailable(f"every scanning model failed: {failures}")

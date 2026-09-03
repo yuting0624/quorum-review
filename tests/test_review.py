@@ -297,6 +297,17 @@ def test_repo_access_can_be_turned_off(monkeypatch, tmp_path):
     assert workspace_mod.build(2, max_calls=10) == [None, None]
 
 
+def test_a_diff_only_provider_is_not_given_misleading_tool_budgets(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+    monkeypatch.delenv("QUORUM_REPO_ACCESS", raising=False)
+    provider = FakeProvider()
+    provider.supports_repository_tools = False
+
+    assert review._toolboxes_for(provider, 2, 10, []) == [None, None]
+
+
 def test_no_checkout_means_no_tools_rather_than_an_error(monkeypatch):
     """Someone will wire a workflow without actions/checkout. It must still review."""
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)

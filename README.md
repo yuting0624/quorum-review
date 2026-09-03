@@ -329,7 +329,7 @@ finding.
 
 | Input | Default | Notes |
 |---|---|---|
-| `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` |
+| `mode` | `vertex` | `direct` uses `GEMINI_API_KEY` + `ANTHROPIC_API_KEY` and reviews the diff only |
 | `skill` | `security-review` | a built-in name, or a path to criteria in your own repository; several combine |
 | `primary-model` | `gemini-3.8-flash` | **confirm against your project** — `python -m quorum_review.review --list-models` |
 | `verifier-model` | `claude-sonnet-5` | both models scan; the names only decide which runs alone under `scan: single` |
