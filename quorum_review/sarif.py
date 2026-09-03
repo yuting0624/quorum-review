@@ -234,7 +234,7 @@ def open_findings(ledger: Any) -> list[Finding]:
             verifier_model=entry.verifier_model,
         )
         for entry in ledger.entries.values()
-        if entry.status == "open"
+        if entry.status == "open" and entry.verdict not in {"refuted", "uncertain"}
     ]
 
 

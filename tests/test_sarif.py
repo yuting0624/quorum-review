@@ -213,6 +213,18 @@ def test_dismissed_findings_are_left_out():
     assert sarif.open_findings(ledger) == []
 
 
+def test_refuted_findings_are_left_out():
+    """A rejected claim is retained for suppression, not uploaded as an alert."""
+    ledger = FakeLedger([entry("a", verdict="refuted", verifier_model="model-b")])
+    assert sarif.open_findings(ledger) == []
+
+
+def test_advisory_findings_are_left_out():
+    """An uncertain verdict belongs in the summary, not the triage queue."""
+    ledger = FakeLedger([entry("a", verdict="uncertain", verifier_model="model-b")])
+    assert sarif.open_findings(ledger) == []
+
+
 def test_an_empty_ledger_uploads_an_empty_result_set():
     """Which is how code scanning learns the alerts are resolved."""
     log = sarif.build(sarif.open_findings(FakeLedger([])), ["m"], "sha")
